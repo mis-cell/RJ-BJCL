@@ -1,0 +1,43 @@
+export const BATCH_CODES: Record<string, string> = {
+  "1": "EXPORT YARN 6.5 LBS",
+  "2": "SACKING WARP 12-14 LBS",
+  "3": "HESSIAN WARP 8.5 LBS",
+  "4": "SACKING WARP 10.5 LBS",
+  "5": "SALE YARN 14.0 LBS",
+  "6": "SACKING WEFT",
+  "7": "BRIGHT SALE YARN 36 LBS",
+  "8": "EXPORT YARN 8.0-12.0 LBS",
+  "9": "EXPORT YARN 8.00 LBS",
+  "10": "HESSIAN WARP 7.5 LBS",
+  "11": "TEA BAG 8.00-8.50 LBS",
+  "12": "BRIGHT 48.0 LBS",
+  "13": "CANVAS",
+  "14": "DOBBY COLOUR YARN",
+  "15": "EXPORT YARN 9.00 LBS",
+  "16": "F.G.Q HESSIAN 9.00 LBS",
+  "17": "JACQUARD",
+  "18": "RUSSIAN",
+  "19": "SALE YARN 36 LBS",
+  "20": "SINGLE WARP CANVAS 10.0 LBS",
+  "21": "S.T.B",
+  "22": "EXPORT YARN 10.0 LBS",
+  "23": "EXPORT YARN 4.8 LBS",
+  "24": "H.C.F SACKING",
+  "25": "H.C.F HESSIAN",
+  "26": "GTF_BATCH NOT AVAILABLE",
+  "27": "EXPORT YARN 17 LBS",
+  "28": "BROAD LOOM",
+  "29": "I.L",
+  "30": "DYE YARN",
+  "31": "9.50 LBS BLEACHED YARN",
+  "32": "N.C.B 6.00-6.50 LBS",
+  "33": "J/NG/JB",
+  "34": "HEAVY SACKING WARP",
+  "35": "HEAVY SACKING WARP",
+  "36": "SACKING WARP 9.5-13.0 LBS",
+  "37": "BIS SAMPLE"
+};
+
+export const GRADES = ["", "TD5", "TD5/6", "TD6", "TD6/7", "TD7", "TD8", "TD9", "TD10", "TD12"];
+export const UNITS = ["BALES", "DRUMS", "LOOSE"];
+export const CROPS = ["2025-26", "2024-25", "2023-24"];

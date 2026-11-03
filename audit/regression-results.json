@@ -1,0 +1,107 @@
+{
+  "timestamp": "2026-10-18T06:02:47.381Z",
+  "total": 14,
+  "passed": 14,
+  "failed": 0,
+  "status": "PASS",
+  "results": [
+    {
+      "id": "REG-01",
+      "point": "1-5",
+      "name": "dbModule enforces strict saves, bounded pagination, and atomic executeTransaction without column stripping or fake offline success",
+      "passed": true,
+      "details": "Verified"
+    },
+    {
+      "id": "REG-02",
+      "point": "6",
+      "name": "PurchaseOrder close/reopen/cancel verifies authoritative DB update before updating local state",
+      "passed": true,
+      "details": "Verified"
+    },
+    {
+      "id": "REG-03",
+      "point": "7-11",
+      "name": "PO, Sauda, Satta, Inspection, Payment, and MaterialIssue use executeTransaction",
+      "passed": true,
+      "details": "Verified"
+    },
+    {
+      "id": "REG-04",
+      "point": "12",
+      "name": "Explicit 0% settlement deduction is respected despite positive gd_claim / gd_sett",
+      "passed": true,
+      "details": "Verified"
+    },
+    {
+      "id": "REG-05",
+      "point": "13",
+      "name": "Payment deletion uses atomic transaction and recomputes linked MR/PO payment status",
+      "passed": true,
+      "details": "Verified"
+    },
+    {
+      "id": "REG-06",
+      "point": "14",
+      "name": "MrSettlement uses exact MR identity matching without substring .includes()",
+      "passed": true,
+      "details": "Verified"
+    },
+    {
+      "id": "REG-07",
+      "point": "15",
+      "name": "Stock transfer uses atomic transaction checking source quantity equality",
+      "passed": true,
+      "details": "Verified"
+    },
+    {
+      "id": "REG-08",
+      "point": "16",
+      "name": "WeightBridge does not run inline CREATE TABLE DDL and verifies stage updates",
+      "passed": true,
+      "details": "Verified"
+    },
+    {
+      "id": "REG-09",
+      "point": "17-18",
+      "name": "poMatch enforces exact normalized identity without substring containment",
+      "passed": true,
+      "details": "Verified"
+    },
+    {
+      "id": "REG-10",
+      "point": "19-21",
+      "name": "PO PDF generator uses explicit weights, forms preserve financial_year, and ClosingStockEntry has isolated tab state",
+      "passed": true,
+      "details": "Verified"
+    },
+    {
+      "id": "REG-11",
+      "point": "22",
+      "name": "canEditOrDelete denies unprivileged users by default instead of returning true unconditionally",
+      "passed": true,
+      "details": "Verified"
+    },
+    {
+      "id": "REG-12",
+      "point": "23-27,41-42",
+      "name": "AuthScreen has no password hint, server enforces session tokens & no hardcoded credentials, App preserves gate data on idle logout",
+      "passed": true,
+      "details": "Verified"
+    },
+    {
+      "id": "REG-13",
+      "point": "28-33",
+      "name": "ClubPOMR persists to clubbed_pomr, SattaChart load is read-only, SmsSaudaDesk keys by sms.id, Inspection delete is atomic",
+      "passed": true,
+      "details": "Verified"
+    },
+    {
+      "id": "REG-14",
+      "point": "34-40,43-45",
+      "name": "Reports deduplicate aliases, ConfigGuide runs real DB sync, TredeReport is Trader Directory, TolerancePolicy preserves 0%, Reports uses exportToCSV",
+      "passed": true,
+      "details": "Verified"
+    }
+  ]
+}

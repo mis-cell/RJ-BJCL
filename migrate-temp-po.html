@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Split Temporary P.O ↔ Final P.O (one-time migration)</title>
+<style>
+  *{box-sizing:border-box}
+  body{font-family:system-ui,Segoe UI,Roboto,sans-serif;margin:0;background:#f1f5f9;color:#0f172a}
+  .wrap{max-width:820px;margin:0 auto;padding:24px}
+  h1{font-size:20px;margin:0 0 4px}
+  .sub{color:#64748b;font-size:13px;margin-bottom:20px}
+  .card{background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:20px;margin-bottom:16px}
+  button{font-weight:700;border:none;border-radius:8px;padding:10px 16px;cursor:pointer;font-size:13px}
+  .btn-primary{background:#024a68;color:#fff}
+  .btn-danger{background:#b91c1c;color:#fff}
+  .btn-danger:disabled,.btn-primary:disabled{background:#94a3b8;cursor:not-allowed}
+  .stat{display:inline-block;margin-right:28px}
+  .stat b{display:block;font-size:26px}
+  .stat span{font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:.04em}
+  #log{font-family:ui-monospace,monospace;font-size:12px;white-space:pre-wrap;background:#0f172a;color:#e2e8f0;padding:12px;border-radius:8px;max-height:240px;overflow:auto}
+  .warn{background:#fef3c7;border:1px solid #fcd34d;color:#92400e;padding:10px 12px;border-radius:8px;font-size:12.5px;margin-bottom:14px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Split Temporary P.O ↔ Final P.O</h1>
+  <div class="sub">One-time migration. Creates a <b>temporary_po</b> table and moves every not-yet-final P.O into it, leaving only Final POs in <b>purchase_master</b>. After this, the two sections are fully independent.</div>
+
+  <div class="warn">⚠️ This <b>moves and deletes</b> rows in your live database. Run it once. It's safe to re-run (idempotent), but do it when no one else is editing POs. Make sure you've deployed the new app code first (so Temporary P.O reads the new table).</div>
+
+  <div class="card">
+    <button id="scanBtn" class="btn-primary">1 · Scan (preview what will move)</button>
+    <div id="stats" style="margin-top:16px"></div>
+  </div>
+
+  <div class="card">
+    <button id="runBtn" class="btn-danger" disabled>2 · Run migration</button>
+    <div style="font-size:12px;color:#64748b;margin-top:8px">Enabled after a successful scan.</div>
+  </div>
+
+  <div class="card">
+    <b style="font-size:13px">Log</b>
+    <div id="log" style="margin-top:8px">Ready.</div>
+  </div>
+</div>
+
+<script>
+const URL='https://lxuapkccxaadwixjpirs.supabase.co';
+const KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx4dWFwa2NjeGFhZHdpeGpwaXJzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg4MzQ4NDksImV4cCI6MjA5NDQxMDg0OX0.rzjJFNOb1gx0Z4cMSfkW9yDe4rI8oO6TLTzcVXswPek';
+const H={apikey:KEY,Authorization:'Bearer '+KEY};
+const logEl=document.getElementById('log');
+const log=m=>{logEl.textContent+='\n'+m;logEl.scrollTop=logEl.scrollHeight;};
+
+const FINAL_STATES=['final','moved_to_final','cancelled'];
+
+async function fetchAll(table){
+  const out=[];let from=0;const PAGE=1000;
+  while(true){
+    const r=await fetch(`${URL}/rest/v1/${table}?select=*`,{headers:{...H,Range:`${from}-${from+PAGE-1}`,'Range-Unit':'items'}});
+    if(!r.ok) throw new Error(`${table}: ${r.status} ${await r.text()}`);
+    const b=await r.json();out.push(...b);
+    if(b.length<PAGE) break; from+=PAGE;
+  }
+  return out;
+}
+
+document.getElementById('scanBtn').onclick=async()=>{
+  const btn=document.getElementById('scanBtn');btn.disabled=true;btn.textContent='Scanning…';
+  logEl.textContent='Connecting…';
+  try{
+    const pos=await fetchAll('purchase_master');
+    const pending=pos.filter(p=>!FINAL_STATES.includes(String(p.status||'active').toLowerCase()));
+    const finalRows=pos.filter(p=>['final','moved_to_final'].includes(String(p.status||'').toLowerCase()));
+    let existingTemp=0;
+    try{ existingTemp=(await fetchAll('temporary_po')).length; }catch(_){ log('temporary_po does not exist yet — it will be created.'); }
+    document.getElementById('stats').innerHTML=
+      `<div class="stat"><b>${pos.length}</b><span>In purchase_master now</span></div>`+
+      `<div class="stat"><b style="color:#b91c1c">${pending.length}</b><span>Will move → Temporary</span></div>`+
+      `<div class="stat"><b style="color:#166534">${finalRows.length}</b><span>Stay as Final</span></div>`+
+      `<div class="stat"><b>${existingTemp}</b><span>Already in temporary_po</span></div>`;
+    log(`Scan done. ${pending.length} P.O(s) will move to Temporary; ${finalRows.length} remain in Final.`);
+    document.getElementById('runBtn').disabled=false;
+  }catch(e){log('ERROR: '+e.message);alert('Scan failed: '+e.message);}
+  finally{btn.disabled=false;btn.textContent='1 · Scan (preview what will move)';}
+};
+
+document.getElementById('runBtn').onclick=async()=>{
+  if(!confirm('Run the migration now? This creates temporary_po and MOVES all not-yet-final POs into it (removing them from purchase_master). Existing data is preserved, just relocated.')) return;
+  const btn=document.getElementById('runBtn');btn.disabled=true;btn.textContent='Migrating…';
+  const sql=`
+    CREATE TABLE IF NOT EXISTS temporary_po (LIKE purchase_master INCLUDING ALL);
+    CREATE TABLE IF NOT EXISTS temporary_po_details (LIKE purchase_detail_master INCLUDING ALL);
+    ALTER TABLE IF EXISTS temporary_po DISABLE ROW LEVEL SECURITY;
+    ALTER TABLE IF EXISTS temporary_po_details DISABLE ROW LEVEL SECURITY;
+
+    INSERT INTO temporary_po
+      SELECT * FROM purchase_master
+      WHERE COALESCE(status,'active') NOT IN ('final','moved_to_final','cancelled')
+      ON CONFLICT (po_no) DO NOTHING;
+
+    INSERT INTO temporary_po_details
+      SELECT * FROM purchase_detail_master
+      WHERE po_no IN (SELECT po_no FROM temporary_po)
+      ON CONFLICT (item_id) DO NOTHING;
+
+    DELETE FROM purchase_master
+      WHERE COALESCE(status,'active') NOT IN ('final','moved_to_final','cancelled');
+
+    NOTIFY pgrst, 'reload schema';
+  `;
+  try{
+    const r=await fetch(`${URL}/rest/v1/rpc/exec_sql`,{
+      method:'POST',
+      headers:{...H,'Content-Type':'application/json'},
+      body:JSON.stringify({query:sql})
+    });
+    const txt=await r.text();
+    if(!r.ok) throw new Error(`${r.status} ${txt}`);
+    log('Migration executed. ✅');
+    log('Re-scanning to confirm…');
+    // Confirm
+    const [pm,tp]=await Promise.all([fetchAll('purchase_master'),fetchAll('temporary_po')]);
+    log(`Now: purchase_master (Final) = ${pm.length} rows, temporary_po (Temporary) = ${tp.length} rows.`);
+    alert('Migration complete. Temporary P.O and Final P.O are now separate tables. Hard-refresh the app (Ctrl+Shift+R).');
+    btn.textContent='Completed ✓';
+  }catch(e){
+    log('ERROR: '+e.message);
+    alert('Migration failed: '+e.message+'\nNothing partial should remain — you can safely re-run after fixing.');
+    btn.disabled=false;btn.textContent='2 · Run migration';
+  }
+};
+</script>
+</body>
+</html>

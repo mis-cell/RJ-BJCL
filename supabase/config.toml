@@ -1,0 +1,14 @@
+# Supabase project config (only the send-email function is defined here).
+# project_id must match your Supabase project ref.
+project_id = "lxuapkccxaadwixjpirs"
+
+[functions.send-email]
+# The frontend calls this function with a plain fetch (no Authorization header),
+# so JWT verification is disabled. Access is still limited by the fact that the
+# function only sends a fixed template from your Gmail account.
+verify_jwt = false
+
+[functions.sync-gmail]
+# Triggered by a scheduler (no JWT). It is protected instead by the ?key=SYNC_KEY
+# query parameter, so JWT verification is disabled here too.
+verify_jwt = false

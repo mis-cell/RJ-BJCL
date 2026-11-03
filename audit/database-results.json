@@ -1,0 +1,28 @@
+{
+  "timestamp": "2026-10-18T06:02:49.333Z",
+  "status": "PASS",
+  "totalChecks": 4,
+  "passedChecks": 4,
+  "checks": [
+    {
+      "check": "migrations/20261017_safe_repairs.sql exists and is non-empty",
+      "status": "PASS",
+      "details": "Migration file length: 13021 bytes"
+    },
+    {
+      "check": "Safe repairs migration contains no destructive DROP TABLE or DISABLE ROW LEVEL SECURITY statements",
+      "status": "PASS",
+      "details": "Verified non-destructive idempotent DDL only"
+    },
+    {
+      "check": "All core operational and master tables are covered by schema definitions",
+      "status": "PASS",
+      "details": "44/44 tables covered"
+    },
+    {
+      "check": "Clubbing persistence table (clubbed_pomr) and SMS link columns are defined in safe repairs migration",
+      "status": "PASS",
+      "details": "Verified clubbed_pomr, sms_sauda_logs, and arival_apmc_fees columns"
+    }
+  ]
+}

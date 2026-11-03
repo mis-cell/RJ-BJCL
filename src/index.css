@@ -1,0 +1,620 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Plus Jakarta Sans", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-display: "Plus Jakarta Sans", "Inter", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+
+  /* Approved BJL Color Palette Tokens */
+  --color-bjl-coral-light: #FDE7E6;
+  --color-bjl-coral-soft: #FBCFCB;
+  --color-bjl-peach: #F7AFA8;
+  --color-bjl-coral-medium: #F48F8B;
+  --color-bjl-coral-warm: #F06D6C;
+  --color-bjl-coral-strong: #E85A5A;
+  --color-bjl-coral-deep: #D94B5A;
+
+  --color-bjl-white: #FFFFFF;
+  --color-bjl-white-warm: #FFFCFB;
+  --color-bjl-neutral-soft: #F8FAFC;
+  --color-bjl-border-light: #E5E7EB;
+  --color-bjl-border-strong: #CBD5E1;
+
+  --color-bjl-gold-light: #FFFBEB;
+  --color-bjl-gold-soft: #FFF2CC;
+  --color-bjl-gold-warm: #FFE08A;
+  --color-bjl-gold-yellow: #F5B942;
+  --color-bjl-gold-deep: #D69E18;
+
+  --color-bjl-text-black: #111111;
+  --color-bjl-text-heading: #171717;
+  --color-bjl-text-body: #262626;
+  --color-bjl-text-secondary: #404040;
+  --color-bjl-text-placeholder: #64748B;
+
+  --color-legacy-bg: #FFFCFB;
+  --color-legacy-border: #CBD5E1;
+  --color-legacy-blue: #D94B5A;
+  --color-legacy-navy: #D94B5A;
+  --color-legacy-teal: #F48F8B;
+
+  /* Global Color Mappings: Align Emerald, Green, Indigo, Blue to BJL Palette */
+  --color-emerald-50: #FDE7E6;
+  --color-emerald-100: #FDE7E6;
+  --color-emerald-200: #FBCFCB;
+  --color-emerald-300: #F7AFA8;
+  --color-emerald-400: #F48F8B;
+  --color-emerald-500: #F06D6C;
+  --color-emerald-600: #E85A5A;
+  --color-emerald-700: #D94B5A;
+  --color-emerald-800: #991B1B;
+  --color-emerald-900: #171717;
+
+  --color-green-50: #FDE7E6;
+  --color-green-100: #FDE7E6;
+  --color-green-200: #FBCFCB;
+  --color-green-300: #F7AFA8;
+  --color-green-400: #F48F8B;
+  --color-green-500: #F06D6C;
+  --color-green-600: #E85A5A;
+  --color-green-700: #D94B5A;
+  --color-green-800: #166534;
+  --color-green-900: #171717;
+
+  --color-indigo-50: #FFFBEB;
+  --color-indigo-100: #FFF2CC;
+  --color-indigo-200: #FFE08A;
+  --color-indigo-300: #F5B942;
+  --color-indigo-400: #D69E18;
+  --color-indigo-500: #D94B5A;
+  --color-indigo-600: #D94B5A;
+  --color-indigo-700: #171717;
+
+  --color-blue-50: #FFFBEB;
+  --color-blue-100: #FFF2CC;
+  --color-blue-200: #FBCFCB;
+  --color-blue-300: #F7AFA8;
+  --color-blue-400: #F48F8B;
+  --color-blue-500: #D94B5A;
+  --color-blue-600: #D94B5A;
+  --color-blue-700: #171717;
+}
+
+@layer base {
+  :root {
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11", "tnum" 1, "lnum" 1;
+    font-variant-numeric: tabular-nums lining-nums;
+
+    --bjl-bg-main: #FFFCFB;
+    --bjl-bg-card: #FFFFFF;
+    --bjl-bg-header: #FDE7E6;
+    --bjl-border-main: #E5E7EB;
+    --bjl-border-focus: #D94B5A;
+  }
+
+  html,
+  body,
+  #root {
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    min-height: 100%;
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+    background-color: #FFFCFB;
+    color: #262626;
+  }
+
+  *, ::before, ::after {
+    box-sizing: border-box;
+  }
+
+  body {
+    @apply font-sans bg-[#FFFCFB] text-[#262626] antialiased selection:bg-[#FBCFCB] selection:text-[#111111];
+    font-variant-numeric: tabular-nums lining-nums;
+  }
+
+  /* Headings Standard */
+  h1, h2, h3, h4, h5, h6 {
+    color: #171717;
+    font-weight: 700;
+  }
+
+  /* Universal numeric styling for tables, inputs, stats, and badges */
+  .tabular-nums,
+  .font-mono,
+  input[type="number"],
+  table td,
+  table th,
+  [data-numeric] {
+    font-variant-numeric: tabular-nums lining-nums !important;
+    font-feature-settings: "tnum" 1, "lnum" 1 !important;
+  }
+
+  .font-numeric {
+    font-family: "Plus Jakarta Sans", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important;
+    font-variant-numeric: tabular-nums lining-nums !important;
+    font-feature-settings: "tnum" 1, "lnum" 1 !important;
+    letter-spacing: -0.025em;
+  }
+
+  /* Standard Input, Select & Textarea Styling */
+  input[type="text"],
+  input[type="number"],
+  input[type="date"],
+  input[type="email"],
+  input[type="password"],
+  select,
+  textarea {
+    background-color: #FFFFFF;
+    border-color: #CBD5E1;
+    color: #111111;
+    font-size: 14px;
+    font-weight: 500;
+    border-radius: 0.375rem !important;
+    transition: all 0.15s ease-in-out !important;
+  }
+
+  /* Hide Up/Down Spinner Arrows on all Number Inputs globally */
+  input[type="number"]::-webkit-outer-spin-button,
+  input[type="number"]::-webkit-inner-spin-button {
+    -webkit-appearance: none !important;
+    margin: 0 !important;
+    display: none !important;
+  }
+
+  input[type="number"] {
+    -moz-appearance: textfield !important;
+    appearance: textfield !important;
+  }
+
+  input[type="text"]::placeholder,
+  input[type="number"]::placeholder,
+  input[type="email"]::placeholder,
+  input[type="password"]::placeholder,
+  textarea::placeholder {
+    color: #64748B !important;
+  }
+
+  input[type="date"]::-webkit-datetime-edit-month-field,
+  input[type="date"]::-webkit-datetime-edit-day-field,
+  input[type="date"]::-webkit-datetime-edit-year-field {
+    text-transform: uppercase;
+  }
+
+  input[type="date"]:invalid::-webkit-datetime-edit,
+  input[type="date"]:not([value])::-webkit-datetime-edit,
+  input[type="date"][value=""]::-webkit-datetime-edit {
+    color: #64748B;
+  }
+
+  /* Focus Indicator Standard - Deep Coral Focus Ring */
+  input[type="text"]:focus,
+  input[type="number"]:focus,
+  input[type="date"]:focus,
+  input[type="email"]:focus,
+  input[type="password"]:focus,
+  select:focus,
+  textarea:focus {
+    border-color: #D94B5A !important;
+    box-shadow: 0 0 0 3px rgba(217, 75, 90, 0.20) !important;
+    outline: none !important;
+  }
+
+  /* Table Standard - BJL approved headers and row states */
+  table:not(.clean-print-table) {
+    border-collapse: separate !important;
+    border-spacing: 0 !important;
+    width: 100%;
+    background-color: #FFFFFF;
+  }
+
+  table:not(.clean-print-table) th {
+    background-color: #FDE7E6 !important;
+    color: #111111 !important;
+    font-weight: 700 !important;
+    font-size: 13px !important;
+    padding: 10px 12px !important;
+    border-bottom: 2px solid #FBCFCB !important;
+    letter-spacing: 0.02em !important;
+  }
+
+  table:not(.clean-print-table) td {
+    padding: 9px 12px !important;
+    color: #262626 !important;
+    font-size: 13px !important;
+    border-bottom: 1px solid #E5E7EB !important;
+  }
+
+  table:not(.clean-print-table) tbody tr {
+    background-color: #FFFFFF !important;
+    transition: background-color 0.15s ease-in-out !important;
+  }
+
+  table:not(.clean-print-table) tbody tr:nth-child(even) {
+    background-color: #FFFCFB !important;
+  }
+
+  /* Table Hover State: Soft Gold (#FFF2CC) */
+  table:not(.clean-print-table) tbody tr:hover {
+    background-color: #FFF2CC !important;
+    color: #111111 !important;
+  }
+
+  /* Table Selected Row: Soft Pink (#FBCFCB) */
+  table tbody tr.selected,
+  table tbody tr[data-selected="true"] {
+    background-color: #FBCFCB !important;
+    color: #111111 !important;
+  }
+
+  /* Table Total Row: Soft Gold (#FFF2CC) with Bold Black Text */
+  table tr.total-row,
+  table tr[data-total-row="true"] {
+    background-color: #FFF2CC !important;
+    color: #111111 !important;
+    font-weight: 700 !important;
+  }
+
+  /* Table Grand Total Row: Warm Gold (#FFE08A) with Bold Black Text */
+  table tr.grand-total-row,
+  table tr[data-grand-total="true"] {
+    background-color: #FFE08A !important;
+    color: #111111 !important;
+    font-weight: 800 !important;
+  }
+
+  /* Standard Fieldset Styling */
+  fieldset {
+    border-radius: 0.5rem !important;
+    background-color: #FFFFFF !important;
+    border: 1px solid #CBD5E1 !important;
+    box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.03) !important;
+  }
+
+  /* Distinct Form Field Styles for Auto-Populated, Mandatory & Normal Input Data */
+  .field-auto-populated,
+  .field-auto,
+  [data-field-type="auto"],
+  [data-auto="true"],
+  [data-auto-populated="true"],
+  input.field-auto-populated,
+  select.field-auto-populated,
+  textarea.field-auto-populated {
+    background-color: #EAF4FF !important;
+    border-color: #BFDBFE !important;
+    color: #1E3A8A !important;
+    font-weight: 600 !important;
+  }
+
+  .field-auto-populated:focus,
+  input.field-auto-populated:focus,
+  select.field-auto-populated:focus,
+  textarea.field-auto-populated:focus {
+    border-color: #3B82F6 !important;
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.25) !important;
+    outline: none !important;
+  }
+
+  .field-mandatory,
+  .field-required,
+  [data-field-type="mandatory"],
+  [data-mandatory="true"],
+  [aria-required="true"],
+  input[required]:not([type="submit"]):not([type="button"]):not([type="checkbox"]):not([type="radio"]),
+  select[required],
+  textarea[required],
+  input.field-mandatory,
+  select.field-mandatory,
+  textarea.field-mandatory {
+    background-color: #FFECEC !important;
+    border-color: #FCA5A5 !important;
+    color: #171717 !important;
+  }
+
+  .field-mandatory:focus,
+  .field-required:focus,
+  input[required]:focus,
+  select[required]:focus,
+  textarea[required]:focus,
+  input.field-mandatory:focus,
+  select.field-mandatory:focus,
+  textarea.field-mandatory:focus {
+    border-color: #D94B5A !important;
+    box-shadow: 0 0 0 3px rgba(217, 75, 90, 0.22) !important;
+    outline: none !important;
+  }
+
+  .field-manual,
+  .field-normal,
+  [data-field-type="manual"],
+  input.field-manual,
+  select.field-manual,
+  textarea.field-manual {
+    background-color: #FFFFFF !important;
+    border-color: #CBD5E1 !important;
+    color: #111111 !important;
+  }
+
+  /* Read-only / disabled state clarity */
+  input:read-only.field-auto-populated,
+  input:disabled.field-auto-populated,
+  select:disabled.field-auto-populated,
+  textarea:disabled.field-auto-populated {
+    background-color: #EAF4FF !important;
+    color: #1E3A8A !important;
+    border-color: #BFDBFE !important;
+    cursor: default;
+  }
+
+  input:read-only.field-mandatory,
+  input:disabled.field-mandatory {
+    background-color: #FFECEC !important;
+    color: #171717 !important;
+    border-color: #FCA5A5 !important;
+  }
+
+  /* Modal Overlays */
+  [role="dialog"],
+  .modal-overlay {
+    backdrop-filter: blur(4px) !important;
+    background-color: rgba(17, 17, 17, 0.60) !important;
+  }
+}
+
+@media print {
+  html, body {
+    background: white !important;
+    background-color: white !important;
+    color: black !important;
+    height: auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    overflow: visible !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+  
+  #root, 
+  .h-screen,
+  .overflow-hidden,
+  .overflow-y-auto {
+    height: auto !important;
+    max-height: none !important;
+    min-height: 0 !important;
+    overflow: visible !important;
+  }
+
+  @page {
+    size: A4 portrait;
+    margin: 6mm 10mm 6mm 10mm !important;
+  }
+
+  #print-modal-inner, 
+  .print-modal, 
+  .print-full-sheet,
+  #printable-voucher-stage {
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+    max-height: 98vh !important;
+    overflow: hidden !important;
+    border: none !important;
+    box-shadow: none !important;
+  }
+
+  body:has(#print-modal-backdrop) > *:not(#print-modal-backdrop) {
+    display: none !important;
+  }
+  body:has(.print-modal) > *:not(.print-modal) {
+    display: none !important;
+  }
+
+  #print-modal-backdrop {
+    position: static !important;
+    background: white !important;
+    background-color: white !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    overflow: visible !important;
+    display: flex !important;
+    justify-content: center !important;
+    align-items: flex-start !important;
+    width: 100% !important;
+    height: auto !important;
+    z-index: auto !important;
+  }
+
+  #print-modal-inner {
+    border: none !important;
+    box-shadow: none !important;
+    background: transparent !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    width: 100% !important;
+    max-width: 100% !important;
+  }
+
+  .print-continuous-paper-container {
+    display: flex !important;
+    flex-direction: row !important;
+    background-color: white !important;
+    width: 100% !important;
+    max-width: 210mm !important;
+    margin: 0 auto !important;
+    border: none !important;
+    box-shadow: none !important;
+  }
+
+  #tractor-feed-holes-left, #tractor-feed-holes-right {
+    display: flex !important;
+    width: 32px !important;
+    background-color: #faf8f5 !important;
+    border-color: #000000 !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+    flex-shrink: 0 !important;
+  }
+
+  #tractor-feed-holes-left div, #tractor-feed-holes-right div {
+    background-color: #000000 !important;
+    border: 1px solid #000000 !important;
+    opacity: 1 !important;
+    box-shadow: none !important;
+  }
+
+  #print-sheet-wrapper {
+    position: static !important;
+    flex-grow: 1 !important;
+    width: calc(100% - 64px) !important;
+    border: none !important;
+    box-shadow: none !important;
+    padding: 4mm 8mm !important;
+    margin: 0 !important;
+    background-color: white !important;
+  }
+
+  #print-sheet-wrapper input, 
+  #print-sheet-wrapper textarea,
+  #print-sheet-wrapper select {
+    border: none !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+    color: #000000 !important;
+    font-weight: bold !important;
+    background-color: transparent !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  table:not(.clean-print-table) th,
+  table:not(.clean-print-table) td,
+  legend {
+    border-color: #000000 !important;
+  }
+
+  table:not(.clean-print-table) th {
+    background-color: #e6e6e6 !important;
+    color: #000000 !important;
+    font-weight: bold !important;
+    border: 1px solid #000000 !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  .no-print, .print-only, .print-hidden, button {
+    display: none !important;
+  }
+
+  .h-screen {
+    height: auto !important;
+  }
+}
+
+.touch-overflow-container,
+.overflow-x-auto,
+.overflow-y-auto,
+.table-scroll-container {
+  overflow: auto !important;
+  -webkit-overflow-scrolling: touch !important;
+  scroll-behavior: smooth !important;
+  overscroll-behavior-x: contain !important;
+}
+
+.overflow-visible {
+  overflow: visible !important;
+}
+
+.touch-overflow-container::-webkit-scrollbar,
+.overflow-x-auto::-webkit-scrollbar,
+.overflow-y-auto::-webkit-scrollbar,
+.table-scroll-container::-webkit-scrollbar {
+  height: 10px;
+  width: 10px;
+}
+.touch-overflow-container::-webkit-scrollbar-track,
+.overflow-x-auto::-webkit-scrollbar-track,
+.overflow-y-auto::-webkit-scrollbar-track,
+.table-scroll-container::-webkit-scrollbar-track {
+  background: rgba(247, 175, 168, 0.1);
+}
+.touch-overflow-container::-webkit-scrollbar-thumb,
+.overflow-x-auto::-webkit-scrollbar-thumb,
+.overflow-y-auto::-webkit-scrollbar-thumb,
+.table-scroll-container::-webkit-scrollbar-thumb {
+  background: rgba(217, 75, 90, 0.35);
+  border-radius: 9999px;
+}
+.touch-overflow-container::-webkit-scrollbar-thumb:hover,
+.overflow-x-auto::-webkit-scrollbar-thumb:hover,
+.overflow-y-auto::-webkit-scrollbar-thumb:hover,
+.table-scroll-container::-webkit-scrollbar-thumb:hover {
+  background: rgba(217, 75, 90, 0.65);
+}
+
+@media (max-width: 480px) {
+  table th {
+    font-size: 10px !important;
+    line-height: 1.1 !important;
+    padding: 6px 4px !important;
+    word-break: break-word !important;
+    white-space: normal !important;
+  }
+  
+  table td {
+    font-size: 11px !important;
+    padding: 6px 4px !important;
+    line-height: 1.2 !important;
+    word-break: break-word !important;
+  }
+}
+
+.overflow-x-auto {
+  max-width: 100% !important;
+}
+
+.main-content {
+  overflow-x: auto !important;
+  overflow-y: auto !important;
+  max-width: 100% !important;
+  min-width: 0 !important;
+  min-height: 0 !important;
+}
+
+.fixed.inset-0 > div:not(.absolute) {
+  max-width: min(96vw, 100%);
+  max-height: min(92vh, 100%);
+  overflow-y: auto;
+  overflow-x: auto;
+}
+
+img, canvas, svg {
+  max-width: 100%;
+}
+
+input, select, textarea {
+  max-width: 100%;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.03);
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(217, 75, 90, 0.30);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(217, 75, 90, 0.55);
+}
+
+
+

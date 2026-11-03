@@ -1,0 +1,228 @@
+{
+  "timestamp": "2026-10-18T06:02:49.333Z",
+  "totalTablesAudited": 44,
+  "coveredTables": 44,
+  "coveragePct": 100,
+  "tables": [
+    {
+      "table": "sauda_master",
+      "covered": true,
+      "inSafeRepairsMigration": false
+    },
+    {
+      "table": "sauda_quality_details",
+      "covered": true,
+      "inSafeRepairsMigration": true
+    },
+    {
+      "table": "satta_master",
+      "covered": true,
+      "inSafeRepairsMigration": false
+    },
+    {
+      "table": "satta_quality_details",
+      "covered": true,
+      "inSafeRepairsMigration": true
+    },
+    {
+      "table": "satta_base_rates",
+      "covered": true,
+      "inSafeRepairsMigration": true
+    },
+    {
+      "table": "satta_differentials",
+      "covered": true,
+      "inSafeRepairsMigration": true
+    },
+    {
+      "table": "purchase_master",
+      "covered": true,
+      "inSafeRepairsMigration": true
+    },
+    {
+      "table": "purchase_detail_master",
+      "covered": true,
+      "inSafeRepairsMigration": true
+    },
+    {
+      "table": "sauda_check_point",
+      "covered": true,
+      "inSafeRepairsMigration": true
+    },
+    {
+      "table": "sauda_check_point_details",
+      "covered": true,
+      "inSafeRepairsMigration": true
+    },
+    {
+      "table": "temporary_material_received",
+      "covered": true,
+      "inSafeRepairsMigration": true
+    },
+    {
+      "table": "temporary_material_details",
+      "covered": true,
+      "inSafeRepairsMigration": true
+    },
+    {
+      "table": "final_arrival",
+      "covered": true,
+      "inSafeRepairsMigration": true
+    },
+    {
+      "table": "final_arrival_details",
+      "covered": true,
+      "inSafeRepairsMigration": true
+    },
+    {
+      "table": "material_inspection",
+      "covered": true,
+      "inSafeRepairsMigration": true
+    },
+    {
+      "table": "material_inspection_details",
+      "covered": true,
+      "inSafeRepairsMigration": true
+    },
+    {
+      "table": "material_inspection_deductions",
+      "covered": true,
+      "inSafeRepairsMigration": true
+    },
+    {
+      "table": "mill_inspection_master",
+      "covered": true,
+      "inSafeRepairsMigration": false
+    },
+    {
+      "table": "mill_inspection_detail",
+      "covered": true,
+      "inSafeRepairsMigration": false
+    },
+    {
+      "table": "mill_inspection_deduction",
+      "covered": true,
+      "inSafeRepairsMigration": true
+    },
+    {
+      "table": "m_r_settlement",
+      "covered": true,
+      "inSafeRepairsMigration": true
+    },
+    {
+      "table": "payment_master",
+      "covered": true,
+      "inSafeRepairsMigration": true
+    },
+    {
+      "table": "payment_details",
+      "covered": true,
+      "inSafeRepairsMigration": true
+    },
+    {
+      "table": "mill_issue_master",
+      "covered": true,
+      "inSafeRepairsMigration": true
+    },
+    {
+      "table": "mill_issue_detail",
+      "covered": true,
+      "inSafeRepairsMigration": true
+    },
+    {
+      "table": "opening_stock",
+      "covered": true,
+      "inSafeRepairsMigration": true
+    },
+    {
+      "table": "closing_stock",
+      "covered": true,
+      "inSafeRepairsMigration": true
+    },
+    {
+      "table": "godown_wise_stock",
+      "covered": true,
+      "inSafeRepairsMigration": true
+    },
+    {
+      "table": "weight_bridge_entries",
+      "covered": true,
+      "inSafeRepairsMigration": true
+    },
+    {
+      "table": "clubbed_pomr",
+      "covered": true,
+      "inSafeRepairsMigration": true
+    },
+    {
+      "table": "sms_sauda_logs",
+      "covered": true,
+      "inSafeRepairsMigration": true
+    },
+    {
+      "table": "tolerance_policy",
+      "covered": true,
+      "inSafeRepairsMigration": true
+    },
+    {
+      "table": "tolerance_deduction_slabs",
+      "covered": true,
+      "inSafeRepairsMigration": true
+    },
+    {
+      "table": "supply_master",
+      "covered": true,
+      "inSafeRepairsMigration": false
+    },
+    {
+      "table": "broker_master",
+      "covered": true,
+      "inSafeRepairsMigration": false
+    },
+    {
+      "table": "grade_master",
+      "covered": true,
+      "inSafeRepairsMigration": false
+    },
+    {
+      "table": "area_master",
+      "covered": true,
+      "inSafeRepairsMigration": false
+    },
+    {
+      "table": "agency_master",
+      "covered": true,
+      "inSafeRepairsMigration": false
+    },
+    {
+      "table": "marka_master",
+      "covered": true,
+      "inSafeRepairsMigration": true
+    },
+    {
+      "table": "godown_master",
+      "covered": true,
+      "inSafeRepairsMigration": false
+    },
+    {
+      "table": "department_master",
+      "covered": true,
+      "inSafeRepairsMigration": true
+    },
+    {
+      "table": "app_audit_logs",
+      "covered": true,
+      "inSafeRepairsMigration": true
+    },
+    {
+      "table": "user_activity_logs",
+      "covered": true,
+      "inSafeRepairsMigration": true
+    },
+    {
+      "table": "sauda_approval_history",
+      "covered": true,
+      "inSafeRepairsMigration": true
+    }
+  ]
+}

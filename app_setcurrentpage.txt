@@ -1,0 +1,267 @@
+268-
+269-export default function App() {
+270-  const [isLoggedIn, setIsLoggedIn] = useState(false);
+271-  const [isAdmin, setIsAdmin] = useState(false);
+272-  const [selectedYear, setSelectedYear] = useState("2026-2027");
+273:  const [currentPage, setCurrentPage] = useState<Page>("dashboard");
+274-  const [isTempPo, setIsTempPo] = useState(false);
+275-  const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
+276-  const [dashboardTab, setDashboardTab] = useState<
+277-    "menu" | "mismatch" | "reports"
+278-  >("menu");
+--
+350-          console.warn("Failed to check satta base rates in Supabase:", e);
+351-        }
+352-      }
+353-    }
+354-
+355:    setCurrentPage(targetPage);
+356-    if (subId === 'po_temp') {
+357-      setIsTempPo(true);
+358-    } else if (subId === 'po_final') {
+359-      setIsTempPo(false);
+360-    }
+--
+499-    logEvent(
+500-      "PAGE_CLOSE",
+501-      `Terminated & Closed workspace screen instance "${targetPage}". Returning to "${destination}"`,
+502-    );
+503-    setRunningPages((prev) => prev.filter((p) => p !== targetPage));
+504:    setCurrentPage(destination);
+505-  };
+506-
+507-  React.useEffect(() => {
+508-    const handleBack = () => {
+509-      if (currentPage !== "dashboard") {
+510-        const pageToClose = currentPage;
+511-        logEvent("PAGE_CLOSE", `Event dynamic Back: closing "${pageToClose}"`);
+512-        setRunningPages((prev) => prev.filter((p) => p !== pageToClose));
+513:        setCurrentPage("dashboard");
+514-      } else {
+515-        logEvent(
+516-          "SYSTEM_DEPART",
+517-          "Session ended - operator exited login screen",
+518-        );
+--
+523-      if (currentPage !== "dashboard") {
+524-        logEvent(
+525-          "MINIMIZE",
+526-          `Event dynamic Minimize: hiding "${currentPage}" to taskbar`,
+527-        );
+528:        setCurrentPage("dashboard");
+529-      }
+530-    };
+531-    const handleClose = () => {
+532-      if (currentPage !== "dashboard") {
+533-        const pageToClose = currentPage;
+534-        logEvent(
+535-          "PAGE_CLOSE",
+536-          `Event dynamic Close: stopping application widget "${pageToClose}"`,
+537-        );
+538-        setRunningPages((prev) => prev.filter((p) => p !== pageToClose));
+539:        setCurrentPage("dashboard");
+540-      } else {
+541-        logEvent(
+542-          "SYSTEM_DEPART",
+543-          "Session ended - operator exited login screen",
+544-        );
+--
+565-        return;
+566-      }
+567-      setIsAdmin(true);
+568-      setIsLoggedIn(true);
+569-      setSelectedYear(year);
+570:      setCurrentPage("dashboard");
+571-      setAllowedModules(["*"]);
+572-      localStorage.setItem("currentUser", "ADMIN");
+573-      logEvent(
+574-        "LOGIN_HISTORY",
+575-        `Administrator login verified under session year: ${year}`,
+--
+608-              : data.allowed_modules.split(",")
+609-            : ["*"],
+610-        );
+611-        setIsLoggedIn(true);
+612-        setSelectedYear(year);
+613:        setCurrentPage("dashboard");
+614-        localStorage.setItem("currentUser", data.username);
+615-        logEvent(
+616-          "LOGIN_HISTORY",
+617-          `Operator account: ${data.username} [Role: ${data.role || "USER"}] successfully logged in under session year: ${year}`,
+618-        );
+--
+712-              <div
+713-                className={currentPage === "dashboard" ? "flex-1 flex flex-col h-full w-full min-h-0 overflow-hidden" : "hidden"}
+714-              >
+715-                <Dashboard
+716-                  onNavigate={(page: Page, subId?: string) => {
+717:                    setCurrentPage(page);
+718-                    if (subId === 'po_temp') {
+719-                      setIsTempPo(true);
+720-                    } else if (subId === 'po_final') {
+721-                      setIsTempPo(false);
+722-                    }
+--
+730-              <div
+731-                className={currentPage === "amad" ? "flex-1 flex flex-col h-full w-full min-h-0 overflow-hidden" : "hidden"}
+732-              >
+733-                <AmadRegister
+734-                  onClose={() => closePage("amad", "dashboard")}
+735:                  onNew={() => setCurrentPage("amad_entry")}
+736-                />
+737-              </div>
+738-              {currentPage === "amad_entry" && (
+739-                <div className="flex-1 flex flex-col h-full w-full min-h-0 overflow-hidden">
+740-                  <AmadEntry
+--
+746-              <div
+747-                className={currentPage === "sms_sauda" ? "flex-1 flex flex-col h-full w-full min-h-0 overflow-hidden" : "hidden"}
+748-              >
+749-                <SmsSaudaDesk
+750-                  onClose={() => closePage("sms_sauda", "dashboard")}
+751:                  onNavigate={(page) => setCurrentPage(page as Page)}
+752-                />
+753-              </div>
+754-              <div
+755-                className={currentPage === "sauda" ? "flex-1 flex flex-col h-full w-full min-h-0 overflow-hidden" : "hidden"}
+756-              >
+757-                <SaudaRegister
+758-                  onClose={() => closePage("sauda", "dashboard")}
+759:                  onNew={() => setCurrentPage("sauda_entry")}
+760-                />
+761-              </div>
+762-              {currentPage === "sauda_entry" && (
+763-                <div className="flex-1 flex flex-col h-full w-full min-h-0 overflow-hidden">
+764-                  <SaudaEntry
+--
+805-              {currentPage === "issue" && (
+806-                <div className="flex-1 flex flex-col h-full w-full min-h-0 overflow-hidden">
+807-                  <MaterialIssue
+808-                    onCancel={() => closePage("issue", "dashboard")}
+809-                    onSave={() => closePage("issue", "dashboard")}
+810:                    setCurrentPage={setCurrentPage}
+811-                    closePage={closePage}
+812-                  />
+813-                </div>
+814-              )}
+815-              <div
+--
+861-                  onClose={() => closePage("admindesk", "dashboard")}
+862-                  onLogin={() => setIsAdmin(true)}
+863-                  isAdmin={isAdmin}
+864-                  systemLogs={systemLogs}
+865-                  onClearLogs={() => setSystemLogs([])}
+866:                  onNavigate={(page) => setCurrentPage(page)}
+867-                />
+868-              </div>
+869-              <div
+870-                className={currentPage === "ai_assistant" ? "flex-1 flex flex-col h-full w-full min-h-0 overflow-hidden" : "hidden"}
+871-              >
+--
+937-              onClick={() => {
+938-                logEvent(
+939-                  "NAVIGATION",
+940-                  'Clicked "Start" button - Navigated to dashboard',
+941-                );
+942:                setCurrentPage("dashboard");
+943-              }}
+944-              className="bg-gradient-to-br from-white to-legacy-bg border-2 border-white shadow-[3px_3px_0_0_rgba(0,0,0,0.2)] px-4 py-1.5 flex items-center gap-3 transition-all hover:to-white active:shadow-[inset_2px_2px_0_0_rgba(0,0,0,0.2)] active:translate-x-[1px] active:translate-y-[1px] cursor-pointer shrink-0"
+945-            >
+946-              <div className="h-6 w-6 bg-gradient-to-br from-indigo-900 to-legacy-navy flex items-center justify-center text-white text-[10px] font-black border border-white/50 rotate-3 shadow-lg">
+947-                PO
+--
+956-            <div className="hidden items-center gap-1.5 shrink-0">
+957-              <button
+958-                onClick={() => {
+959-                  logEvent("NAVIGATION", 'Clicked "Menu Dashboard" on Taskbar');
+960-                  setDashboardTab("menu");
+961:                  setCurrentPage("dashboard");
+962-                }}
+963-                className={cn(
+964-                  "h-8 px-3 border-2 flex items-center gap-2 transition-all active:translate-x-[1px] active:translate-y-[1px] rounded-md cursor-pointer shrink-0",
+965-                  currentPage === "dashboard" && dashboardTab === "menu"
+966-                    ? "bg-indigo-100 border-indigo-600 text-indigo-900 shadow-[inset_1px_1px_2px_rgba(0,0,0,0.15)] font-extrabold"
+--
+978-                  logEvent(
+979-                    "NAVIGATION",
+980-                    'Clicked "Mismatch Dashboard" on Taskbar',
+981-                  );
+982-                  setDashboardTab("mismatch");
+983:                  setCurrentPage("dashboard");
+984-                }}
+985-                className={cn(
+986-                  "h-8 px-3 border-2 flex items-center gap-2 transition-all active:translate-x-[1px] active:translate-y-[1px] rounded-md cursor-pointer shrink-0",
+987-                  currentPage === "dashboard" && dashboardTab === "mismatch"
+988-                    ? "bg-amber-100 border-amber-600 text-amber-900 shadow-[inset_1px_1px_2px_rgba(0,0,0,0.15)] font-extrabold"
+--
+1000-                  logEvent(
+1001-                    "NAVIGATION",
+1002-                    'Clicked "Report Dashboard" on Taskbar',
+1003-                  );
+1004-                  setDashboardTab("reports");
+1005:                  setCurrentPage("dashboard");
+1006-                }}
+1007-                className={cn(
+1008-                  "h-8 px-3 border-2 flex items-center gap-2 transition-all active:translate-x-[1px] active:translate-y-[1px] rounded-md cursor-pointer shrink-0",
+1009-                  currentPage === "dashboard" && dashboardTab === "reports"
+1010-                    ? "bg-emerald-100 border-emerald-600 text-emerald-950 shadow-[inset_1px_1px_2px_rgba(0,0,0,0.15)] font-extrabold"
+--
+1030-                      if (currentPage === "admindesk") {
+1031-                        logEvent(
+1032-                          "MINIMIZE",
+1033-                          'Minimized "admindesk" to dashboard',
+1034-                        );
+1035:                        setCurrentPage("dashboard");
+1036-                      } else {
+1037-                        logEvent(
+1038-                          "RESTORE",
+1039-                          'Restored "admindesk" from taskbar',
+1040-                        );
+1041:                        setCurrentPage("admindesk");
+1042-                      }
+1043-                    }}
+1044-                    className={cn(
+1045-                      "pl-4 pr-8 h-8 border-2 flex items-center gap-2 transition-all active:translate-x-[1px] active:translate-y-[1px] rounded-md cursor-pointer shrink-0",
+1046-                      currentPage === "admindesk"
+--
+1086-                        if (isActive) {
+1087-                          logEvent(
+1088-                            "MINIMIZE",
+1089-                            `Minimized page "${pageId}" to dashboard`,
+1090-                          );
+1091:                          setCurrentPage("dashboard"); // Minimize if already active
+1092-                        } else {
+1093-                          logEvent(
+1094-                            "RESTORE",
+1095-                            `Restored page "${pageId}" from taskbar`,
+1096-                          );
+1097:                          setCurrentPage(pageId); // Restore if minimized
+1098-                        }
+1099-                      }}
+1100-                      className={cn(
+1101-                        "pl-4 pr-8 h-8 border-2 flex items-center gap-2 transition-all active:translate-x-[1px] active:translate-y-[1px] rounded-md cursor-pointer shrink-0",
+1102-                        isActive
+--
+1257-                          .id as Page;
+1258-                        logEvent(
+1259-                          "HOTKEY_NAV",
+1260-                          `Quick-navigated to operational module: "${targetPage}" via Ctrl+K command menu`,
+1261-                        );
+1262:                        setCurrentPage(targetPage);
+1263-                        setShowCommandSearch(false);
+1264-                      }
+1265-                    } else if (e.key === "Escape") {
+1266-                      setShowCommandSearch(false);
+1267-                    }
+--
+1303-                      onClick={() => {
+1304-                        logEvent(
+1305-                          "HOTKEY_NAV",
+1306-                          `Quick-navigated to operational module: "${item.id}" via Ctrl+K command menu`,
+1307-                        );
+1308:                        setCurrentPage(item.id as Page);
+1309-                        setShowCommandSearch(false);
+1310-                      }}
+1311-                      onMouseEnter={() => setHighlightedCommandIndex(idx)}
+1312-                      className={cn(
+1313-                        "w-full text-left px-4 py-2.5 flex items-center justify-between text-xs font-bold transition-all border-b border-slate-100 last:border-b-0 cursor-pointer uppercase",

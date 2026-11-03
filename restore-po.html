@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Restore POs into purchase_master (undo split)</title>
+<style>
+  *{box-sizing:border-box}
+  body{font-family:system-ui,Segoe UI,Roboto,sans-serif;margin:0;background:#f1f5f9;color:#0f172a}
+  .wrap{max-width:760px;margin:0 auto;padding:24px}
+  h1{font-size:20px;margin:0 0 4px}
+  .sub{color:#64748b;font-size:13px;margin-bottom:20px}
+  .card{background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:20px;margin-bottom:16px}
+  button{font-weight:700;border:none;border-radius:8px;padding:10px 16px;cursor:pointer;font-size:13px}
+  .btn-primary{background:#024a68;color:#fff}
+  #log{font-family:ui-monospace,monospace;font-size:12px;white-space:pre-wrap;background:#0f172a;color:#e2e8f0;padding:12px;border-radius:8px;max-height:260px;overflow:auto}
+  .ok{background:#dcfce7;border:1px solid #86efac;color:#166534;padding:10px 12px;border-radius:8px;font-size:12.5px;margin-bottom:14px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Restore all POs into purchase_master</h1>
+  <div class="sub">Consolidates everything back into the single <b>purchase_master</b> table so Temporary P.O and Final P.O (split by status) both work. Only <b>adds</b> rows that are missing — never deletes. Safe to run once or repeatedly.</div>
+  <div class="ok">✅ Run this after deploying the new single-table code. It copies any rows that the earlier split left only in temporary_po back into purchase_master.</div>
+  <div class="card">
+    <button id="runBtn" class="btn-primary">Run restore</button>
+  </div>
+  <div class="card"><b style="font-size:13px">Log</b><div id="log" style="margin-top:8px">Ready.</div></div>
+</div>
+<script>
+const URL='https://lxuapkccxaadwixjpirs.supabase.co';
+const KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx4dWFwa2NjeGFhZHdpeGpwaXJzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg4MzQ4NDksImV4cCI6MjA5NDQxMDg0OX0.rzjJFNOb1gx0Z4cMSfkW9yDe4rI8oO6TLTzcVXswPek';
+const H={apikey:KEY,Authorization:'Bearer '+KEY};
+const logEl=document.getElementById('log');
+const log=m=>{logEl.textContent+='\n'+m;logEl.scrollTop=logEl.scrollHeight;};
+document.getElementById('runBtn').onclick=async()=>{
+  const btn=document.getElementById('runBtn');btn.disabled=true;btn.textContent='Running…';
+  logEl.textContent='Running restore…';
+  const sql=`
+    DO $$
+    BEGIN
+      IF EXISTS (SELECT FROM pg_tables WHERE schemaname='public' AND tablename='temporary_po') THEN
+        INSERT INTO purchase_master SELECT * FROM temporary_po ON CONFLICT (po_no) DO NOTHING;
+      END IF;
+      IF EXISTS (SELECT FROM pg_tables WHERE schemaname='public' AND tablename='temporary_po_details') THEN
+        INSERT INTO purchase_detail_master SELECT * FROM temporary_po_details ON CONFLICT (item_id) DO NOTHING;
+      END IF;
+    END $$;
+    NOTIFY pgrst, 'reload schema';
+  `;
+  try{
+    const r=await fetch(`${URL}/rest/v1/rpc/exec_sql`,{method:'POST',headers:{...H,'Content-Type':'application/json'},body:JSON.stringify({query:sql})});
+    const txt=await r.text();
+    if(!r.ok) throw new Error(`${r.status} ${txt}`);
+    log('Restore complete. ✅ All POs are now in purchase_master.');
+    // Report count
+    const c=await fetch(`${URL}/rest/v1/purchase_master?select=*`,{method:'HEAD',headers:{...H,Prefer:'count=exact',Range:'0-0'}});
+    log('purchase_master row count: '+(c.headers.get('content-range')||'?'));
+    alert('Done. Now hard-refresh the app (Ctrl+Shift+R).');
+    btn.textContent='Completed ✓';
+  }catch(e){log('ERROR: '+e.message);alert('Restore failed: '+e.message);btn.disabled=false;btn.textContent='Run restore';}
+};
+</script>
+</body>
+</html>

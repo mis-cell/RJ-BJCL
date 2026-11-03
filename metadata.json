@@ -1,0 +1,8 @@
+{
+  "name": "Remix BJL",
+  "description": "A comprehensive raw jute management system for jute mills, featuring arrival tracking (Amad), transaction management (Sauda), and inventory reporting.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "KATEYE"
+  ]
+}

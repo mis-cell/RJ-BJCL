@@ -1,0 +1,2 @@
+Line 219: label: string;   name: "arrival_no" | "po_no";   fieldColumn: "temporary_arrival_no" | "po_no";   value: string;   disabled?: boolean;   placeholder: string;   onChange: (e: React.ChangeEvent<HTMLInputElement>) => void;   onSelectOption?: (val: string, record?: any) => void;   savedInspections?: any[];
+Line 520: onClose?: () => void;   onLogEvent?: (event: string, details: string) => void;
