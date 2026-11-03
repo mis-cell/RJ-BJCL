@@ -1,0 +1,62 @@
+import express from 'express';
+import cors from 'cors';
+import { pool, query } from './db.ts';
+
+const app = express();
+const PORT = process.env.BACKEND_PORT || 5000;
+
+app.use(cors());
+app.use(express.json({ limit: '50mb' }));
+
+// Health check endpoint
+app.get('/api/health', async (_req, res) => {
+  try {
+    const result = await query('SELECT NOW() as current_time, current_database() as db_name');
+    res.json({
+      status: 'online',
+      message: 'Local PostgreSQL backend is running',
+      database: result.rows[0].db_name,
+      timestamp: result.rows[0].current_time
+    });
+  } catch (err: any) {
+    res.status(500).json({ status: 'error', error: err.message });
+  }
+});
+
+// Generic query endpoint for local tables
+app.get('/api/data/:table', async (req, res) => {
+  const { table } = req.params;
+  const cleanTable = table.replace(/[^a-zA-Z0-9_]/g, '');
+  try {
+    const result = await query(`SELECT * FROM ${cleanTable} ORDER BY 1 DESC LIMIT 1000`);
+    res.json(result.rows);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Generic insert endpoint
+app.post('/api/data/:table', async (req, res) => {
+  const { table } = req.params;
+  const cleanTable = table.replace(/[^a-zA-Z0-9_]/g, '');
+  const body = req.body;
+  const keys = Object.keys(body);
+  const values = Object.values(body);
+  if (keys.length === 0) return res.status(400).json({ error: 'No data provided' });
+
+  const columns = keys.map(k => `"${k}"`).join(', ');
+  const placeholders = keys.map((_, i) => `$${i + 1}`).join(', ');
+  try {
+    const q = `INSERT INTO ${cleanTable} (${columns}) VALUES (${placeholders}) RETURNING *`;
+    const result = await query(q, values);
+    res.json(result.rows[0]);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.listen(PORT, () => {
+  console.log(`[Local Backend] Running directly with local PostgreSQL on http://localhost:${PORT}`);
+});
+
+export default app;
