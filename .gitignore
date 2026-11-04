@@ -6,3 +6,7 @@ coverage/
 *.log
 .env*
 !.env.example
+complete_local_data.sql
+local_complete_data_seed.sql
+complete_local_migration.sql
+seed_core_business_data.sql

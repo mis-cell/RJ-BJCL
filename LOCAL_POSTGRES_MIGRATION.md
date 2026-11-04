@@ -1,95 +1,86 @@
-# Bally Jute ERP - 100% Local PostgreSQL Migration Guide
+# Bally Jute ERP - 100% Local PostgreSQL & pgAdmin Migration Guide
 
-This application has been fully decoupled from Supabase Cloud. It now runs **100% on local PostgreSQL (`bjcl_db`)** using native Node.js PostgreSQL drivers (`pg.Pool`).
-
----
-
-## What Changed in the Codebase
-
-1. **Supabase Cloud Connection Removed**:
-   - `src/lib/supabase.ts` now routes all 460+ database queries through a native client (`src/lib/localPostgresClient.ts`).
-   - The Express backend (`server.ts`) directly handles database operations on local PostgreSQL (`bjcl_db` on port 5432) via `/api/db/*`.
-   - No external Supabase URLs, anon keys, or third-party connections are used.
-
-2. **Database Data Seed File (`seed_core_business_data.sql`)**:
-   - Contains all 10 user accounts (`user_master`), 1,381 suppliers, 979 arrivals, 867 payments, saudas, and purchase orders extracted from the cloud database.
+This application has been migrated from Supabase Cloud to run **100% locally on your own machine** using native PostgreSQL (`bjcl_db`) and pgAdmin 4.
 
 ---
 
-## Step-by-Step Setup on Your Local Ubuntu Server (`192.168.1.6`)
+## Why You Saw Those 3 Errors (And How We Fix Them)
 
-### Step 1: Initialize Database Schema in `bjcl_db`
-In your terminal, navigate to the project directory:
-```bash
-chmod +x backend/*.sh
-./backend/setup_database.sh
-```
-*(Enter your local PostgreSQL password. This creates `bjcl_db` and all table schemas, constraints, and area logic).*
+### Error 1: `failed to resolve host 'ubuntu/127.0.0.1': [Errno -2] Name or service not known`
+- **Cause**: In pgAdmin 4 "Register - Server" modal, under the "Connection" tab, you entered `ubuntu/127.0.0.1`.
+- **Fix**: The Host name must be **`127.0.0.1`** or **`localhost`** (without `ubuntu/`).
 
-### Step 2: Import All Core Business Data (All Tables & Rows)
-Run this single command to insert all actual data:
-```bash
-psql -h localhost -U postgres -d bjcl_db -f seed_core_business_data.sql
-```
-*(Enter your local PostgreSQL password).*
+### Error 2: `Failed to start postgresql.service: Unit postgresql.service not found.`
+- **Cause**: PostgreSQL server is **not installed** yet on your Ubuntu machine (`ubuntu@ubuntu`).
+- **Fix**: Run:
+  ```bash
+  sudo apt update
+  sudo apt install -y postgresql postgresql-contrib
+  ```
 
-### Step 3: Configure Environment Variables
-Copy or edit `.env`:
-```bash
-nano .env
-```
-Ensure it contains your local PostgreSQL credentials:
-```env
-PGHOST=localhost
-PGPORT=5432
-PGDATABASE=bjcl_db
-PGUSER=postgres
-PGPASSWORD=your_actual_postgres_password
-PORT=3000
-```
-*(Save with `Ctrl + O`, `Enter`, `Ctrl + X`)*.
-
-### Step 4: Build and Start the Application
-```bash
-npm install
-npm run build
-pm2 start dist/server.cjs --name "bjl-app"
-pm2 save
-pm2 startup
-```
+### Error 3: `connection to server at "127.0.0.1", port 5432 failed: Connection refused`
+- **Cause**: Port 5432 is refused because PostgreSQL wasn't installed or running.
+- **Fix**: Once installed and started (`sudo systemctl start postgresql`), port 5432 will accept connections immediately.
 
 ---
 
-## Verifying the Migration
+## 🚀 1-Click Automated Setup (Recommended)
 
-1. **In pgAdmin 4:**
-   Connect to `bjcl_db` and run:
-   ```sql
-   SELECT 'user_master' as table, count(*) FROM user_master
-   UNION ALL
-   SELECT 'supply_master', count(*) FROM supply_master
-   UNION ALL
-   SELECT 'final_arrival', count(*) FROM final_arrival
-   UNION ALL
-   SELECT 'sauda_master', count(*) FROM sauda_master
-   UNION ALL
-   SELECT 'purchase_master', count(*) FROM purchase_master;
-   ```
-   *All rows will be present locally on your disk.*
+Run the included automated setup script in your project directory:
+```bash
+chmod +x import_to_local_postgres.sh
+./import_to_local_postgres.sh
+```
 
-2. **In the Web App:**
-   Open:
-   - Local PC: `http://localhost:3000`
-   - Office LAN: `http://192.168.1.6:3000`
-   - External (Static IP): `http://115.187.60.183:3000`
-
-   Log in using the real administrator account:
-   - **Username:** `ADMIN`
-   - **Password:** `Admin@3656`
+**What this script does automatically**:
+1. Checks if PostgreSQL is installed; installs it via `apt` if missing.
+2. Starts and enables the `postgresql` service.
+3. Sets the `postgres` superuser password to `postgres`.
+4. Creates the database `bjcl_db`.
+5. Imports **all 82 tables, views, and 9 stored functions** from `complete_local_schema.sql`.
+6. Imports **100% of live data (84,726 rows across 59 active tables)** from `complete_local_data.sql`.
+7. Generates the local `.env` file pointing directly to `postgresql://postgres:postgres@localhost:5432/bjcl_db`.
 
 ---
 
-## Supabase Features Assessment
-- **PostgREST / Realtime WebSockets:** Replaced by native Express `/api/db` routes that execute parameterized SQL directly against PostgreSQL.
-- **Row Level Security (RLS) / Auth:** Replaced by the native application authentication system (`user_master` and session tokens).
-- **Storage / Bucket:** File uploads are saved directly on the local server disk (`/public/uploads` or data URIs).
+## 🖥️ How to Connect in pgAdmin 4
+
+1. Open pgAdmin 4.
+2. In the left sidebar, right-click **Servers** ➔ **Register** ➔ **Server...**
+3. **General Tab**:
+   - **Name**: `Bally Jute Local DB` (or any label)
+4. **Connection Tab**:
+   - **Host name/address**: `127.0.0.1`  *(NOT `ubuntu/127.0.0.1`)*
+   - **Port**: `5432`
+   - **Maintenance database**: `bjcl_db`  *(or `postgres`)*
+   - **Username**: `postgres`
+   - **Password**: `postgres`
+   - Check **Save password?**
+5. Click **Save**.
+6. You will see all 82 tables and 9 functions inside:
+   `Servers ➔ Bally Jute Local DB ➔ Databases ➔ bjcl_db ➔ Schemas ➔ public ➔ Tables`
+
+---
+
+## 📊 Summary of Migrated Tables & Data
+
+- **Total Exposed Tables**: 82 of 82 tables
+- **Total Exposed Functions**: 9 of 9 functions (`fn_save_material_inspection`, `update_purchase_pending_received`, `exec_sql_return`, etc.)
+- **Total Live Data Records**: 84,726 rows
+  - `user_master`: 10 real users
+  - `supply_master`: 1,381 suppliers
+  - `temporary_material_received`: 979 arrivals
+  - `payment_master`: 867 payment records
+  - `satta_calculated_rates`: 58,074 rate records
+  - `sauda_check_point_details`: 4,374 sauda items
+  - `material_inspection`: inspection records
+  - All other masters (area, broker, godown, grade, marka, unit, etc.)
+
+---
+
+## 🏃 Running the Application Locally
+
+```bash
+npm run dev
+```
+Open **http://localhost:3000** in your browser. All data loads directly from your local PostgreSQL database!

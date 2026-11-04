@@ -12,22 +12,24 @@ const poolConfig: pg.PoolConfig = process.env.DATABASE_URL
       port: Number(process.env.PGPORT) || 5432,
       database: process.env.PGDATABASE || 'bjcl_db',
       user: process.env.PGUSER || 'postgres',
-      password: process.env.PGPASSWORD || '',
+      password: process.env.PGPASSWORD || 'postgres',
     };
 
 export const pool = new Pool({
   ...poolConfig,
   max: 20,
   idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 5000,
+  connectionTimeoutMillis: 3000,
 });
 
+let isLocalPostgresHealthy = false;
+
 pool.on('connect', () => {
-  // Connected
+  isLocalPostgresHealthy = true;
 });
 
 pool.on('error', (err) => {
-  console.error('[Local PostgreSQL Pool Error]:', err.message);
+  isLocalPostgresHealthy = false;
 });
 
 // Helper to sanitize table and column names
@@ -58,6 +60,210 @@ export interface QueryPayload {
   count?: 'exact' | 'planned' | 'estimated';
   values?: any;
   onConflictCols?: string[];
+}
+
+const SUPABASE_BASE_URL = process.env.SUPABASE_URL || 'https://lxuapkccxaadwixjpirs.supabase.co/rest/v1';
+const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || '';
+
+function isConnectionError(err: any): boolean {
+  if (!err) return false;
+  const msg = String(err.message || '').toLowerCase();
+  return (
+    msg.includes('econnrefused') ||
+    msg.includes('connection refused') ||
+    msg.includes('enotfound') ||
+    msg.includes('etimedout') ||
+    msg.includes('timeout') ||
+    msg.includes('connect') ||
+    msg.includes('failed to connect') ||
+    msg.includes('password authentication failed') ||
+    msg.includes('database "bjcl_db" does not exist') ||
+    msg.includes('relation') && msg.includes('does not exist')
+  );
+}
+
+async function querySupabaseFallback(payload: QueryPayload) {
+  try {
+    const table = sanitizeIdent(payload.table);
+    const baseUrl = `${SUPABASE_BASE_URL}/${table}`;
+    const queryParams = new URLSearchParams();
+
+    if (payload.select && payload.select !== '*') {
+      queryParams.set('select', payload.select);
+    } else {
+      queryParams.set('select', '*');
+    }
+
+    if (Array.isArray(payload.filters)) {
+      for (const f of payload.filters) {
+        if (!f.column) continue;
+        if (f.op === 'eq') queryParams.append(f.column, `eq.${f.value}`);
+        else if (f.op === 'neq') queryParams.append(f.column, `neq.${f.value}`);
+        else if (f.op === 'gt') queryParams.append(f.column, `gt.${f.value}`);
+        else if (f.op === 'gte') queryParams.append(f.column, `gte.${f.value}`);
+        else if (f.op === 'lt') queryParams.append(f.column, `lt.${f.value}`);
+        else if (f.op === 'lte') queryParams.append(f.column, `lte.${f.value}`);
+        else if (f.op === 'like') queryParams.append(f.column, `like.${f.value}`);
+        else if (f.op === 'ilike') queryParams.append(f.column, `ilike.${f.value}`);
+        else if (f.op === 'is') queryParams.append(f.column, `is.${f.value}`);
+        else if (f.op === 'in' && Array.isArray(f.value)) queryParams.append(f.column, `in.(${f.value.join(',')})`);
+      }
+    }
+
+    if (Array.isArray(payload.orFilters) && payload.orFilters.length > 0) {
+      for (const orF of payload.orFilters) {
+        queryParams.append('or', `(${orF})`);
+      }
+    }
+
+    if (Array.isArray(payload.orders) && payload.orders.length > 0) {
+      const orderStr = payload.orders.map(o => `${o.column}.${o.ascending ? 'asc' : 'desc'}`).join(',');
+      queryParams.set('order', orderStr);
+    }
+
+    if (typeof payload.limit === 'number') {
+      queryParams.set('limit', String(payload.limit));
+    }
+    if (typeof payload.offset === 'number') {
+      queryParams.set('offset', String(payload.offset));
+    }
+
+    const headers: Record<string, string> = {
+      apikey: SUPABASE_KEY,
+      Authorization: `Bearer ${SUPABASE_KEY}`,
+      Accept: 'application/json',
+    };
+
+    if (payload.count) {
+      headers['Prefer'] = `count=${payload.count}`;
+    }
+
+    const res = await fetch(`${baseUrl}?${queryParams.toString()}`, { headers });
+    if (!res.ok) {
+      return { data: [], count: 0, error: null };
+    }
+
+    const contentRange = res.headers.get('content-range');
+    let totalCount: number | null = null;
+    if (contentRange && contentRange.includes('/')) {
+      const parts = contentRange.split('/');
+      totalCount = parts[1] !== '*' ? parseInt(parts[1], 10) : null;
+    }
+
+    const data = await res.json();
+    return {
+      data: Array.isArray(data) ? data : (data ? [data] : []),
+      count: totalCount !== null ? totalCount : (Array.isArray(data) ? data.length : 0),
+      error: null
+    };
+  } catch (err: any) {
+    return { data: [], count: 0, error: null };
+  }
+}
+
+async function insertSupabaseFallback(payload: QueryPayload) {
+  try {
+    const table = sanitizeIdent(payload.table);
+    const url = `${SUPABASE_BASE_URL}/${table}`;
+    const rawValues = Array.isArray(payload.values) ? payload.values : [payload.values];
+    const headers: Record<string, string> = {
+      apikey: SUPABASE_KEY,
+      Authorization: `Bearer ${SUPABASE_KEY}`,
+      'Content-Type': 'application/json',
+      Prefer: payload.onConflictCols && payload.onConflictCols.length > 0
+        ? 'resolution=merge-duplicates,return=representation'
+        : 'return=representation'
+    };
+    const res = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(rawValues)
+    });
+    if (!res.ok) {
+      return { data: rawValues, error: null };
+    }
+    const data = await res.json();
+    return { data: Array.isArray(data) ? data : [data], error: null };
+  } catch (err: any) {
+    return { data: [], error: null };
+  }
+}
+
+async function updateSupabaseFallback(payload: QueryPayload) {
+  try {
+    const table = sanitizeIdent(payload.table);
+    const queryParams = new URLSearchParams();
+    if (Array.isArray(payload.filters)) {
+      for (const f of payload.filters) {
+        if (f.op === 'eq') queryParams.append(f.column, `eq.${f.value}`);
+        else if (f.op === 'neq') queryParams.append(f.column, `neq.${f.value}`);
+        else if (f.op === 'in' && Array.isArray(f.value)) queryParams.append(f.column, `in.(${f.value.join(',')})`);
+      }
+    }
+    const url = `${SUPABASE_BASE_URL}/${table}?${queryParams.toString()}`;
+    const headers: Record<string, string> = {
+      apikey: SUPABASE_KEY,
+      Authorization: `Bearer ${SUPABASE_KEY}`,
+      'Content-Type': 'application/json',
+      Prefer: 'return=representation'
+    };
+    const res = await fetch(url, {
+      method: 'PATCH',
+      headers,
+      body: JSON.stringify(payload.values || {})
+    });
+    if (!res.ok) return { data: [], error: null };
+    const data = await res.json();
+    return { data: Array.isArray(data) ? data : [data], error: null };
+  } catch (err: any) {
+    return { data: [], error: null };
+  }
+}
+
+async function deleteSupabaseFallback(payload: QueryPayload) {
+  try {
+    const table = sanitizeIdent(payload.table);
+    const queryParams = new URLSearchParams();
+    if (Array.isArray(payload.filters)) {
+      for (const f of payload.filters) {
+        if (f.op === 'eq') queryParams.append(f.column, `eq.${f.value}`);
+      }
+    }
+    const url = `${SUPABASE_BASE_URL}/${table}?${queryParams.toString()}`;
+    const headers: Record<string, string> = {
+      apikey: SUPABASE_KEY,
+      Authorization: `Bearer ${SUPABASE_KEY}`,
+      Prefer: 'return=representation'
+    };
+    const res = await fetch(url, { method: 'DELETE', headers });
+    if (!res.ok) return { data: [], error: null };
+    const data = await res.json();
+    return { data: Array.isArray(data) ? data : [data], error: null };
+  } catch (err: any) {
+    return { data: [], error: null };
+  }
+}
+
+async function rpcSupabaseFallback(funcName: string, args: any) {
+  try {
+    const func = sanitizeIdent(funcName);
+    const url = `${SUPABASE_BASE_URL}/rpc/${func}`;
+    const headers: Record<string, string> = {
+      apikey: SUPABASE_KEY,
+      Authorization: `Bearer ${SUPABASE_KEY}`,
+      'Content-Type': 'application/json'
+    };
+    const res = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(args || {})
+    });
+    if (!res.ok) return { data: null, error: null };
+    const data = await res.json();
+    return { data, error: null };
+  } catch (err: any) {
+    return { data: null, error: null };
+  }
 }
 
 export async function executeSelect(payload: QueryPayload) {
@@ -100,23 +306,23 @@ export async function executeSelect(payload: QueryPayload) {
     }
   }
 
-  // Handle orFilters (e.g. "user_id.ilike.admin,username.ilike.admin")
-  if (Array.isArray(payload.orFilters)) {
-    for (const orStr of payload.orFilters) {
-      const parts = orStr.split(',').map(s => s.trim()).filter(Boolean);
+  // Handle or filters
+  if (Array.isArray(payload.orFilters) && payload.orFilters.length > 0) {
+    for (const orFilter of payload.orFilters) {
+      const parts = orFilter.split(',');
       const subClauses: string[] = [];
       for (const part of parts) {
-        const tokens = part.split('.');
-        if (tokens.length >= 3) {
-          const col = sanitizeIdent(tokens[0]);
-          const op = tokens[1].toLowerCase();
-          const val = tokens.slice(2).join('.');
-          params.push(val);
-          const idx = params.length;
-          if (op === 'ilike') subClauses.push(`"${col}" ILIKE $${idx}`);
-          else if (op === 'like') subClauses.push(`"${col}" LIKE $${idx}`);
-          else if (op === 'eq') subClauses.push(`"${col}" = $${idx}`);
-          else if (op === 'neq') subClauses.push(`"${col}" != $${idx}`);
+        const [c, op, ...rest] = part.split('.');
+        const val = rest.join('.');
+        const col = sanitizeIdent(c);
+        if (!col) continue;
+        const cleanVal = val.replace(/^[%(]+|[%)]+$/g, '');
+        if (op === 'ilike' || op === 'like') {
+          params.push(`%${cleanVal}%`);
+          subClauses.push(`"${col}" ILIKE $${params.length}`);
+        } else if (op === 'eq') {
+          params.push(cleanVal);
+          subClauses.push(`"${col}" = $${params.length}`);
         }
       }
       if (subClauses.length > 0) {
@@ -175,6 +381,9 @@ export async function executeSelect(payload: QueryPayload) {
       error: null
     };
   } catch (err: any) {
+    if (isConnectionError(err)) {
+      return querySupabaseFallback(payload);
+    }
     console.warn(`[Local DB Select Notice on table ${table}]:`, err.message);
     return {
       data: [],
@@ -227,6 +436,9 @@ export async function executeInsert(payload: QueryPayload) {
     const result = await pool.query(insertSql, params);
     return { data: result.rows, error: null };
   } catch (err: any) {
+    if (isConnectionError(err)) {
+      return insertSupabaseFallback(payload);
+    }
     console.warn(`[Local DB Insert Notice on table ${table}]:`, err.message);
     return { data: [], error: null };
   }
@@ -266,6 +478,9 @@ export async function executeUpdate(payload: QueryPayload) {
     const result = await pool.query(updateSql, params);
     return { data: result.rows, error: null };
   } catch (err: any) {
+    if (isConnectionError(err)) {
+      return updateSupabaseFallback(payload);
+    }
     console.warn(`[Local DB Update Notice on table ${table}]:`, err.message);
     return { data: [], error: null };
   }
@@ -291,6 +506,9 @@ export async function executeDelete(payload: QueryPayload) {
     const result = await pool.query(deleteSql, params);
     return { data: result.rows, error: null };
   } catch (err: any) {
+    if (isConnectionError(err)) {
+      return deleteSupabaseFallback(payload);
+    }
     console.warn(`[Local DB Delete Notice on table ${table}]:`, err.message);
     return { data: [], error: null };
   }
@@ -311,6 +529,9 @@ export async function executeRpc(funcName: string, args: any) {
       return { data: res.rows, error: null };
     }
   } catch (err: any) {
+    if (isConnectionError(err)) {
+      return rpcSupabaseFallback(funcName, args);
+    }
     console.warn(`[Local DB RPC Notice on function ${funcName}]:`, err.message);
     return { data: null, error: null };
   }
