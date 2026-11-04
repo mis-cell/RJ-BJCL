@@ -63,22 +63,28 @@ echo "======================================================================"
 echo "  Migration Verification (Live Records in Local PostgreSQL)"
 echo "======================================================================"
 PGPASSWORD=postgres psql -h 127.0.0.1 -U postgres -d bjcl_db -c "
-SELECT 'user_master' AS table_name, COUNT(*) AS count FROM user_master
+SELECT 'TOTAL TABLES & VIEWS' AS metric, COUNT(*)::text AS count 
+FROM information_schema.tables WHERE table_schema = 'public'
 UNION ALL
-SELECT 'supply_master', COUNT(*) FROM supply_master
+SELECT 'user_master', COUNT(*)::text FROM user_master
 UNION ALL
-SELECT 'sauda_check_point_details', COUNT(*) FROM sauda_check_point_details
+SELECT 'supply_master', COUNT(*)::text FROM supply_master
 UNION ALL
-SELECT 'temporary_material_received', COUNT(*) FROM temporary_material_received
+SELECT 'sauda_check_point_details', COUNT(*)::text FROM sauda_check_point_details
 UNION ALL
-SELECT 'material_inspection', COUNT(*) FROM material_inspection
+SELECT 'temporary_material_received', COUNT(*)::text FROM temporary_material_received
 UNION ALL
-SELECT 'mr_settlement_master', COUNT(*) FROM mr_settlement_master
+SELECT 'material_inspection', COUNT(*)::text FROM material_inspection
 UNION ALL
-SELECT 'payment_master', COUNT(*) FROM payment_master
+SELECT 'mr_settlement_master', COUNT(*)::text FROM mr_settlement_master
 UNION ALL
-SELECT 'satta_calculated_rates', COUNT(*) FROM satta_calculated_rates;
+SELECT 'payment_master', COUNT(*)::text FROM payment_master
+UNION ALL
+SELECT 'satta_calculated_rates', COUNT(*)::text FROM satta_calculated_rates
+UNION ALL
+SELECT 'user_activity_logs', COUNT(*)::text FROM user_activity_logs;
 "
+
 
 echo ""
 echo "======================================================================"
