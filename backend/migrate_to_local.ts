@@ -5,8 +5,8 @@ import path from 'path';
 
 dotenv.config({ path: path.resolve(__dirname, '../.env') });
 
-const SUPABASE_CLOUD_URL = 'https://lxuapkccxaadwixjpirs.supabase.co';
-const SUPABASE_CLOUD_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx4dWFwa2NjeGFhZHdpeGpwaXJzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg4MzQ4NDksImV4cCI6MjA5NDQxMDg0OX0.rzjJFNOb1gx0Z4cMSfkW9yDe4rI8oO6TLTzcVXswPek';
+const SUPABASE_CLOUD_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || 'https://lxuapkccxaadwixjpirs.supabase.co';
+const SUPABASE_CLOUD_KEY = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY || '';
 
 const supabaseCloud = createClient(SUPABASE_CLOUD_URL, SUPABASE_CLOUD_KEY);
 

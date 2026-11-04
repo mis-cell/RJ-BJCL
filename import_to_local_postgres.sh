@@ -35,8 +35,8 @@ sudo -u postgres psql -c "CREATE DATABASE bjcl_db;" 2>/dev/null || echo "Databas
 echo "📋 Step 2/3: Applying exact 82 tables schema + 9 stored functions into bjcl_db..."
 PGPASSWORD=postgres psql -h 127.0.0.1 -U postgres -d bjcl_db -f "complete_local_schema.sql"
 
-# 5. Import Complete Live Data (84,726 live records)
-echo "💾 Step 3/3: Importing 100% of live data (84,726 rows) into bjcl_db..."
+# 5. Import Complete Live Data (85,143 live records)
+echo "💾 Step 3/3: Importing 100% of live data (85,143 rows) into bjcl_db..."
 if [ -f "complete_local_data.sql.gz" ]; then
     echo "📦 Extracting and streaming complete_local_data.sql.gz directly into bjcl_db..."
     gunzip -c "complete_local_data.sql.gz" | PGPASSWORD=postgres psql -h 127.0.0.1 -U postgres -d bjcl_db
