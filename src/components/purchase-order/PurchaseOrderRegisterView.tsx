@@ -529,13 +529,29 @@ export const PurchaseOrderRegisterView: React.FC<PurchaseOrderRegisterViewProps>
 
       {/* Desktop & Laptop Compact 14-Column Single-Screen Table */}
       <div className="hidden md:block bg-white border border-slate-200 rounded-xl shadow-2xs overflow-x-auto overflow-y-auto max-h-[calc(100vh-235px)] min-h-[380px] w-full">
-        <table className="w-full table-fixed min-w-[1180px] xl:min-w-0 border-collapse text-[11px] text-slate-900">
+        <table className="w-full table-fixed min-w-[1250px] xl:min-w-0 border-collapse text-[11px] text-slate-900">
+          <colgroup>
+            <col style={{ width: "15%" }} />   {/* PO / PTF */}
+            <col style={{ width: "5.5%" }} />  {/* Date */}
+            <col style={{ width: "5%" }} />    {/* Type */}
+            <col style={{ width: "7%" }} />    {/* Broker */}
+            <col style={{ width: "5%" }} />    {/* Unit */}
+            <col style={{ width: "5%" }} />    {/* Count */}
+            <col style={{ width: "8%" }} />    {/* Weight */}
+            <col style={{ width: "6%" }} />    {/* Status */}
+            <col style={{ width: "7%" }} />    {/* Lorry Status */}
+            <col style={{ width: "8%" }} />    {/* WT Status */}
+            <col style={{ width: "5%" }} />    {/* Pass/MIS */}
+            <col style={{ width: "8.5%" }} />    {/* Stage */}
+            <col style={{ width: "4.5%" }} />    {/* Chart */}
+            <col style={{ width: "5.5%" }} />  {/* Actions */}
+          </colgroup>
           <thead className="bg-[#FDE7E6] sticky top-0 z-20 border-b-2 border-[#D94B5A] shadow-2xs">
             <tr className="h-9 text-[#111111] text-[10.5px] font-black uppercase tracking-tight select-none">
               {/* 1. PO / PTF No */}
               <th
                 onClick={() => handleSort('po_no')}
-                className="w-[8.5%] px-2 py-2 text-left border-r border-rose-200/80 whitespace-nowrap cursor-pointer hover:bg-[#FBCFCB] transition-colors group"
+                className=" px-2 py-2 text-left border-r border-rose-200/80 whitespace-nowrap cursor-pointer hover:bg-[#FBCFCB] transition-colors group"
                 title="Sort by PO / PTF No"
               >
                 <div className="flex items-center gap-0.5 truncate">
@@ -547,7 +563,7 @@ export const PurchaseOrderRegisterView: React.FC<PurchaseOrderRegisterViewProps>
               {/* 2. Date */}
               <th
                 onClick={() => handleSort('date')}
-                className="w-[6.2%] px-1.5 py-2 text-center border-r border-rose-200/80 whitespace-nowrap cursor-pointer hover:bg-[#FBCFCB] transition-colors group"
+                className=" px-1.5 py-2 text-center border-r border-rose-200/80 whitespace-nowrap cursor-pointer hover:bg-[#FBCFCB] transition-colors group"
                 title="Sort by Date"
               >
                 <div className="flex items-center justify-center gap-0.5">
@@ -559,7 +575,7 @@ export const PurchaseOrderRegisterView: React.FC<PurchaseOrderRegisterViewProps>
               {/* 3. Type */}
               <th
                 onClick={() => handleSort('type')}
-                className="w-[6.8%] px-1.5 py-2 text-center border-r border-rose-200/80 whitespace-nowrap cursor-pointer hover:bg-[#FBCFCB] transition-colors group"
+                className=" px-1.5 py-2 text-center border-r border-rose-200/80 whitespace-nowrap cursor-pointer hover:bg-[#FBCFCB] transition-colors group"
                 title="Sort by Type"
               >
                 <div className="flex items-center justify-center gap-0.5">
@@ -571,7 +587,7 @@ export const PurchaseOrderRegisterView: React.FC<PurchaseOrderRegisterViewProps>
               {/* 4. Broker */}
               <th
                 onClick={() => handleSort('broker')}
-                className="w-[12.5%] px-2 py-2 text-left border-r border-rose-200/80 whitespace-nowrap cursor-pointer hover:bg-[#FBCFCB] transition-colors group"
+                className=" px-2 py-2 text-left border-r border-rose-200/80 whitespace-nowrap cursor-pointer hover:bg-[#FBCFCB] transition-colors group"
                 title="Sort by Broker"
               >
                 <div className="flex items-center gap-0.5 truncate">
@@ -583,7 +599,7 @@ export const PurchaseOrderRegisterView: React.FC<PurchaseOrderRegisterViewProps>
               {/* 5. Unit */}
               <th
                 onClick={() => handleSort('unit')}
-                className="w-[4.5%] px-1 py-2 text-center border-r border-rose-200/80 whitespace-nowrap cursor-pointer hover:bg-[#FBCFCB] transition-colors group"
+                className=" px-1 py-2 text-center border-r border-rose-200/80 whitespace-nowrap cursor-pointer hover:bg-[#FBCFCB] transition-colors group"
                 title="Sort by Unit"
               >
                 <div className="flex items-center justify-center gap-0.5">
@@ -595,7 +611,7 @@ export const PurchaseOrderRegisterView: React.FC<PurchaseOrderRegisterViewProps>
               {/* 6. Count */}
               <th
                 onClick={() => handleSort('total_units')}
-                className="w-[4.5%] px-1.5 py-2 text-right border-r border-rose-200/80 whitespace-nowrap cursor-pointer hover:bg-[#FBCFCB] transition-colors group"
+                className=" px-1.5 py-2 text-right border-r border-rose-200/80 whitespace-nowrap cursor-pointer hover:bg-[#FBCFCB] transition-colors group"
                 title="Sort by Count"
               >
                 <div className="flex items-center justify-end gap-0.5">
@@ -607,7 +623,7 @@ export const PurchaseOrderRegisterView: React.FC<PurchaseOrderRegisterViewProps>
               {/* 7. Weight */}
               <th
                 onClick={() => handleSort('weight')}
-                className="w-[11%] px-2 py-2 text-right border-r border-rose-200/80 whitespace-nowrap cursor-pointer hover:bg-[#FBCFCB] transition-colors group"
+                className=" px-2 py-2 text-right border-r border-rose-200/80 whitespace-nowrap cursor-pointer hover:bg-[#FBCFCB] transition-colors group"
                 title="Sort by Weight (Received / Total Contract MT)"
               >
                 <div className="flex items-center justify-end gap-0.5">
@@ -619,7 +635,7 @@ export const PurchaseOrderRegisterView: React.FC<PurchaseOrderRegisterViewProps>
               {/* 8. Status */}
               <th
                 onClick={() => handleSort('status')}
-                className="w-[6.8%] px-1.5 py-2 text-center border-r border-rose-200/80 whitespace-nowrap cursor-pointer hover:bg-[#FBCFCB] transition-colors group"
+                className=" px-1.5 py-2 text-center border-r border-rose-200/80 whitespace-nowrap cursor-pointer hover:bg-[#FBCFCB] transition-colors group"
                 title="Sort by Status"
               >
                 <div className="flex items-center justify-center gap-0.5">
@@ -631,7 +647,7 @@ export const PurchaseOrderRegisterView: React.FC<PurchaseOrderRegisterViewProps>
               {/* 9. Lorry Status */}
               <th
                 onClick={() => handleSort('closed_open')}
-                className="w-[7.5%] px-1.5 py-2 text-center border-r border-rose-200/80 whitespace-nowrap cursor-pointer hover:bg-[#FBCFCB] transition-colors group"
+                className=" px-1.5 py-2 text-center border-r border-rose-200/80 whitespace-nowrap cursor-pointer hover:bg-[#FBCFCB] transition-colors group"
                 title="Sort by Lorry Status (Open / Closed)"
               >
                 <div className="flex items-center justify-center gap-0.5">
@@ -643,7 +659,7 @@ export const PurchaseOrderRegisterView: React.FC<PurchaseOrderRegisterViewProps>
               {/* 10. WT Status */}
               <th
                 onClick={() => handleSort('excess_short')}
-                className="w-[9.5%] px-1.5 py-2 text-center border-r border-rose-200/80 whitespace-nowrap cursor-pointer hover:bg-[#FBCFCB] transition-colors group"
+                className=" px-1.5 py-2 text-center border-r border-rose-200/80 whitespace-nowrap cursor-pointer hover:bg-[#FBCFCB] transition-colors group"
                 title="Sort by WT Status"
               >
                 <div className="flex items-center justify-center gap-0.5">
@@ -655,7 +671,7 @@ export const PurchaseOrderRegisterView: React.FC<PurchaseOrderRegisterViewProps>
               {/* 11. Pass/MIS */}
               <th
                 onClick={() => handleSort('pass_mismatch')}
-                className="w-[6.2%] px-1.5 py-2 text-center border-r border-rose-200/80 whitespace-nowrap cursor-pointer hover:bg-[#FBCFCB] transition-colors group"
+                className=" px-1.5 py-2 text-center border-r border-rose-200/80 whitespace-nowrap cursor-pointer hover:bg-[#FBCFCB] transition-colors group"
                 title="Sort by Pass / Mismatch"
               >
                 <div className="flex items-center justify-center gap-0.5">
@@ -667,7 +683,7 @@ export const PurchaseOrderRegisterView: React.FC<PurchaseOrderRegisterViewProps>
               {/* 12. Stage */}
               <th
                 onClick={() => handleSort('stage')}
-                className="w-[8.8%] px-1.5 py-2 text-center border-r border-rose-200/80 whitespace-nowrap cursor-pointer hover:bg-[#FBCFCB] transition-colors group"
+                className=" px-1.5 py-2 text-center border-r border-rose-200/80 whitespace-nowrap cursor-pointer hover:bg-[#FBCFCB] transition-colors group"
                 title="Sort by Process Stage"
               >
                 <div className="flex items-center justify-center gap-0.5">
@@ -678,14 +694,14 @@ export const PurchaseOrderRegisterView: React.FC<PurchaseOrderRegisterViewProps>
 
               {/* 13. Chart */}
               <th
-                className="w-[3.2%] px-1 py-2 text-center border-r border-rose-200/80 whitespace-nowrap bg-[#FBCFCB]/60"
+                className=" px-1 py-2 text-center border-r border-rose-200/80 whitespace-nowrap bg-[#FBCFCB]/60"
                 title="P.O. Histogram & Consignment Analytics"
               >
                 <span>Chart</span>
               </th>
 
               {/* 14. Actions */}
-              <th className="w-[4.0%] px-1.5 py-2 text-center whitespace-nowrap bg-[#FDE7E6]">
+              <th className=" px-1.5 py-2 text-center whitespace-nowrap bg-[#FDE7E6]">
                 <span>Actions</span>
               </th>
             </tr>
@@ -748,9 +764,13 @@ export const PurchaseOrderRegisterView: React.FC<PurchaseOrderRegisterViewProps>
                   {/* 1. PO / PTF No */}
                   <td
                     className={cn(
-                      'px-2 py-1 font-mono font-bold text-[11px] whitespace-nowrap truncate border-r border-slate-200/80 select-text',
-                      isVoid ? 'text-rose-400' : 'text-slate-900'
+                      'px-2 py-1 font-mono whitespace-normal break-all border-r border-slate-200/80 select-text',
+                      isVoid ? 'text-rose-400' : 'text-slate-700'
                     )}
+                    style={{
+                      fontSize: '7px',
+                      lineHeight: '9px',
+                    }}
                     title={item.po_no}
                   >
                     {item.po_no}
