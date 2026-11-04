@@ -47,8 +47,7 @@ async function exportAll() {
   console.log('======================================================================\n');
 
   const stream = fs.createWriteStream('local_complete_data_seed.sql');
-  stream.write('-- Bally Jute Complete Data Seed from Supabase Cloud\n');
-  stream.write('BEGIN;\n\n');
+  stream.write('-- Bally Jute Complete Data Seed from Supabase Cloud\n\n');
 
   let totalTables = 0;
   let totalRows = 0;
@@ -92,7 +91,6 @@ async function exportAll() {
     }
   }
 
-  stream.write('COMMIT;\n');
   stream.end();
   console.log('\n======================================================================');
   console.log(` SUCCESS: Downloaded ${totalRows} rows across ${totalTables} tables!`);
