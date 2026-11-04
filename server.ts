@@ -286,6 +286,40 @@ async function startServer() {
   // 2. Body Parser
   app.use(express.json({ limit: "50mb" }));
 
+  // 2b. Local Database API Proxy: Forwards /rest/v1 calls directly to local PostgREST (Port 8000)
+  app.use('/rest/v1', async (req, res, next) => {
+    // Only proxy if local PostgREST is enabled or requested
+    const targetUrl = `http://127.0.0.1:8000${req.originalUrl.replace(/^\/rest\/v1/, '')}`;
+    try {
+      const headers: Record<string, string> = {
+        'Accept': req.headers['accept'] || 'application/json',
+      };
+      if (req.headers['content-type']) headers['Content-Type'] = req.headers['content-type'] as string;
+      if (req.headers['prefer']) headers['Prefer'] = req.headers['prefer'] as string;
+      if (req.headers['range']) headers['Range'] = req.headers['range'] as string;
+
+      const proxyRes = await fetch(targetUrl, {
+        method: req.method,
+        headers,
+        body: ['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method) && req.body && Object.keys(req.body).length > 0
+          ? JSON.stringify(req.body)
+          : undefined,
+      });
+
+      res.status(proxyRes.status);
+      proxyRes.headers.forEach((val, key) => {
+        if (!['content-encoding', 'transfer-encoding', 'content-length'].includes(key.toLowerCase())) {
+          res.setHeader(key, val);
+        }
+      });
+      const data = await proxyRes.text();
+      res.send(data);
+    } catch (_proxyErr) {
+      // If local PostgREST isn't running on 8000, pass to standard handlers
+      next();
+    }
+  });
+
   // 3. Session Token Issuing, Verification, Revocation & Login Rate-Limiting Routes
   app.post(["/api/auth/session", "/api/auth/login", "/Jute-Purchase-Automation/api/auth/session", "/Jute-Purchase-Automation/api/auth/login"], async (req, res) => {
     const clientIp = String(req.headers["x-forwarded-for"] || req.socket.remoteAddress || "local");
