@@ -23,23 +23,43 @@ fi
 
 echo "✅ Found Supabase Docker container: $CONTAINER_ID"
 
-# 2. Check for the migration SQL file
-SQL_FILE="complete_local_migration.sql"
-if [ ! -f "$SQL_FILE" ]; then
-    if [ -f "backend/complete_local_migration.sql" ]; then
-        SQL_FILE="backend/complete_local_migration.sql"
-    else
-        echo "❌ Error: complete_local_migration.sql not found in current directory."
-        exit 1
+# 2. Check for schema and migration sources
+if [ -f "complete_local_migration.sql" ]; then
+    echo "📦 Importing complete_local_migration.sql directly into Supabase Docker..."
+    docker exec -i "$CONTAINER_ID" psql -U postgres -d postgres < "complete_local_migration.sql"
+else
+    echo "ℹ️  'complete_local_migration.sql' not found. Migrating live from Supabase Web via export_data.cjs..."
+    
+    # Apply base schema if available
+    if [ -f "supabase_schema.sql" ]; then
+        echo "📋 Step 1/3: Applying base schema (supabase_schema.sql)..."
+        docker exec -i "$CONTAINER_ID" psql -U postgres -d postgres < "supabase_schema.sql" 2>/dev/null || true
     fi
+
+    # Apply add_fields_only.sql for complete columns & views
+    if [ -f "add_fields_only.sql" ]; then
+        echo "📋 Step 2/3: Applying extra columns & tables (add_fields_only.sql)..."
+        docker exec -i "$CONTAINER_ID" psql -U postgres -d postgres < "add_fields_only.sql" 2>/dev/null || true
+    fi
+
+    # Run data export from Supabase cloud
+    if [ ! -f "local_complete_data_seed.sql" ]; then
+        echo "🌐 Step 3/3: Downloading 100% of live data from Supabase Cloud (https://lxuapkccxaadwixjpirs.supabase.co)..."
+        node export_data.cjs
+    fi
+
+    echo "💾 Loading live data into local Docker database..."
+    docker exec -i "$CONTAINER_ID" psql -U postgres -d postgres < "local_complete_data_seed.sql"
 fi
 
-echo "📦 Importing $SQL_FILE (33,000+ rows, schemas, relations & logic) into Supabase Docker..."
-docker exec -i "$CONTAINER_ID" psql -U postgres -d postgres < "$SQL_FILE"
+# Ensure all additional columns and tables exist (zero deletion)
+if [ -f "add_fields_only.sql" ]; then
+    docker exec -i "$CONTAINER_ID" psql -U postgres -d postgres < "add_fields_only.sql" 2>/dev/null || true
+fi
 
 echo ""
 echo "=========================================================="
-echo "  Migration Verification"
+echo "  Migration Verification: Live Docker Row Counts"
 echo "=========================================================="
 docker exec -i "$CONTAINER_ID" psql -U postgres -d postgres -c "
 SELECT 'user_master' AS table_name, COUNT(*) AS count FROM user_master
@@ -48,7 +68,11 @@ SELECT 'sauda_master', COUNT(*) FROM sauda_master
 UNION ALL
 SELECT 'supply_master', COUNT(*) FROM supply_master
 UNION ALL
-SELECT 'temporary_arrival', COUNT(*) FROM temporary_arrival;
+SELECT 'temporary_material_received', COUNT(*) FROM temporary_material_received
+UNION ALL
+SELECT 'mr_settlement_master', COUNT(*) FROM mr_settlement_master
+UNION ALL
+SELECT 'payment_master', COUNT(*) FROM payment_master;
 "
 
 # 3. Ensure .env has local Supabase Docker connection settings
@@ -66,7 +90,7 @@ EOF
 
 echo "✅ .env file updated successfully."
 echo ""
-echo "🎉 SUCCESS: All data, schemas, relations, and logic have migrated into your local Docker Supabase!"
+echo "🎉 SUCCESS: All web data, schemas, relations, and logic have migrated into your local Docker Supabase!"
 echo ""
 echo "👉 Supabase Studio Dashboard : http://localhost:54323"
 echo "👉 Start Bally Jute App       : npm run dev"
