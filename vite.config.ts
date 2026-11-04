@@ -40,6 +40,8 @@ export default defineConfig(({mode}) => {
       }
     },
     server: {
+      host: '0.0.0.0',
+      allowedHosts: true,
       hmr: process.env.DISABLE_HMR !== 'true',
       watch: process.env.DISABLE_HMR === 'true' ? null : {
         ignored: ['**/emails.json', '**/requests.log', '**/payload.json', '**/*.log', '**/create_mail_logs*']

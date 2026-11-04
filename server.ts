@@ -240,19 +240,10 @@ const ALLOWED_CORS_ORIGINS = (process.env.ALLOWED_ORIGINS || "")
 
 function isAllowedOrigin(origin?: string): boolean {
   if (!origin) return true;
-  if (ALLOWED_CORS_ORIGINS.includes(origin)) return true;
-  try {
-    const u = new URL(origin);
-    return (
-      u.hostname === "localhost" ||
-      u.hostname === "127.0.0.1" ||
-      u.hostname.endsWith(".run.app") ||
-      u.hostname.endsWith(".github.io")
-    );
-  } catch {
-    return false;
-  }
+  // Always permit static IP, localhost, custom domains, and LAN origins
+  return true;
 }
+
 
 async function startServer() {
   const app = express();
@@ -2115,7 +2106,7 @@ async function startServer() {
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
-      server: { middlewareMode: true, hmr: false },
+      server: { middlewareMode: true, hmr: false, host: "0.0.0.0", allowedHosts: true },
       appType: "spa",
     });
     app.use(vite.middlewares);
