@@ -5,13 +5,18 @@ dotenv.config();
 
 const { Pool } = pg;
 
+const poolConfig: pg.PoolConfig = process.env.DATABASE_URL
+  ? { connectionString: process.env.DATABASE_URL }
+  : {
+      host: process.env.PGHOST || 'localhost',
+      port: Number(process.env.PGPORT) || 5432,
+      database: process.env.PGDATABASE || 'bjcl_db',
+      user: process.env.PGUSER || 'postgres',
+      password: process.env.PGPASSWORD || '',
+    };
+
 export const pool = new Pool({
-  host: process.env.PGHOST || 'localhost',
-  port: Number(process.env.PGPORT) || 5432,
-  database: process.env.PGDATABASE || 'bjcl_db',
-  user: process.env.PGUSER || 'postgres',
-  password: process.env.PGPASSWORD || '',
-  connectionString: process.env.DATABASE_URL,
+  ...poolConfig,
   max: 20,
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 5000,

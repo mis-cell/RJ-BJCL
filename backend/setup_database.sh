@@ -59,12 +59,22 @@ fi
 
 # 4. Execute Complete Area Logic & Agency Mappings
 if [ -f "$ROOT_DIR/migrations/20261023_create_area_logic.sql" ]; then
-  echo "[3/3] Importing Complete Area Logic & Agency Mappings (20261023_create_area_logic.sql)..."
+  echo "[3/4] Importing Complete Area Logic & Agency Mappings (20261023_create_area_logic.sql)..."
   psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -f "$ROOT_DIR/migrations/20261023_create_area_logic.sql"
+fi
+
+# 5. Execute Complete Data Migration & Seed (All Masters, Users, Transactions)
+if [ -f "$ROOT_DIR/complete_local_migration.sql" ]; then
+  echo "[4/4] Importing Complete Local Migration & Master Data ($ROOT_DIR/complete_local_migration.sql)..."
+  psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -f "$ROOT_DIR/complete_local_migration.sql"
+elif [ -f "$ROOT_DIR/backend/complete_local_migration.sql" ]; then
+  echo "[4/4] Importing Complete Local Migration & Master Data ($ROOT_DIR/backend/complete_local_migration.sql)..."
+  psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -f "$ROOT_DIR/backend/complete_local_migration.sql"
 fi
 
 echo ""
 echo "======================================================================"
 echo " SUCCESS: All Tables, Sub-tables, Logic, Constraints & Schemas Ready!"
+echo " All User Logins, Saudas, POs, Arrivals, & Payments Successfully Loaded!"
 echo " Database '$DB_NAME' is fully initialized on your local PostgreSQL."
 echo "======================================================================"

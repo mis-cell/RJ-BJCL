@@ -76,17 +76,23 @@ CREATE TABLE IF NOT EXISTS broker_master (
 
 -- 2. User & Authentication Logic
 CREATE TABLE IF NOT EXISTS user_master (
-    user_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id TEXT PRIMARY KEY,
     username TEXT UNIQUE NOT NULL,
-    email TEXT UNIQUE NOT NULL,
+    password TEXT,
+    role TEXT DEFAULT 'USER',
+    status TEXT DEFAULT 'Active',
+    allowed_modules TEXT DEFAULT '*',
+    level TEXT DEFAULT 'L1',
+    email TEXT,
     password_hash TEXT,
     is_active BOOLEAN DEFAULT TRUE,
+    last_login TIMESTAMP WITH TIME ZONE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
 CREATE TABLE IF NOT EXISTS authentication_master (
     auth_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id UUID REFERENCES user_master(user_id),
+    user_id TEXT REFERENCES user_master(user_id) ON DELETE CASCADE,
     portal_access JSONB, -- JSON describing modules the user can access e.g. {"amad": true, "po": true}
     role_type TEXT, -- admin, operator, viewer
     last_login TIMESTAMP WITH TIME ZONE
