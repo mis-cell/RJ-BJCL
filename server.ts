@@ -7,11 +7,10 @@ import aiGatewayRouter from "./src/lib/ai-gateway.ts";
 import nodemailer from "nodemailer";
 import imaps from 'imap-simple';
 import { simpleParser } from 'mailparser';
-import { createClient } from '@supabase/supabase-js';
+import { serverLocalDb, executeSelect, executeInsert, executeUpdate, executeDelete, executeRpc } from "./src/lib/serverPostgresDb.ts";
 
-const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || 'https://lxuapkccxaadwixjpirs.supabase.co';
-const supabaseAnonKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imx4dWFwa2NjeGFhZHdpeGpwaXJzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg4MzQ4NDksImV4cCI6MjA5NDQxMDg0OX0.rzjJFNOb1gx0Z4cMSfkW9yDe4rI8oO6TLTzcVXswPek';
-const supabase = createClient(supabaseUrl, supabaseAnonKey);
+// Pure Local PostgreSQL database instance (No Supabase connection or dependency)
+const supabase = serverLocalDb;
 
 
 
@@ -286,37 +285,50 @@ async function startServer() {
   // 2. Body Parser
   app.use(express.json({ limit: "50mb" }));
 
-  // 2b. Local Database API Proxy: Forwards /rest/v1 calls directly to local PostgREST (Port 8000)
-  app.use('/rest/v1', async (req, res, next) => {
-    // Only proxy if local PostgREST is enabled or requested
-    const targetUrl = `http://127.0.0.1:8000${req.originalUrl.replace(/^\/rest\/v1/, '')}`;
+  // 2b. Native Local PostgreSQL Database API Routes (Executes directly via local pg.Pool)
+  app.post('/api/db/query', async (req, res) => {
     try {
-      const headers: Record<string, string> = {
-        'Accept': req.headers['accept'] || 'application/json',
-      };
-      if (req.headers['content-type']) headers['Content-Type'] = req.headers['content-type'] as string;
-      if (req.headers['prefer']) headers['Prefer'] = req.headers['prefer'] as string;
-      if (req.headers['range']) headers['Range'] = req.headers['range'] as string;
+      const result = await executeSelect(req.body);
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ data: null, error: { message: err.message } });
+    }
+  });
 
-      const proxyRes = await fetch(targetUrl, {
-        method: req.method,
-        headers,
-        body: ['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method) && req.body && Object.keys(req.body).length > 0
-          ? JSON.stringify(req.body)
-          : undefined,
-      });
+  app.post('/api/db/insert', async (req, res) => {
+    try {
+      const result = await executeInsert(req.body);
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ data: null, error: { message: err.message } });
+    }
+  });
 
-      res.status(proxyRes.status);
-      proxyRes.headers.forEach((val, key) => {
-        if (!['content-encoding', 'transfer-encoding', 'content-length'].includes(key.toLowerCase())) {
-          res.setHeader(key, val);
-        }
-      });
-      const data = await proxyRes.text();
-      res.send(data);
-    } catch (_proxyErr) {
-      // If local PostgREST isn't running on 8000, pass to standard handlers
-      next();
+  app.post('/api/db/update', async (req, res) => {
+    try {
+      const result = await executeUpdate(req.body);
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ data: null, error: { message: err.message } });
+    }
+  });
+
+  app.post('/api/db/delete', async (req, res) => {
+    try {
+      const result = await executeDelete(req.body);
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ data: null, error: { message: err.message } });
+    }
+  });
+
+  app.post('/api/db/rpc', async (req, res) => {
+    try {
+      const { func, args } = req.body;
+      const result = await executeRpc(func, args);
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ data: null, error: { message: err.message } });
     }
   });
 
