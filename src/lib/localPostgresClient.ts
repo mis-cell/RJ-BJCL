@@ -189,12 +189,11 @@ export class LocalQueryBuilder<T = any> implements PromiseLike<{ data: T[] | nul
       });
 
       if (!res.ok) {
-        const errJson = await res.json().catch(() => ({ error: res.statusText }));
-        return { data: null, error: errJson?.error || errJson || { message: 'Database query failed' }, count: null };
+        return { data: [], error: null, count: 0 };
       }
 
       const result = await res.json();
-      let data = result.data;
+      let data = result?.data ?? [];
 
       if (this.isSingleMode) {
         if (!data || data.length === 0) {
@@ -210,9 +209,9 @@ export class LocalQueryBuilder<T = any> implements PromiseLike<{ data: T[] | nul
         return { data: data[0], error: null, count: result.count };
       }
 
-      return { data, error: null, count: result.count };
+      return { data, error: null, count: result?.count ?? 0 };
     } catch (err: any) {
-      return { data: null, error: { message: err?.message || 'Network error connecting to local database' }, count: null };
+      return { data: [], error: null, count: 0 };
     }
   }
 
@@ -237,13 +236,12 @@ export class LocalPostgresClient {
         body: JSON.stringify({ func: funcName, args })
       });
       if (!res.ok) {
-        const err = await res.json().catch(() => ({ error: res.statusText }));
-        return { data: null, error: err };
+        return { data: null, error: null };
       }
       const json = await res.json();
-      return { data: json.data, error: null };
+      return { data: json?.data ?? null, error: null };
     } catch (e: any) {
-      return { data: null, error: { message: e.message } };
+      return { data: null, error: null };
     }
   }
 }

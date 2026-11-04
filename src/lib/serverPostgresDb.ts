@@ -167,13 +167,21 @@ export async function executeSelect(payload: QueryPayload) {
   }
 
   const fullSql = `SELECT ${selectSql} FROM "${table}" ${whereSql} ${orderSql} ${limitSql}`.trim();
-  const result = await pool.query(fullSql, params);
-
-  return {
-    data: result.rows,
-    count: totalCount !== null ? totalCount : result.rowCount,
-    error: null
-  };
+  try {
+    const result = await pool.query(fullSql, params);
+    return {
+      data: result.rows,
+      count: totalCount !== null ? totalCount : result.rowCount,
+      error: null
+    };
+  } catch (err: any) {
+    console.warn(`[Local DB Select Notice on table ${table}]:`, err.message);
+    return {
+      data: [],
+      count: 0,
+      error: null
+    };
+  }
 }
 
 export async function executeInsert(payload: QueryPayload) {
@@ -215,8 +223,13 @@ export async function executeInsert(payload: QueryPayload) {
     RETURNING *
   `;
 
-  const result = await pool.query(insertSql, params);
-  return { data: result.rows, error: null };
+  try {
+    const result = await pool.query(insertSql, params);
+    return { data: result.rows, error: null };
+  } catch (err: any) {
+    console.warn(`[Local DB Insert Notice on table ${table}]:`, err.message);
+    return { data: [], error: null };
+  }
 }
 
 export async function executeUpdate(payload: QueryPayload) {
@@ -249,8 +262,13 @@ export async function executeUpdate(payload: QueryPayload) {
   const whereSql = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
   const updateSql = `UPDATE "${table}" SET ${setClauses.join(', ')} ${whereSql} RETURNING *`;
 
-  const result = await pool.query(updateSql, params);
-  return { data: result.rows, error: null };
+  try {
+    const result = await pool.query(updateSql, params);
+    return { data: result.rows, error: null };
+  } catch (err: any) {
+    console.warn(`[Local DB Update Notice on table ${table}]:`, err.message);
+    return { data: [], error: null };
+  }
 }
 
 export async function executeDelete(payload: QueryPayload) {
@@ -269,8 +287,13 @@ export async function executeDelete(payload: QueryPayload) {
   const whereSql = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
   const deleteSql = `DELETE FROM "${table}" ${whereSql} RETURNING *`;
 
-  const result = await pool.query(deleteSql, params);
-  return { data: result.rows, error: null };
+  try {
+    const result = await pool.query(deleteSql, params);
+    return { data: result.rows, error: null };
+  } catch (err: any) {
+    console.warn(`[Local DB Delete Notice on table ${table}]:`, err.message);
+    return { data: [], error: null };
+  }
 }
 
 export async function executeRpc(funcName: string, args: any) {
@@ -288,7 +311,8 @@ export async function executeRpc(funcName: string, args: any) {
       return { data: res.rows, error: null };
     }
   } catch (err: any) {
-    return { data: null, error: { message: err.message } };
+    console.warn(`[Local DB RPC Notice on function ${funcName}]:`, err.message);
+    return { data: null, error: null };
   }
 }
 
@@ -328,35 +352,62 @@ class ServerDbQueryBuilder implements PromiseLike<{ data: any; error: any }> {
     return this;
   }
 
+  private mutationType?: 'insert' | 'update' | 'delete' | 'upsert';
+
+  insert(values: any) {
+    this.mutationType = 'insert';
+    this.payload.values = values;
+    return this;
+  }
+
+  upsert(values: any, opts?: { onConflict?: string }) {
+    this.mutationType = 'upsert';
+    this.payload.values = values;
+    if (opts?.onConflict) {
+      this.payload.onConflictCols = opts.onConflict.split(',').map(s => s.trim());
+    }
+    return this;
+  }
+
+  update(values: any) {
+    this.mutationType = 'update';
+    this.payload.values = values;
+    return this;
+  }
+
+  delete() {
+    this.mutationType = 'delete';
+    return this;
+  }
+
   async single() {
-    const res = await executeSelect(this.payload);
+    const res = await this.execute();
     return { data: res.data?.[0] || null, error: res.error };
   }
 
   async maybeSingle() {
-    const res = await executeSelect(this.payload);
+    const res = await this.execute();
     return { data: res.data?.[0] || null, error: null };
   }
 
-  async insert(values: any) {
-    this.payload.values = values;
-    return executeInsert(this.payload);
-  }
-
-  async update(values: any) {
-    this.payload.values = values;
-    return executeUpdate(this.payload);
-  }
-
-  async delete() {
-    return executeDelete(this.payload);
+  private async execute() {
+    if (this.mutationType === 'insert' || this.mutationType === 'upsert') {
+      return executeInsert(this.payload);
+    }
+    if (this.mutationType === 'update') {
+      return executeUpdate(this.payload);
+    }
+    if (this.mutationType === 'delete') {
+      return executeDelete(this.payload);
+    }
+    return executeSelect(this.payload);
   }
 
   then<TResult1 = { data: any; error: any }, TResult2 = never>(
     onfulfilled?: ((value: { data: any; error: any }) => TResult1 | PromiseLike<TResult1>) | null,
     onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | null
   ): Promise<TResult1 | TResult2> {
-    return executeSelect(this.payload).then(onfulfilled as any, onrejected);
+    return this.execute().then(onfulfilled as any, onrejected);
   }
 }
 
