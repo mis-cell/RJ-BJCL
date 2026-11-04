@@ -81,12 +81,16 @@ You have two simple ways to run Supabase Docker. **Method A (Supabase CLI)** is 
 In your repository directory (`~/RJ-BJCL`):
 
 ```bash
-# 1. Initialize Supabase in the project (creates the local supabase environment)
-npx supabase init
+# 1. Fix Docker permission (Required on Ubuntu):
+sudo systemctl start docker
+sudo chmod 666 /var/run/docker.sock
+sudo usermod -aG docker $USER
 
-# 2. Start the local Supabase Docker stack
+# 2. Start local Supabase Docker stack (in your project folder ~/Public/RJ-BJCL-main):
 npx supabase start
 ```
+
+*(Note: You do NOT need to run `npx supabase init` because `supabase/config.toml` already exists! If you ever need to re-initialize fresh, use `npx supabase init --force`)*
 
 When it finishes starting, it displays your local credentials:
 - **Supabase Studio GUI**: `http://localhost:54323` (Use your browser to view all tables and run queries!)
