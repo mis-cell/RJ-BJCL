@@ -459,27 +459,57 @@ export default function AmadRegister({ onClose, onNew, onCreateFinalMr, onNaviga
 
   useLiveAutoRefresh(fetchAmads, [], { tables: ['temporary_material_received', 'purchase_master', 'mill_inspection_master', 'final_arrival', 'clubbed_pomr'] });
 
-  const handleSyncPendingFromSupabase = async () => {
+  const [isSyncModalOpen, setIsSyncModalOpen] = useState(false);
+  const [supabaseKeyInput, setSupabaseKeyInput] = useState('');
+  const [supabaseUrlInput, setSupabaseUrlInput] = useState('https://lxuapkccxaadwixjpirs.supabase.co');
+
+  const handleSyncPendingFromSupabase = async (customOptions?: { supabaseKey?: string; supabaseUrl?: string; importedRows?: any[] }) => {
     setLoading(true);
-    setRefreshMessage("Syncing pending Temporary Arrival records into local database...");
+    setRefreshMessage("Syncing pending Temporary Arrival records into local PostgreSQL...");
     try {
       const res = await fetch('/api/db/sync-pending-arrivals', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({})
+        body: JSON.stringify(customOptions || {})
       });
       const json = await res.json();
       await fetchAmads();
       if (json && json.message) {
         setRefreshMessage(json.message);
-        setTimeout(() => setRefreshMessage(null), 7000);
+        setTimeout(() => setRefreshMessage(null), 9000);
+      }
+      if (json?.needsCloudSync && !customOptions?.supabaseKey && !customOptions?.importedRows) {
+        setIsSyncModalOpen(true);
+      } else if (json?.success) {
+        setIsSyncModalOpen(false);
       }
     } catch (err: any) {
       setRefreshMessage(`Sync failed: ${err?.message || err}`);
-      setTimeout(() => setRefreshMessage(null), 5000);
+      setTimeout(() => setRefreshMessage(null), 6000);
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleCsvSyncUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    Papa.parse(file, {
+      header: true,
+      skipEmptyLines: true,
+      complete: async (results) => {
+        const rows = Array.isArray(results.data) ? results.data : [];
+        if (rows.length === 0) {
+          alert("No rows found in CSV file.");
+          return;
+        }
+        await handleSyncPendingFromSupabase({ importedRows: rows });
+      },
+      error: (err) => {
+        alert(`Failed to parse CSV: ${err.message}`);
+      }
+    });
+    e.target.value = '';
   };
 
   const handleEditAmad = (amad: Amad) => {
@@ -882,13 +912,13 @@ export default function AmadRegister({ onClose, onNew, onCreateFinalMr, onNaviga
               Refresh
             </button>
             <button
-              onClick={handleSyncPendingFromSupabase}
+              onClick={() => handleSyncPendingFromSupabase()}
               disabled={loading}
               className="bg-emerald-600 hover:bg-emerald-700 text-white px-3.5 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 shadow-xs transition-colors cursor-pointer disabled:opacity-50 border border-emerald-700"
-              title="One-time sync of any missing Pending Temporary Arrival records into Local PostgreSQL"
+              title="One-time sync of all 1,398 Temporary Arrival records from Supabase Web into Local PostgreSQL"
             >
               <RefreshCcw className={cn("w-3.5 h-3.5", loading && "animate-spin")} />
-              Sync Pending Data
+              Sync Pending Data ({amadList.length}/1398)
             </button>
           </div>
 
@@ -1257,6 +1287,99 @@ export default function AmadRegister({ onClose, onNew, onCreateFinalMr, onNaviga
             </div>
           </div>
         </PrintModal>
+      )}
+
+      {/* ONE-TIME SUPABASE 1,398 RECORDS SYNC MODAL */}
+      {isSyncModalOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl border-2 border-[#D94B5A] shadow-2xl max-w-lg w-full overflow-hidden">
+            <div className="bg-[#D94B5A] text-white px-5 py-3.5 flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-black uppercase tracking-wide">Sync All 1,398 Records from Supabase Web</h3>
+                <p className="text-[11px] text-rose-100 mt-0.5">
+                  Table: <span className="font-mono font-bold">temporary_material_received</span> (Local: {amadList.length} rows → Target: 1,398 rows)
+                </p>
+              </div>
+              <button
+                onClick={() => setIsSyncModalOpen(false)}
+                className="text-white/80 hover:text-white p-1 rounded-lg cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4 text-xs text-slate-700">
+              <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-emerald-900">
+                <p className="font-bold">✅ Local backup rows restored ({amadList.length} rows currently in Local PostgreSQL).</p>
+                <p className="mt-1 text-[11px]">
+                  To pull the remaining <span className="font-bold">{Math.max(0, 1398 - amadList.length)}</span> newer rows added on Supabase Web after the backup, choose either Option 1 or Option 2 below:
+                </p>
+              </div>
+
+              {/* OPTION 1: Upload CSV exported from Supabase Table Editor */}
+              <div className="border border-slate-200 rounded-xl p-3.5 bg-slate-50 space-y-2">
+                <p className="font-black text-slate-900 uppercase text-[11px]">
+                  Option 1 (Fastest): Upload CSV from Supabase Table Editor
+                </p>
+                <p className="text-[11px] text-slate-600">
+                  In Supabase Dashboard → Table Editor → <span className="font-mono font-bold">temporary_material_received</span> (1,398 records) → Click <span className="font-bold">Export to CSV</span>, then select that CSV file here:
+                </p>
+                <label className="inline-flex items-center gap-2 bg-[#D94B5A] hover:bg-[#c03d4b] text-white font-bold px-4 py-2 rounded-lg cursor-pointer shadow-xs transition-colors">
+                  <FileSpreadsheet className="w-4 h-4" />
+                  <span>Select Supabase CSV File (1,398 rows)</span>
+                  <input
+                    type="file"
+                    accept=".csv"
+                    onChange={handleCsvSyncUpload}
+                    className="hidden"
+                  />
+                </label>
+              </div>
+
+              {/* OPTION 2: Paste Supabase Anon / Service Key */}
+              <div className="border border-slate-200 rounded-xl p-3.5 bg-slate-50 space-y-2.5">
+                <p className="font-black text-slate-900 uppercase text-[11px]">
+                  Option 2: Direct Pull via Supabase Anon / Service Key
+                </p>
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Supabase Project URL</label>
+                  <input
+                    type="text"
+                    value={supabaseUrlInput}
+                    onChange={(e) => setSupabaseUrlInput(e.target.value)}
+                    className="w-full border border-slate-300 rounded-lg px-3 py-1.5 text-xs font-mono bg-white"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Supabase Anon Key or Service Role Key</label>
+                  <input
+                    type="password"
+                    placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+                    value={supabaseKeyInput}
+                    onChange={(e) => setSupabaseKeyInput(e.target.value)}
+                    className="w-full border border-slate-300 rounded-lg px-3 py-1.5 text-xs font-mono bg-white"
+                  />
+                </div>
+                <button
+                  onClick={() => {
+                    if (!supabaseKeyInput.trim()) {
+                      alert("Please paste your Supabase Anon Key or Service Role Key.");
+                      return;
+                    }
+                    handleSyncPendingFromSupabase({
+                      supabaseUrl: supabaseUrlInput.trim(),
+                      supabaseKey: supabaseKeyInput.trim()
+                    });
+                  }}
+                  disabled={loading}
+                  className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-4 py-2 rounded-lg text-xs cursor-pointer disabled:opacity-50"
+                >
+                  Pull All 1,398 Rows from Supabase Cloud
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
         </div>
     </LegacyLayout>

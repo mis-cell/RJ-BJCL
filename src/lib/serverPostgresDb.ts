@@ -400,7 +400,7 @@ const TABLE_UNIQUE_KEYS: Record<string, string[]> = {
   sauda_check_point: ['po_id', 'po_no'],
   purchase_master: ['po_id', 'po_no'],
   po_archive: ['po_id', 'po_no'],
-  temporary_material_received: ['amad_id', 'temporary_arrival_no'],
+  temporary_material_received: ['amad_id'],
   issue_master: ['amad_id', 'amad_no'],
   final_arrival: ['final_arrival_id', 'final_arrival_no', 'mr_no'],
   mr_archive: ['final_arrival_id', 'final_arrival_no', 'mr_no'],
@@ -562,6 +562,7 @@ async function ensureDatabaseIntegrity() {
 
       ALTER TABLE IF EXISTS "temporary_material_received" ALTER COLUMN "date" SET DEFAULT CURRENT_DATE;
       ALTER TABLE IF EXISTS "temporary_material_received" ALTER COLUMN "date" DROP NOT NULL;
+      DROP INDEX IF EXISTS idx_unique_temp_arrival_no;
       ALTER TABLE IF EXISTS "issue_master" ALTER COLUMN "date" SET DEFAULT CURRENT_DATE;
       ALTER TABLE IF EXISTS "issue_master" ALTER COLUMN "date" DROP NOT NULL;
       ALTER TABLE IF EXISTS "issue_master" ALTER COLUMN "amad_no" SET DEFAULT '';
@@ -635,10 +636,10 @@ async function ensureDatabaseIntegrity() {
     }
 
     // 2. Clean up any duplicate rows on master tables (keeping the latest row by ctid)
+    // Note: temporary_material_received is keyed by primary key (amad_id) because MR00400 and MR00408 have 2 legitimate distinct arrivals in Supabase (1,398 total rows)
     const dedupTargets: Array<{ table: string; keyExpr: string }> = [
       { table: 'sauda_check_point', keyExpr: `TRIM(UPPER(po_no))` },
       { table: 'purchase_master', keyExpr: `TRIM(UPPER(po_no))` },
-      { table: 'temporary_material_received', keyExpr: `TRIM(UPPER(temporary_arrival_no))` },
       { table: 'final_arrival', keyExpr: `TRIM(UPPER(COALESCE(NULLIF(final_arrival_no, ''), mr_no)))` },
       { table: 'mr_settlement_master', keyExpr: `TRIM(UPPER(mr_no))` },
       { table: 'payment_master', keyExpr: `TRIM(UPPER(voucher_no))` },
@@ -667,7 +668,6 @@ async function ensureDatabaseIntegrity() {
       `CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_satta_master_satta_no ON "satta_master" ("satta_no") WHERE "satta_no" IS NOT NULL`,
       `CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_sauda_check_point_po_no ON "sauda_check_point" ("po_no") WHERE "po_no" IS NOT NULL`,
       `CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_purchase_master_po_no ON "purchase_master" ("po_no") WHERE "po_no" IS NOT NULL`,
-      `CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_temp_arrival_no ON "temporary_material_received" ("temporary_arrival_no") WHERE "temporary_arrival_no" IS NOT NULL`,
       `CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_final_arrival_no ON "final_arrival" ("final_arrival_no") WHERE "final_arrival_no" IS NOT NULL`,
       `CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_mr_settlement_mr_no ON "mr_settlement_master" ("mr_no") WHERE "mr_no" IS NOT NULL`,
       `CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_m_r_settlement_mr_no ON "m_r_settlement" ("mr_no") WHERE "mr_no" IS NOT NULL`,
@@ -712,11 +712,11 @@ async function ensureDatabaseIntegrity() {
     tableColumnsCache.clear();
     tableColumnTypesCache.clear();
 
-    // 4. Automatically backfill any missing Temporary Arrival / Sauda / Final Arrival rows from complete_local_data.sql.gz
+    // 4. Automatically backfill any missing Temporary Arrival / Sauda / Final Arrival rows from complete_local_data.sql.gz or Supabase Cloud
     try {
       const countRes = await pool.query(`SELECT COUNT(*)::int AS cnt FROM "temporary_material_received"`);
       const currentCnt = countRes.rows?.[0]?.cnt ?? 0;
-      if (currentCnt < 1385) {
+      if (currentCnt < 1398) {
         await syncPendingDataToLocalPostgres();
       }
     } catch (_) {}
@@ -727,18 +727,21 @@ async function ensureDatabaseIntegrity() {
  * One-time / On-demand migration helper that syncs all pending `temporary_material_received`
  * (and related `sauda_check_point`, `sauda_check_point_details`, `final_arrival`, `material_inspection`, `lorry_weighments`)
  * rows from:
- * 1) `complete_local_data.sql.gz` (all 1,385 rows including AR01190..AR01471 and MR00001..MR01350) with ON CONFLICT DO NOTHING
- * 2) Live Supabase Cloud (`https://lxuapkccxaadwixjpirs.supabase.co`) if a Supabase Anon/Service Key is provided or present in env.
+ * 1) `complete_local_data.sql.gz` (all 1,385 rows including both MR00400 & MR00408 UUID rows) with ON CONFLICT DO NOTHING
+ * 2) Direct CSV/JSON rows uploaded from Supabase Table Editor (`options.importedRows`)
+ * 3) Live Supabase Cloud (`https://lxuapkccxaadwixjpirs.supabase.co`) if a Supabase Anon/Service Key is provided or present in env.
  */
 export async function syncPendingDataToLocalPostgres(options?: {
   supabaseUrl?: string;
   supabaseKey?: string;
+  importedRows?: any[];
 }): Promise<{
   success: boolean;
   beforeCount: number;
   afterCount: number;
   addedCount: number;
   cloudSyncedCount: number;
+  needsCloudSync?: boolean;
   message: string;
 }> {
   let beforeCount = 0;
@@ -746,10 +749,18 @@ export async function syncPendingDataToLocalPostgres(options?: {
   let cloudSyncedCount = 0;
 
   try {
+    // Ensure idx_unique_temp_arrival_no is dropped so all 1,398 rows (keyed by amad_id UUID primary key) can be stored
+    await pool.query(`
+      DROP INDEX IF EXISTS idx_unique_temp_arrival_no;
+      ALTER TABLE IF EXISTS "temporary_material_received" ALTER COLUMN "date" SET DEFAULT CURRENT_DATE;
+      ALTER TABLE IF EXISTS "temporary_material_received" ALTER COLUMN "date" DROP NOT NULL;
+      ALTER TABLE IF EXISTS "temporary_material_received" ADD COLUMN IF NOT EXISTS "payment_status" TEXT DEFAULT 'Pending';
+    `).catch(() => {});
+
     const beforeRes = await pool.query(`SELECT COUNT(*)::int AS cnt FROM "temporary_material_received"`).catch(() => ({ rows: [{ cnt: 0 }] }));
     beforeCount = beforeRes.rows?.[0]?.cnt ?? 0;
 
-    // Step 1: Sync missing rows from local complete_local_data.sql.gz (safe ON CONFLICT DO NOTHING)
+    // Step 1: Sync missing rows from local complete_local_data.sql.gz (safe ON CONFLICT DO NOTHING on amad_id PK)
     const gzPath = path.resolve(process.cwd(), 'complete_local_data.sql.gz');
     if (fs.existsSync(gzPath)) {
       const compressed = fs.readFileSync(gzPath);
@@ -785,14 +796,51 @@ export async function syncPendingDataToLocalPostgres(options?: {
       }
     }
 
-    // Step 2: If a Supabase Cloud Key is provided (via UI or .env), also pull any newer records from Supabase Web
+    // Step 2: If CSV/JSON rows were uploaded directly from Supabase Table Editor (`temporary_material_received`)
+    if (Array.isArray(options?.importedRows) && options!.importedRows.length > 0) {
+      const cleanedRows = options!.importedRows
+        .map((r: any) => {
+          const out: Record<string, any> = {};
+          for (const [k, v] of Object.entries(r || {})) {
+            const col = k.trim();
+            if (!col) continue;
+            if (v === '' || v === 'null' || v === 'NULL' || v === undefined) {
+              out[col] = null;
+            } else if ((col === 'grid_details' || col === 'open_remarks') && typeof v === 'string') {
+              try {
+                out[col] = JSON.parse(v);
+              } catch {
+                out[col] = v;
+              }
+            } else {
+              out[col] = v;
+            }
+          }
+          if (!out.amad_id && out.id) out.amad_id = out.id;
+          return out;
+        })
+        .filter((r: any) => r.amad_id || r.temporary_arrival_no || r.amad_no);
+
+      const batchSize = 200;
+      for (let i = 0; i < cleanedRows.length; i += batchSize) {
+        const batch = cleanedRows.slice(i, i + batchSize);
+        await executeUpsert({
+          table: 'temporary_material_received',
+          values: batch,
+          onConflictCols: ['amad_id']
+        });
+      }
+      cloudSyncedCount += cleanedRows.length;
+    }
+
+    // Step 3: If a Supabase Cloud Key is provided (via UI modal or .env), pull all 1,398 records from Supabase Web
     const rawUrl = (options?.supabaseUrl || process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || 'https://lxuapkccxaadwixjpirs.supabase.co').trim().replace(/\/+$/, '');
     const restBaseUrl = rawUrl.endsWith('/rest/v1') ? rawUrl : `${rawUrl}/rest/v1`;
     const supaKey = (options?.supabaseKey || process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || '').trim();
 
     if (supaKey) {
       const cloudTables: Array<{ table: string; conflictCol: string }> = [
-        { table: 'temporary_material_received', conflictCol: 'temporary_arrival_no' },
+        { table: 'temporary_material_received', conflictCol: 'amad_id' },
         { table: 'sauda_check_point', conflictCol: 'po_no' },
         { table: 'final_arrival', conflictCol: 'final_arrival_no' },
         { table: 'lorry_weighments', conflictCol: 'gate_pass' }
@@ -810,7 +858,13 @@ export async function syncPendingDataToLocalPostgres(options?: {
               Accept: 'application/json'
             }
           });
-          if (!res.ok) break;
+          if (!res.ok) {
+            if (table === 'temporary_material_received' && offset === 0) {
+              const errTxt = await res.text().catch(() => res.statusText);
+              throw new Error(`Supabase API returned ${res.status}: ${errTxt}`);
+            }
+            break;
+          }
           const rows = await res.json();
           if (!Array.isArray(rows) || rows.length === 0) break;
 
@@ -833,6 +887,7 @@ export async function syncPendingDataToLocalPostgres(options?: {
     const afterRes = await pool.query(`SELECT COUNT(*)::int AS cnt FROM "temporary_material_received"`).catch(() => ({ rows: [{ cnt: beforeCount }] }));
     afterCount = afterRes.rows?.[0]?.cnt ?? beforeCount;
     const addedCount = Math.max(0, afterCount - beforeCount);
+    const needsCloudSync = afterCount < 1398 && cloudSyncedCount === 0;
 
     return {
       success: true,
@@ -840,7 +895,10 @@ export async function syncPendingDataToLocalPostgres(options?: {
       afterCount,
       addedCount,
       cloudSyncedCount,
-      message: `Temporary Arrival sync complete! Local database now has ${afterCount} Temporary Arrival records (${addedCount} new pending records added${cloudSyncedCount > 0 ? `, ${cloudSyncedCount} checked from Supabase Web` : ''}).`
+      needsCloudSync,
+      message: needsCloudSync
+        ? `Restored local backup to ${afterCount} records (${addedCount} restored). To pull the remaining ${1398 - afterCount} new records from Supabase Web (1,398 total), please enter your Supabase Anon Key or upload the Supabase CSV export.`
+        : `Temporary Arrival sync complete! Local PostgreSQL now has ${afterCount} records in temporary_material_received (${addedCount} new records added).`
     };
   } catch (err: any) {
     return {
