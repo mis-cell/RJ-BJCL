@@ -7,7 +7,7 @@ import aiGatewayRouter from "./src/lib/ai-gateway.ts";
 import nodemailer from "nodemailer";
 import imaps from 'imap-simple';
 import { simpleParser } from 'mailparser';
-import { serverLocalDb, executeSelect, executeInsert, executeUpsert, executeUpdate, executeDelete, executeRpc } from "./src/lib/serverPostgresDb.ts";
+import { serverLocalDb, executeSelect, executeInsert, executeUpsert, executeUpdate, executeDelete, executeRpc, syncPendingDataToLocalPostgres } from "./src/lib/serverPostgresDb.ts";
 
 // Pure Local PostgreSQL database instance (No Supabase connection or dependency)
 const supabase = serverLocalDb;
@@ -504,6 +504,15 @@ async function startServer() {
       res.json(result);
     } catch (err: any) {
       res.status(500).json({ data: null, error: { message: err.message } });
+    }
+  });
+
+  app.post('/api/db/sync-pending-arrivals', async (req, res) => {
+    try {
+      const result = await syncPendingDataToLocalPostgres(req.body || {});
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ success: false, message: err.message });
     }
   });
 

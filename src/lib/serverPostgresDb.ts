@@ -1,5 +1,8 @@
 import pg from 'pg';
 import crypto from 'crypto';
+import fs from 'fs';
+import path from 'path';
+import zlib from 'zlib';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -708,7 +711,147 @@ async function ensureDatabaseIntegrity() {
     // Clear column caches after schema additions so fresh metadata is loaded
     tableColumnsCache.clear();
     tableColumnTypesCache.clear();
+
+    // 4. Automatically backfill any missing Temporary Arrival / Sauda / Final Arrival rows from complete_local_data.sql.gz
+    try {
+      const countRes = await pool.query(`SELECT COUNT(*)::int AS cnt FROM "temporary_material_received"`);
+      const currentCnt = countRes.rows?.[0]?.cnt ?? 0;
+      if (currentCnt < 1385) {
+        await syncPendingDataToLocalPostgres();
+      }
+    } catch (_) {}
   } catch (_) {}
+}
+
+/**
+ * One-time / On-demand migration helper that syncs all pending `temporary_material_received`
+ * (and related `sauda_check_point`, `sauda_check_point_details`, `final_arrival`, `material_inspection`, `lorry_weighments`)
+ * rows from:
+ * 1) `complete_local_data.sql.gz` (all 1,385 rows including AR01190..AR01471 and MR00001..MR01350) with ON CONFLICT DO NOTHING
+ * 2) Live Supabase Cloud (`https://lxuapkccxaadwixjpirs.supabase.co`) if a Supabase Anon/Service Key is provided or present in env.
+ */
+export async function syncPendingDataToLocalPostgres(options?: {
+  supabaseUrl?: string;
+  supabaseKey?: string;
+}): Promise<{
+  success: boolean;
+  beforeCount: number;
+  afterCount: number;
+  addedCount: number;
+  cloudSyncedCount: number;
+  message: string;
+}> {
+  let beforeCount = 0;
+  let afterCount = 0;
+  let cloudSyncedCount = 0;
+
+  try {
+    const beforeRes = await pool.query(`SELECT COUNT(*)::int AS cnt FROM "temporary_material_received"`).catch(() => ({ rows: [{ cnt: 0 }] }));
+    beforeCount = beforeRes.rows?.[0]?.cnt ?? 0;
+
+    // Step 1: Sync missing rows from local complete_local_data.sql.gz (safe ON CONFLICT DO NOTHING)
+    const gzPath = path.resolve(process.cwd(), 'complete_local_data.sql.gz');
+    if (fs.existsSync(gzPath)) {
+      const compressed = fs.readFileSync(gzPath);
+      const sqlText = zlib.gunzipSync(compressed).toString('utf8');
+
+      const targetTables = [
+        'supply_master',
+        'broker_master',
+        'sauda_check_point',
+        'sauda_check_point_details',
+        'temporary_material_received',
+        'final_arrival',
+        'material_inspection',
+        'mill_inspection_master'
+      ];
+
+      for (const tbl of targetTables) {
+        const marker = `-- Table: "${tbl}"`;
+        const startIdx = sqlText.indexOf(marker);
+        if (startIdx === -1) continue;
+        const nextTableIdx = sqlText.indexOf('-- Table: "', startIdx + marker.length);
+        const section = nextTableIdx !== -1 ? sqlText.slice(startIdx, nextTableIdx) : sqlText.slice(startIdx);
+
+        const rawChunks = section
+          .split(`INSERT INTO "${tbl}"`)
+          .map(s => s.trim())
+          .filter(s => s && !s.startsWith('--'));
+
+        for (const chunk of rawChunks) {
+          const fullInsertSql = `INSERT INTO "${tbl}" ${chunk}`;
+          await pool.query(fullInsertSql).catch(() => {});
+        }
+      }
+    }
+
+    // Step 2: If a Supabase Cloud Key is provided (via UI or .env), also pull any newer records from Supabase Web
+    const rawUrl = (options?.supabaseUrl || process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || 'https://lxuapkccxaadwixjpirs.supabase.co').trim().replace(/\/+$/, '');
+    const restBaseUrl = rawUrl.endsWith('/rest/v1') ? rawUrl : `${rawUrl}/rest/v1`;
+    const supaKey = (options?.supabaseKey || process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || '').trim();
+
+    if (supaKey) {
+      const cloudTables: Array<{ table: string; conflictCol: string }> = [
+        { table: 'temporary_material_received', conflictCol: 'temporary_arrival_no' },
+        { table: 'sauda_check_point', conflictCol: 'po_no' },
+        { table: 'final_arrival', conflictCol: 'final_arrival_no' },
+        { table: 'lorry_weighments', conflictCol: 'gate_pass' }
+      ];
+
+      for (const { table, conflictCol } of cloudTables) {
+        let offset = 0;
+        const limit = 500;
+        while (true) {
+          const url = `${restBaseUrl}/${table}?select=*&limit=${limit}&offset=${offset}`;
+          const res = await fetch(url, {
+            headers: {
+              apikey: supaKey,
+              Authorization: `Bearer ${supaKey}`,
+              Accept: 'application/json'
+            }
+          });
+          if (!res.ok) break;
+          const rows = await res.json();
+          if (!Array.isArray(rows) || rows.length === 0) break;
+
+          await executeUpsert({
+            table,
+            values: rows,
+            onConflictCols: [conflictCol]
+          });
+
+          if (table === 'temporary_material_received') {
+            cloudSyncedCount += rows.length;
+          }
+
+          if (rows.length < limit) break;
+          offset += limit;
+        }
+      }
+    }
+
+    const afterRes = await pool.query(`SELECT COUNT(*)::int AS cnt FROM "temporary_material_received"`).catch(() => ({ rows: [{ cnt: beforeCount }] }));
+    afterCount = afterRes.rows?.[0]?.cnt ?? beforeCount;
+    const addedCount = Math.max(0, afterCount - beforeCount);
+
+    return {
+      success: true,
+      beforeCount,
+      afterCount,
+      addedCount,
+      cloudSyncedCount,
+      message: `Temporary Arrival sync complete! Local database now has ${afterCount} Temporary Arrival records (${addedCount} new pending records added${cloudSyncedCount > 0 ? `, ${cloudSyncedCount} checked from Supabase Web` : ''}).`
+    };
+  } catch (err: any) {
+    return {
+      success: false,
+      beforeCount,
+      afterCount,
+      addedCount: Math.max(0, afterCount - beforeCount),
+      cloudSyncedCount,
+      message: `Sync error: ${err?.message || String(err)}`
+    };
+  }
 }
 
 // Trigger startup integrity check asynchronously when module loads

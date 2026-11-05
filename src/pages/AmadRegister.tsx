@@ -459,6 +459,29 @@ export default function AmadRegister({ onClose, onNew, onCreateFinalMr, onNaviga
 
   useLiveAutoRefresh(fetchAmads, [], { tables: ['temporary_material_received', 'purchase_master', 'mill_inspection_master', 'final_arrival', 'clubbed_pomr'] });
 
+  const handleSyncPendingFromSupabase = async () => {
+    setLoading(true);
+    setRefreshMessage("Syncing pending Temporary Arrival records into local database...");
+    try {
+      const res = await fetch('/api/db/sync-pending-arrivals', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({})
+      });
+      const json = await res.json();
+      await fetchAmads();
+      if (json && json.message) {
+        setRefreshMessage(json.message);
+        setTimeout(() => setRefreshMessage(null), 7000);
+      }
+    } catch (err: any) {
+      setRefreshMessage(`Sync failed: ${err?.message || err}`);
+      setTimeout(() => setRefreshMessage(null), 5000);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleEditAmad = (amad: Amad) => {
     if (!enforceEditOrDeletePermission("Edit")) return;
     setEditingAmad(amad);
@@ -857,6 +880,15 @@ export default function AmadRegister({ onClose, onNew, onCreateFinalMr, onNaviga
             >
               <RefreshCcw className={cn("w-3.5 h-3.5", loading && "animate-spin")} />
               Refresh
+            </button>
+            <button
+              onClick={handleSyncPendingFromSupabase}
+              disabled={loading}
+              className="bg-emerald-600 hover:bg-emerald-700 text-white px-3.5 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 shadow-xs transition-colors cursor-pointer disabled:opacity-50 border border-emerald-700"
+              title="One-time sync of any missing Pending Temporary Arrival records into Local PostgreSQL"
+            >
+              <RefreshCcw className={cn("w-3.5 h-3.5", loading && "animate-spin")} />
+              Sync Pending Data
             </button>
           </div>
 
