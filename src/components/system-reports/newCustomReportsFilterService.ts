@@ -1,4 +1,4 @@
-import { ReportFilterCriteria } from "./SimpleReportView";
+import { ReportFilterCriteria } from "../../types/systemReport.types";
 
 export const parseDateObj = (dateVal: any): Date | null => {
   if (!dateVal) return null;

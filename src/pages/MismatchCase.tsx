@@ -11,7 +11,8 @@ import {
   ChevronDown,
   ChevronUp,
   ChevronsUpDown,
-  Eye
+  Eye,
+  FileSpreadsheet
 } from 'lucide-react';
 import { cn, canApproveMismatch } from '../lib/utils';
 import { dbModule } from '../services/dbModule';

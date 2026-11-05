@@ -228,6 +228,16 @@ export class LocalQueryBuilder<T = any> implements PromiseLike<{ data: T[] | nul
   ): Promise<TResult1 | TResult2> {
     return this.execute().then(onfulfilled as any, onrejected);
   }
+
+  catch<TResult = never>(
+    onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | null
+  ): Promise<{ data: T[] | null; error: any; count?: number | null } | TResult> {
+    return this.execute().catch(onrejected as any);
+  }
+
+  abortSignal(_signal?: AbortSignal): this {
+    return this;
+  }
 }
 
 export class LocalPostgresClient {

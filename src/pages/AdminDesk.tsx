@@ -11,7 +11,7 @@ interface AdminDeskProps {
   onClearLogs?: () => void;
   onClose?: () => void;
   onLogin?: () => void;
-  onNavigate?: (page: any) => Promise<any>;
+  onNavigate?: (page: any) => Promise<any> | void;
 }
 
 export default function AdminDesk({

@@ -39,7 +39,6 @@ import {
   Users,
   Settings,
   History,
-  Truck 
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { useHeartbeat } from '../hooks/useHeartbeat';

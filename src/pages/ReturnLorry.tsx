@@ -26,6 +26,7 @@ import { useLiveAutoRefresh } from '../hooks/useLiveAutoRefresh';
 interface ReturnLorryProps {
   onClose?: () => void;
   selectedYear?: string;
+  onLogEvent?: (type: string, description: string) => void;
 }
 
 export default function ReturnLorry({ onClose }: ReturnLorryProps) {

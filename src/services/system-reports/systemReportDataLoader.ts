@@ -6,7 +6,6 @@ import {
   getTodayISODate,
   parseJsonItems,
   getFinancialYear,
-  getYearMonth,
   isInvalidAgency,
   isInvalidArea
 } from "./systemReportSanitizers";

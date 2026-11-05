@@ -4,7 +4,8 @@ import {
   Eye,
   EyeOff,
   Flame,
-  Grid
+  Grid,
+  TrendingUp
 } from "lucide-react";
 import {
   BarChart as RechartsBarChart,
