@@ -1415,7 +1415,7 @@ export function useFinalArrivalEntryLogic({ initialData, onSave }: UseFinalArriv
           await dbModule.update('final_arrival', 'final_arrival_id', initialData.final_arrival_id, payload);
           alert(`Final Arrival Voucher #${formData.arrival_no} updated successfully!`);
         } else {
-          await dbModule.insert('final_arrival', payload);
+          await dbModule.upsert('final_arrival', payload, 'final_arrival_no');
           alert(`Final Arrival Register Saved successfully!\nAdded under Final Arrival Voucher #${formData.arrival_no}`);
         }
       } catch (saveErr: any) {
@@ -1431,7 +1431,7 @@ export function useFinalArrivalEntryLogic({ initialData, onSave }: UseFinalArriv
               await dbModule.update('final_arrival', 'final_arrival_id', initialData.final_arrival_id, payload);
               alert(`Final Arrival Voucher #${formData.arrival_no} updated successfully!`);
             } else {
-              await dbModule.insert('final_arrival', payload);
+              await dbModule.upsert('final_arrival', payload, 'final_arrival_no');
               alert(`Final Arrival Register Saved successfully!\nAdded under Final Arrival Voucher #${formData.arrival_no}`);
             }
           } catch (retryErr: any) {
@@ -1440,7 +1440,7 @@ export function useFinalArrivalEntryLogic({ initialData, onSave }: UseFinalArriv
               await dbModule.update('final_arrival', 'final_arrival_id', initialData.final_arrival_id, fallbackPayload);
               alert(`Final Arrival Voucher #${formData.arrival_no} updated successfully!`);
             } else {
-              await dbModule.insert('final_arrival', fallbackPayload);
+              await dbModule.upsert('final_arrival', fallbackPayload, 'final_arrival_no');
               alert(`Final Arrival Register Saved successfully!\nAdded under Final Arrival Voucher #${formData.arrival_no}`);
             }
           }

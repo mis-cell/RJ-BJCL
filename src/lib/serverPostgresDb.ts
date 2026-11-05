@@ -527,15 +527,42 @@ async function ensureDatabaseIntegrity() {
       ALTER TABLE IF EXISTS "material_inspection_details" ADD COLUMN IF NOT EXISTS "moisture_deduction_kg" NUMERIC DEFAULT 0;
       ALTER TABLE IF EXISTS "material_inspection_details" ADD COLUMN IF NOT EXISTS "dust_deduction_kg" NUMERIC DEFAULT 0;
       ALTER TABLE IF EXISTS "material_inspection_details" ADD COLUMN IF NOT EXISTS "ncv_deduction_kg" NUMERIC DEFAULT 0;
+      ALTER TABLE IF EXISTS "material_inspection_details" ADD COLUMN IF NOT EXISTS "po_no" TEXT;
+      ALTER TABLE IF EXISTS "material_inspection_details" ADD COLUMN IF NOT EXISTS "lorry_moisture_avg" NUMERIC DEFAULT 0;
+      ALTER TABLE IF EXISTS "material_inspection_details" ADD COLUMN IF NOT EXISTS "insp_moisture_min" NUMERIC DEFAULT 0;
+      ALTER TABLE IF EXISTS "material_inspection_details" ADD COLUMN IF NOT EXISTS "insp_moisture_max" NUMERIC DEFAULT 0;
+      ALTER TABLE IF EXISTS "material_inspection_details" ADD COLUMN IF NOT EXISTS "insp_moisture_avg" NUMERIC DEFAULT 0;
+      ALTER TABLE IF EXISTS "material_inspection_details" ADD COLUMN IF NOT EXISTS "qty_in_mt" NUMERIC DEFAULT 0;
+
       ALTER TABLE IF EXISTS "mill_inspection_detail" ADD COLUMN IF NOT EXISTS "moisture_deduction_kg" NUMERIC DEFAULT 0;
       ALTER TABLE IF EXISTS "mill_inspection_detail" ADD COLUMN IF NOT EXISTS "dust_deduction_kg" NUMERIC DEFAULT 0;
       ALTER TABLE IF EXISTS "mill_inspection_detail" ADD COLUMN IF NOT EXISTS "ncv_deduction_kg" NUMERIC DEFAULT 0;
+      ALTER TABLE IF EXISTS "mill_inspection_detail" ADD COLUMN IF NOT EXISTS "po_no" TEXT;
+      ALTER TABLE IF EXISTS "mill_inspection_detail" ADD COLUMN IF NOT EXISTS "lorry_moisture_avg" NUMERIC DEFAULT 0;
+      ALTER TABLE IF EXISTS "mill_inspection_detail" ADD COLUMN IF NOT EXISTS "insp_moisture_min" NUMERIC DEFAULT 0;
+      ALTER TABLE IF EXISTS "mill_inspection_detail" ADD COLUMN IF NOT EXISTS "insp_moisture_max" NUMERIC DEFAULT 0;
+      ALTER TABLE IF EXISTS "mill_inspection_detail" ADD COLUMN IF NOT EXISTS "insp_moisture_avg" NUMERIC DEFAULT 0;
+      ALTER TABLE IF EXISTS "mill_inspection_detail" ADD COLUMN IF NOT EXISTS "qty_in_mt" NUMERIC DEFAULT 0;
+
       ALTER TABLE IF EXISTS "inspection_details" ADD COLUMN IF NOT EXISTS "moisture_deduction_kg" NUMERIC DEFAULT 0;
       ALTER TABLE IF EXISTS "inspection_details" ADD COLUMN IF NOT EXISTS "dust_deduction_kg" NUMERIC DEFAULT 0;
       ALTER TABLE IF EXISTS "inspection_details" ADD COLUMN IF NOT EXISTS "ncv_deduction_kg" NUMERIC DEFAULT 0;
       ALTER TABLE IF EXISTS "inspection_checklist_details" ADD COLUMN IF NOT EXISTS "moisture_deduction_kg" NUMERIC DEFAULT 0;
       ALTER TABLE IF EXISTS "inspection_checklist_details" ADD COLUMN IF NOT EXISTS "dust_deduction_kg" NUMERIC DEFAULT 0;
       ALTER TABLE IF EXISTS "inspection_checklist_details" ADD COLUMN IF NOT EXISTS "ncv_deduction_kg" NUMERIC DEFAULT 0;
+
+      ALTER TABLE IF EXISTS "final_arrival" ADD COLUMN IF NOT EXISTS "payment_status" TEXT DEFAULT 'Pending';
+      ALTER TABLE IF EXISTS "material_inspection" ADD COLUMN IF NOT EXISTS "payment_status" TEXT DEFAULT 'Pending';
+      ALTER TABLE IF EXISTS "mill_inspection_master" ADD COLUMN IF NOT EXISTS "payment_status" TEXT DEFAULT 'Pending';
+      ALTER TABLE IF EXISTS "temporary_material_received" ADD COLUMN IF NOT EXISTS "payment_status" TEXT DEFAULT 'Pending';
+      ALTER TABLE IF EXISTS "purchase_master" ADD COLUMN IF NOT EXISTS "payment_status" TEXT DEFAULT 'Pending';
+
+      ALTER TABLE IF EXISTS "temporary_material_received" ALTER COLUMN "date" SET DEFAULT CURRENT_DATE;
+      ALTER TABLE IF EXISTS "temporary_material_received" ALTER COLUMN "date" DROP NOT NULL;
+      ALTER TABLE IF EXISTS "issue_master" ALTER COLUMN "date" SET DEFAULT CURRENT_DATE;
+      ALTER TABLE IF EXISTS "issue_master" ALTER COLUMN "date" DROP NOT NULL;
+      ALTER TABLE IF EXISTS "issue_master" ALTER COLUMN "amad_no" SET DEFAULT '';
+      ALTER TABLE IF EXISTS "issue_master" ALTER COLUMN "amad_no" DROP NOT NULL;
 
       ALTER TABLE IF EXISTS "material_mismatch" ADD COLUMN IF NOT EXISTS "mismatch_id" TEXT;
       ALTER TABLE IF EXISTS "material_mismatch" ADD COLUMN IF NOT EXISTS "supplier" TEXT;
@@ -562,6 +589,8 @@ async function ensureDatabaseIntegrity() {
       ALTER TABLE IF EXISTS "m_r_settlement" ADD COLUMN IF NOT EXISTS "gross_amount" NUMERIC DEFAULT 0;
       ALTER TABLE IF EXISTS "m_r_settlement" ADD COLUMN IF NOT EXISTS "net_payable" NUMERIC DEFAULT 0;
       ALTER TABLE IF EXISTS "m_r_settlement" ADD COLUMN IF NOT EXISTS "status" TEXT;
+      ALTER TABLE IF EXISTS "m_r_settlement" ALTER COLUMN "po_no" SET DEFAULT '';
+      ALTER TABLE IF EXISTS "m_r_settlement" ALTER COLUMN "po_no" DROP NOT NULL;
     `).catch(() => {});
 
     // 1. Ensure BIGINT id columns have auto-incrementing sequences so detail inserts never fail
@@ -636,7 +665,9 @@ async function ensureDatabaseIntegrity() {
       `CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_sauda_check_point_po_no ON "sauda_check_point" ("po_no") WHERE "po_no" IS NOT NULL`,
       `CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_purchase_master_po_no ON "purchase_master" ("po_no") WHERE "po_no" IS NOT NULL`,
       `CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_temp_arrival_no ON "temporary_material_received" ("temporary_arrival_no") WHERE "temporary_arrival_no" IS NOT NULL`,
+      `CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_final_arrival_no ON "final_arrival" ("final_arrival_no") WHERE "final_arrival_no" IS NOT NULL`,
       `CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_mr_settlement_mr_no ON "mr_settlement_master" ("mr_no") WHERE "mr_no" IS NOT NULL`,
+      `CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_m_r_settlement_mr_no ON "m_r_settlement" ("mr_no") WHERE "mr_no" IS NOT NULL`,
       `CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_lorry_weighments_gate_pass ON "lorry_weighments" ("gate_pass") WHERE "gate_pass" IS NOT NULL`,
       `CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_user_master_username ON "user_master" ("username") WHERE "username" IS NOT NULL`,
       `CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_unit_master_unit_name ON "unit_master" ("unit_name") WHERE "unit_name" IS NOT NULL`,
@@ -1002,8 +1033,6 @@ async function tryUpdateExistingRowInPlace(
     let val = row[k];
     if (typeof val === 'object' && val !== null && !(val instanceof Date)) {
       val = JSON.stringify(val);
-    } else if (val === '') {
-      val = null;
     }
     updParams.push(val);
     setClauses.push(`"${sanitizeIdent(k)}" = $${updParams.length}`);
@@ -1047,8 +1076,6 @@ export async function executeInsert(payload: QueryPayload) {
       let val = row[k];
       if (typeof val === 'object' && val !== null && !(val instanceof Date)) {
         val = JSON.stringify(val);
-      } else if (val === '') {
-        val = null;
       }
       params.push(val === undefined ? null : val);
       rowPlaceholders.push(`$${params.length}`);
@@ -1113,8 +1140,6 @@ export async function executeUpsert(payload: QueryPayload) {
         let val = row[k];
         if (typeof val === 'object' && val !== null && !(val instanceof Date)) {
           val = JSON.stringify(val);
-        } else if (val === '') {
-          val = null;
         }
         insParams.push(val);
         insPlaceholders.push(`$${insParams.length}`);
@@ -1156,8 +1181,6 @@ export async function executeUpdate(payload: QueryPayload) {
     let val = values[k];
     if (typeof val === 'object' && val !== null && !(val instanceof Date)) {
       val = JSON.stringify(val);
-    } else if (val === '') {
-      val = null;
     }
     params.push(val);
     setClauses.push(`"${sanitizeIdent(k)}" = $${params.length}`);

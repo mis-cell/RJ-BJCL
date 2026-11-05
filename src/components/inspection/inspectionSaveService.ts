@@ -330,40 +330,57 @@ export async function saveInspectionRecordToDb(
   };
 
   try {
-    const mCols = Object.keys(masterPayload);
-    const mVals = mCols.map((k) => sqlVal((masterPayload as any)[k]));
-    const mUpdate = mCols
-      .filter((k) => k !== "mr_no")
-      .map((k) => `${k} = EXCLUDED.${k}`)
-      .join(", ");
-    const txQueries: string[] = [
-      `INSERT INTO material_inspection (${mCols.join(", ")}) VALUES (${mVals.join(", ")}) ON CONFLICT (mr_no) DO UPDATE SET ${mUpdate};`,
-      `DELETE FROM material_inspection_details WHERE mr_no = ${sqlVal(cleanMrNo)};`,
-      `DELETE FROM mill_inspection_detail WHERE mr_no = ${sqlVal(cleanMrNo)};`,
-      `DELETE FROM material_inspection_deductions WHERE mr_no = ${sqlVal(cleanMrNo)};`,
-      `DELETE FROM mill_inspection_deduction WHERE mr_no = ${sqlVal(cleanMrNo)};`,
-    ];
-    for (const dRow of detailInserts) {
-      const dCols = Object.keys(dRow);
-      const dVals = dCols.map((k) => sqlVal((dRow as any)[k]));
-      txQueries.push(
-        `INSERT INTO material_inspection_details (${dCols.join(", ")}) VALUES (${dVals.join(", ")});`
-      );
-      txQueries.push(
-        `INSERT INTO mill_inspection_detail (${dCols.join(", ")}) VALUES (${dVals.join(", ")});`
-      );
+    await dbModule.upsert("material_inspection", masterPayload, "mr_no");
+    await dbModule.upsert(
+      "mill_inspection_master",
+      {
+        ...masterPayload,
+        inspection_no: cleanMrNo,
+        supplier: masterPayload.supplier_name,
+        broker: masterPayload.broker_name,
+        lorry_no: masterPayload.lorry_number,
+      },
+      "mr_no"
+    ).catch(() => {});
+
+    if (supabase) {
+      await Promise.all([
+        Promise.resolve(
+          supabase.from("material_inspection_details").delete().eq("mr_no", cleanMrNo)
+        ),
+        Promise.resolve(
+          supabase.from("mill_inspection_detail").delete().eq("mr_no", cleanMrNo)
+        ).catch(() => ({})),
+        Promise.resolve(
+          supabase.from("material_inspection_deductions").delete().eq("mr_no", cleanMrNo)
+        ),
+        Promise.resolve(
+          supabase.from("mill_inspection_deduction").delete().eq("mr_no", cleanMrNo)
+        ).catch(() => ({})),
+      ]);
+
+      if (detailInserts.length > 0) {
+        await Promise.all([
+          Promise.resolve(
+            supabase.from("material_inspection_details").insert(detailInserts)
+          ),
+          Promise.resolve(
+            supabase.from("mill_inspection_detail").insert(detailInserts)
+          ).catch(() => ({})),
+        ]);
+      }
+
+      if (dedInserts.length > 0) {
+        await Promise.all([
+          Promise.resolve(
+            supabase.from("material_inspection_deductions").insert(dedInserts)
+          ),
+          Promise.resolve(
+            supabase.from("mill_inspection_deduction").insert(dedInserts)
+          ).catch(() => ({})),
+        ]);
+      }
     }
-    for (const dedRow of dedInserts) {
-      const dedCols = Object.keys(dedRow);
-      const dedVals = dedCols.map((k) => sqlVal((dedRow as any)[k]));
-      txQueries.push(
-        `INSERT INTO material_inspection_deductions (${dedCols.join(", ")}) VALUES (${dedVals.join(", ")});`
-      );
-      txQueries.push(
-        `INSERT INTO mill_inspection_deduction (${dedCols.join(", ")}) VALUES (${dedVals.join(", ")});`
-      );
-    }
-    await dbModule.executeTransaction(txQueries);
   } catch (_txErr) {
     if (supabase) {
       await Promise.all([

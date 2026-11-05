@@ -99,7 +99,7 @@ export async function saveTemporaryArrivalRecord({
     amad_no: formData.arrival_no,
     temporary_arrival_no: formData.arrival_no,
     po_no: formData.po_no,
-    date: sanitizeDate(formData.date),
+    date: sanitizeDate(formData.date) || new Date().toISOString().split('T')[0],
     jci: formData.jci,
     challan_supplier: formData.challan_supplier,
     supplier: formData.supplier,
@@ -225,13 +225,15 @@ export async function saveTemporaryArrivalRecord({
     }
   };
 
+  const issuePayload = { ...dbPayload, amad_no: formData.arrival_no || '' };
+
   if (initialData && initialData.amad_id) {
     await Promise.all([
       tryDbOperation(() => dbModule.update('temporary_material_received', 'amad_id', initialData.amad_id, dbPayload)).catch((e) => {
         console.error("Error updating temporary_material_received:", e);
         throw e;
       }),
-      tryDbOperation(() => dbModule.update('issue_master', 'amad_id', initialData.amad_id, dbPayload)).catch((e) => {
+      tryDbOperation(() => dbModule.update('issue_master', 'amad_id', initialData.amad_id, issuePayload)).catch((e) => {
         console.warn("Could not sync with issue_master or issue_master didn't exist for update, skipping:", e);
       })
     ]);
@@ -251,9 +253,12 @@ export async function saveTemporaryArrivalRecord({
     });
   } else {
     let insertAmadError: any = null;
+    let savedAmad: any = null;
     await Promise.all([
-      tryDbOperation(() => dbModule.insert('temporary_material_received', dbPayload)).catch((e) => { insertAmadError = e; return null; }),
-      tryDbOperation(() => dbModule.insert('issue_master', dbPayload)).catch((e) => { return null; })
+      tryDbOperation(() => dbModule.upsert('temporary_material_received', dbPayload, 'temporary_arrival_no'))
+        .then((res) => { savedAmad = res; return res; })
+        .catch((e) => { insertAmadError = e; return null; }),
+      tryDbOperation(() => dbModule.upsert('issue_master', issuePayload, 'amad_no')).catch(() => null)
     ]);
     if (insertAmadError) {
       return {
@@ -265,7 +270,7 @@ export async function saveTemporaryArrivalRecord({
     // Insert audit trail for insert
     const historyLog = {
       amad_no: formData.arrival_no || 'UNKNOWN',
-      amad_id: formData.arrival_no,
+      amad_id: savedAmad?.amad_id || null,
       action_type: 'INSERT',
       modified_by: getCurrentUserContext().username || 'ADMIN',
       old_values: null,

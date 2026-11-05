@@ -3446,7 +3446,7 @@ export function useSettlementWorkflow({ onClose, onLogEvent }: { onClose?: () =>
 
       await dbModule.upsert('m_r_settlement', {
         mr_no: targetMrNo,
-        po_no: masterData.po_no,
+        po_no: masterData.po_no || targetMrNo || 'N/A',
         lorry_number: masterData.lorry_number,
         material_details: materialDetails || 'Material Goods Received',
         quality: qualitySummary,

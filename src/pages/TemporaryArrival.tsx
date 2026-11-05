@@ -301,204 +301,190 @@ export default function TemporaryArrival({ onSave, onCancel, initialData }: { on
         return false;
       };
 
-      const matchPoRecord = (po: any, rec: any): boolean => {
-        if (!po || !rec) return false;
-        const pCandidates = [
+      const getCandidateTokens = (vals: any[]): string[] => {
+        const tokens = new Set<string>();
+        for (const v of vals) {
+          const raw = String(v || '').trim().toUpperCase();
+          if (!raw) continue;
+          const clean = cleanVal(raw);
+          if (!NON_PO_TOKENS.has(clean)) {
+            tokens.add(`RAW:${raw}`);
+            if (clean) tokens.add(`CLEAN:${clean}`);
+          }
+          const serial = extractCanonicalPoSerial(raw);
+          if (serial && !NON_PO_TOKENS.has(serial.toLowerCase())) {
+            tokens.add(`SER:${serial}`);
+          }
+        }
+        return Array.from(tokens);
+      };
+
+      const buildRecordIndex = (records: any[]): Map<string, any[]> => {
+        const index = new Map<string, any[]>();
+        for (const rec of records) {
+          if (!rec) continue;
+          const tokens = getCandidateTokens([
+            rec.po_no,
+            rec.mill_po_no,
+            rec.contract_po_no,
+            rec.sauda_no,
+            rec.contract_no,
+            rec.ptf_no
+          ]);
+          for (const t of tokens) {
+            let bucket = index.get(t);
+            if (!bucket) {
+              bucket = [];
+              index.set(t, bucket);
+            }
+            bucket.push(rec);
+          }
+        }
+        return index;
+      };
+
+      const queryRecordIndex = (po: any, index: Map<string, any[]>): any[] => {
+        if (!po) return [];
+        const tokens = getCandidateTokens([
           po.po_no,
           po.contract_po_no,
           po.ptf_no,
           po.sauda_no,
           po.contract_no
-        ].filter(Boolean);
-
-        const rCandidates = [
-          rec.po_no,
-          rec.mill_po_no,
-          rec.contract_po_no,
-          rec.sauda_no,
-          rec.contract_no,
-          rec.ptf_no
-        ].filter(Boolean);
-
-        for (const pk of pCandidates) {
-          for (const rk of rCandidates) {
-            if (isSamePoIdentifier(pk, rk)) return true;
+        ]);
+        const matchedSet = new Set<any>();
+        for (const t of tokens) {
+          const bucket = index.get(t);
+          if (bucket) {
+            for (const r of bucket) matchedSet.add(r);
           }
         }
-        return false;
+        return Array.from(matchedSet);
+      };
+
+      const faIndex = buildRecordIndex(faList || []);
+      const amadIndex = buildRecordIndex(amadList || []);
+
+      const tempWeightOf = (ar: any) => {
+        if (ar.challan_material_weight && Number(ar.challan_material_weight) > 0) return Number(ar.challan_material_weight);
+        if (ar.weight_reduced && Number(ar.weight_reduced) > 0) return Number(ar.weight_reduced);
+        if (ar.weight_qtl && Number(ar.weight_qtl) > 0) return Number(ar.weight_qtl) / 10;
+        if (ar.weight && Number(ar.weight) > 0) return Number(ar.weight) / 10;
+        return 0;
+      };
+      const finalWeightOf = (ar: any) => {
+        if (ar.weight_qtl && Number(ar.weight_qtl) > 0) return Number(ar.weight_qtl) / 10;
+        if (ar.weight && Number(ar.weight) > 0) return Number(ar.weight) / 10;
+        if (ar.challan_material_weight && Number(ar.challan_material_weight) > 0) return Number(ar.challan_material_weight);
+        return 0;
       };
 
       const uniquePos = Array.from(uniqueMap.values());
       const nextClosedMap = new Map<string, { po_no: string; sauda_no?: string; contractLorries: number; receivedLorries: number; isClosed: boolean }>();
+      const filtered: any[] = [];
 
-      const filtered = uniquePos
-        .filter((po: any) => {
-          if (!po.po_no) return false;
-          const poKey = String(po.po_no).trim().toUpperCase();
-          const saudaKey = String(po.sauda_no || po.contract_po_no || '').trim().toUpperCase();
-          const statusLower = String(po.status || '').trim().toLowerCase();
+      for (const po of uniquePos) {
+        if (!po.po_no) continue;
+        const poKey = String(po.po_no).trim().toUpperCase();
+        const saudaKey = String(po.sauda_no || po.contract_po_no || '').trim().toUpperCase();
+        const statusLower = String(po.status || '').trim().toLowerCase();
 
-          const isCancelled = statusLower === 'cancelled' || 
-                              po.is_cancelled === true || 
-                              localStorage.getItem(`sauda_cancelled_${poKey}`) === 'true' ||
-                              (saudaKey && localStorage.getItem(`sauda_cancelled_${saudaKey}`) === 'true');
-          if (isCancelled) return false;
+        const isCancelled = statusLower === 'cancelled' || 
+                            po.is_cancelled === true || 
+                            localStorage.getItem(`sauda_cancelled_${poKey}`) === 'true' ||
+                            (saudaKey && localStorage.getItem(`sauda_cancelled_${saudaKey}`) === 'true');
+        if (isCancelled) continue;
 
-          const isCurrentMatch = initialData && initialData.po_no && (
-            isSamePoIdentifier(initialData.po_no, po.po_no) ||
-            (saudaKey && isSamePoIdentifier(initialData.po_no, saudaKey))
-          );
+        const isCurrentMatch = initialData && initialData.po_no && (
+          isSamePoIdentifier(initialData.po_no, po.po_no) ||
+          (saudaKey && isSamePoIdentifier(initialData.po_no, saudaKey))
+        );
 
-          let parsedOpenRemarks = po.open_remarks;
-          if (typeof parsedOpenRemarks === 'string') {
-            try { parsedOpenRemarks = JSON.parse(parsedOpenRemarks); } catch (e) { parsedOpenRemarks = null; }
-          }
-          if (!parsedOpenRemarks) {
-            try {
-              const localRemarks = localStorage.getItem(`sauda_open_remarks_${poKey}`) || (saudaKey ? localStorage.getItem(`sauda_open_remarks_${saudaKey}`) : null);
-              if (localRemarks) parsedOpenRemarks = JSON.parse(localRemarks);
-            } catch (e) {}
-          }
+        let parsedOpenRemarks = po.open_remarks;
+        if (typeof parsedOpenRemarks === 'string') {
+          try { parsedOpenRemarks = JSON.parse(parsedOpenRemarks); } catch (e) { parsedOpenRemarks = null; }
+        }
+        if (!parsedOpenRemarks) {
+          try {
+            const localRemarks = localStorage.getItem(`sauda_open_remarks_${poKey}`) || (saudaKey ? localStorage.getItem(`sauda_open_remarks_${saudaKey}`) : null);
+            if (localRemarks) parsedOpenRemarks = JSON.parse(localRemarks);
+          } catch (e) {}
+        }
 
-          const isForceClosedLocal = localStorage.getItem(`sauda_closed_${poKey}`) === 'true' ||
-                                     (saudaKey ? localStorage.getItem(`sauda_closed_${saudaKey}`) === 'true' : false);
-          const isReopenedLocal = localStorage.getItem(`sauda_reopened_${poKey}`) === 'true' ||
-                                  (saudaKey ? localStorage.getItem(`sauda_reopened_${saudaKey}`) === 'true' : false);
+        const isForceClosedLocal = localStorage.getItem(`sauda_closed_${poKey}`) === 'true' ||
+                                   (saudaKey ? localStorage.getItem(`sauda_closed_${saudaKey}`) === 'true' : false);
+        const isReopenedLocal = localStorage.getItem(`sauda_reopened_${poKey}`) === 'true' ||
+                                (saudaKey ? localStorage.getItem(`sauda_reopened_${saudaKey}`) === 'true' : false);
 
-          // 1. Check if explicitly reopened by Level 4 or Admin (identical to Sauda Check Point)
-          const isExplicitReopened = !isCancelled && !isForceClosedLocal && statusLower !== 'closed' && (
-                                     po.is_reopened === true || 
-                                     po.reopened === true || 
-                                     statusLower === 'open' ||
-                                     Boolean(parsedOpenRemarks && typeof parsedOpenRemarks === 'object' && Object.keys(parsedOpenRemarks).length > 0) ||
-                                     isReopenedLocal
-          );
+        const isExplicitReopened = !isCancelled && !isForceClosedLocal && statusLower !== 'closed' && (
+                                   po.is_reopened === true || 
+                                   po.reopened === true || 
+                                   statusLower === 'open' ||
+                                   Boolean(parsedOpenRemarks && typeof parsedOpenRemarks === 'object' && Object.keys(parsedOpenRemarks).length > 0) ||
+                                   isReopenedLocal
+        );
 
-          // 2. Check if explicitly closed
-          const isExplicitClosed = !isExplicitReopened && (
-                                   po.is_closed === true || 
-                                   po.sauda_closed === true || 
-                                   statusLower === 'closed' || 
-                                   isForceClosedLocal
-          );
+        const isExplicitClosed = !isExplicitReopened && (
+                                 po.is_closed === true || 
+                                 po.sauda_closed === true || 
+                                 statusLower === 'closed' || 
+                                 isForceClosedLocal
+        );
 
-          // 3. Contract lorries
-          const contractLorries = Math.max(1, parseInt(po.total_lorries || po.total_no_of_lorries || po.no_of_lorries || po.lorries || 1, 10) || 1);
+        const contractLorries = Math.max(1, parseInt(po.total_lorries || po.total_no_of_lorries || po.no_of_lorries || po.lorries || 1, 10) || 1);
 
-          // 4. Calculate received lorries from both temporary material received and final arrival (identical to Sauda Check Point)
-          const faMatches = (faList || []).filter((f: any) => matchPoRecord(po, f));
-          const amadMatches = amadList.filter((a: any) => matchPoRecord(po, a));
+        const faMatches = queryRecordIndex(po, faIndex);
+        const amadMatches = queryRecordIndex(po, amadIndex);
 
-          const unpromotedAmad = amadMatches.filter((ar: any) =>
-            !faMatches.some((f: any) =>
-              (f.temporary_arrival_no && (ar.temporary_arrival_no || ar.amad_no) && String(f.temporary_arrival_no).trim().toUpperCase() === String(ar.temporary_arrival_no || ar.amad_no).trim().toUpperCase()) ||
-              (f.arrival_no && (ar.temporary_arrival_no || ar.amad_no) && String(f.arrival_no).trim().toUpperCase() === String(ar.temporary_arrival_no || ar.amad_no).trim().toUpperCase()) ||
-              (f.mr_no && (ar.temporary_arrival_no || ar.amad_no) && String(f.mr_no).trim().toUpperCase() === String(ar.temporary_arrival_no || ar.amad_no).trim().toUpperCase()) ||
-              (f.lorry_number && ar.lorry_number && String(f.lorry_number).trim().toUpperCase() === String(ar.lorry_number).trim().toUpperCase())
-            )
-          );
+        const unpromotedAmad = amadMatches.filter((ar: any) =>
+          !faMatches.some((f: any) =>
+            (f.temporary_arrival_no && (ar.temporary_arrival_no || ar.amad_no) && String(f.temporary_arrival_no).trim().toUpperCase() === String(ar.temporary_arrival_no || ar.amad_no).trim().toUpperCase()) ||
+            (f.arrival_no && (ar.temporary_arrival_no || ar.amad_no) && String(f.arrival_no).trim().toUpperCase() === String(ar.temporary_arrival_no || ar.amad_no).trim().toUpperCase()) ||
+            (f.mr_no && (ar.temporary_arrival_no || ar.amad_no) && String(f.mr_no).trim().toUpperCase() === String(ar.temporary_arrival_no || ar.amad_no).trim().toUpperCase()) ||
+            (f.lorry_number && ar.lorry_number && String(f.lorry_number).trim().toUpperCase() === String(ar.lorry_number).trim().toUpperCase())
+          )
+        );
 
-          const receivedLorries = Math.max(amadMatches.length, faMatches.length + unpromotedAmad.length);
+        const receivedLorries = Math.max(amadMatches.length, faMatches.length + unpromotedAmad.length);
 
-          const tempWeightOf = (ar: any) => {
-            if (ar.challan_material_weight && Number(ar.challan_material_weight) > 0) return Number(ar.challan_material_weight);
-            if (ar.weight_reduced && Number(ar.weight_reduced) > 0) return Number(ar.weight_reduced);
-            if (ar.weight_qtl && Number(ar.weight_qtl) > 0) return Number(ar.weight_qtl) / 10;
-            if (ar.weight && Number(ar.weight) > 0) return Number(ar.weight) / 10;
-            return 0;
-          };
-          const finalWeightOf = (ar: any) => {
-            if (ar.weight_qtl && Number(ar.weight_qtl) > 0) return Number(ar.weight_qtl) / 10;
-            if (ar.weight && Number(ar.weight) > 0) return Number(ar.weight) / 10;
-            if (ar.challan_material_weight && Number(ar.challan_material_weight) > 0) return Number(ar.challan_material_weight);
-            return 0;
-          };
+        const totalReceivedMt = faMatches.reduce((sum: number, f: any) => sum + finalWeightOf(f), 0) +
+                                unpromotedAmad.reduce((sum: number, a: any) => sum + tempWeightOf(a), 0);
 
-          const totalReceivedMt = faMatches.reduce((sum: number, f: any) => sum + finalWeightOf(f), 0) +
-                                  unpromotedAmad.reduce((sum: number, a: any) => sum + tempWeightOf(a), 0);
+        const contractWeight = parseFloat(po.total_contract_mt) || 0;
 
-          const contractWeight = parseFloat(po.total_contract_mt) || 0;
+        const isLorryClosed = contractLorries > 0 && receivedLorries >= contractLorries;
+        const isClosed = !isExplicitReopened && (isExplicitClosed || isLorryClosed);
 
-          // Identical to Sauda Check Point: Sauda is considered closed if all contracted lorries have arrived or explicitly closed,
-          // UNLESS explicitly reopened by Admin or Level 4 user.
-          const isLorryClosed = contractLorries > 0 && receivedLorries >= contractLorries;
-          const isClosed = !isExplicitReopened && (isExplicitClosed || isLorryClosed);
-
-          if (isClosed) {
-            const closedEntry = {
-              po_no: String(po.po_no).trim(),
-              sauda_no: (po.sauda_no || po.contract_po_no) ? String(po.sauda_no || po.contract_po_no).trim() : undefined,
-              contractLorries,
-              receivedLorries,
-              contractWeight,
-              receivedWeight: totalReceivedMt,
-              isClosed: true
-            };
-            nextClosedMap.set(poKey, closedEntry);
-            if (saudaKey) nextClosedMap.set(saudaKey, closedEntry);
-          }
-
-          if (isClosed && !isCurrentMatch) {
-            return false;
-          }
-
-          return true;
-        })
-        .map((po: any) => {
-          const poKey = String(po.po_no).trim().toUpperCase();
-          const saudaKey = String(po.sauda_no || po.contract_po_no || '').trim().toUpperCase();
-          const statusLower = String(po.status || '').trim().toLowerCase();
-
-          let parsedOpenRemarks = po.open_remarks;
-          if (typeof parsedOpenRemarks === 'string') {
-            try { parsedOpenRemarks = JSON.parse(parsedOpenRemarks); } catch (e) { parsedOpenRemarks = null; }
-          }
-          if (!parsedOpenRemarks) {
-            try {
-              const localRemarks = localStorage.getItem(`sauda_open_remarks_${poKey}`) || (saudaKey ? localStorage.getItem(`sauda_open_remarks_${saudaKey}`) : null);
-              if (localRemarks) parsedOpenRemarks = JSON.parse(localRemarks);
-            } catch (e) {}
-          }
-
-          const isForceClosedLocal = localStorage.getItem(`sauda_closed_${poKey}`) === 'true' ||
-                                     (saudaKey ? localStorage.getItem(`sauda_closed_${saudaKey}`) === 'true' : false);
-          const isReopenedLocal = localStorage.getItem(`sauda_reopened_${poKey}`) === 'true' ||
-                                  (saudaKey ? localStorage.getItem(`sauda_reopened_${saudaKey}`) === 'true' : false);
-
-          const isExplicitReopened = !isForceClosedLocal && statusLower !== 'closed' && (
-                                     po.is_reopened === true || 
-                                     po.reopened === true || 
-                                     statusLower === 'open' ||
-                                     Boolean(parsedOpenRemarks && typeof parsedOpenRemarks === 'object' && Object.keys(parsedOpenRemarks).length > 0) ||
-                                     isReopenedLocal
-          );
-
-          const contractLorries = Math.max(1, parseInt(po.total_lorries || po.total_no_of_lorries || po.no_of_lorries || po.lorries || 1, 10) || 1);
-
-          const faMatches = (faList || []).filter((f: any) => matchPoRecord(po, f));
-          const amadMatches = amadList.filter((a: any) => matchPoRecord(po, a));
-          const unpromotedAmad = amadMatches.filter((ar: any) =>
-            !faMatches.some((f: any) =>
-              (f.temporary_arrival_no && (ar.temporary_arrival_no || ar.amad_no) && String(f.temporary_arrival_no).trim().toUpperCase() === String(ar.temporary_arrival_no || ar.amad_no).trim().toUpperCase()) ||
-              (f.arrival_no && (ar.temporary_arrival_no || ar.amad_no) && String(f.arrival_no).trim().toUpperCase() === String(ar.temporary_arrival_no || ar.amad_no).trim().toUpperCase()) ||
-              (f.mr_no && (ar.temporary_arrival_no || ar.amad_no) && String(f.mr_no).trim().toUpperCase() === String(ar.temporary_arrival_no || ar.amad_no).trim().toUpperCase()) ||
-              (f.lorry_number && ar.lorry_number && String(f.lorry_number).trim().toUpperCase() === String(ar.lorry_number).trim().toUpperCase())
-            )
-          );
-          const receivedLorries = Math.max(amadMatches.length, faMatches.length + unpromotedAmad.length);
-
-          return {
-            ...po,
+        if (isClosed) {
+          const closedEntry = {
             po_no: String(po.po_no).trim(),
-            broker: (po.broker || '').toUpperCase(),
-            supplier: (po.supplier || po.party_name || po.merchant || '').toUpperCase(),
-            challan_supplier: (po.challan_supplier || po.supplier || po.party_name || po.merchant || '').toUpperCase(),
-            area: (po.area || '').toUpperCase(),
-            contract_lorries: contractLorries,
-            received_lorries: receivedLorries,
-            is_reopened: isExplicitReopened
+            sauda_no: (po.sauda_no || po.contract_po_no) ? String(po.sauda_no || po.contract_po_no).trim() : undefined,
+            contractLorries,
+            receivedLorries,
+            contractWeight,
+            receivedWeight: totalReceivedMt,
+            isClosed: true
           };
+          nextClosedMap.set(poKey, closedEntry);
+          if (saudaKey) nextClosedMap.set(saudaKey, closedEntry);
+        }
+
+        if (isClosed && !isCurrentMatch) {
+          continue;
+        }
+
+        filtered.push({
+          ...po,
+          po_no: String(po.po_no).trim(),
+          broker: (po.broker || '').toUpperCase(),
+          supplier: (po.supplier || po.party_name || po.merchant || '').toUpperCase(),
+          challan_supplier: (po.challan_supplier || po.supplier || po.party_name || po.merchant || '').toUpperCase(),
+          area: (po.area || '').toUpperCase(),
+          contract_lorries: contractLorries,
+          received_lorries: receivedLorries,
+          is_reopened: isExplicitReopened
         });
+      }
 
       setClosedSaudaMap(nextClosedMap);
       setPurchaseOrders(filtered);
@@ -568,22 +554,9 @@ export default function TemporaryArrival({ onSave, onCancel, initialData }: { on
         setAgencies(agcData || []);
         setGrades(gradeData || []);
 
-        await fetchPurchaseOrders();
-
         let finalMarkas = markaData || [];
         if (finalMarkas.length === 0) {
           const fallbackNames = ["NO MARK", "SH", "CHANGE", "MJ", "BSP", "RT", "PUROHIT", "DB", "KK", "C.M", "BS", "IM", "NI", "RIEEM", "MAA", "V VISHNU", "KR", "SUNIL", "SARTAJ", "J.S.J", "PK", "ANAND", "RR", "HARI", "PS", "RS", "MR", "GOPAL", "A.P.J.S", "SUN", "SAHEB", "C.R.D", "SM", "SA", "AM", "RABI", "AD", "ML", "RK", "MUBIN", "AMAN", "SKB", "ANTIMA", "SHM", "JMP", "HM", "SN", "KT", "LN", "RAJU", "RA", "SS", "SR", "RAHA", "TT", "USHA", "OP", "ST", "PB", "SK", "BAHETI", "DR", "ROHIT", "BK", "KAMAL", "JM", "CHAIN", "SSB", "SANVI", "BR", "UDM", "JAYA", "MM", "SANGITA", "S", "HBGM", "DHRUV", "SD", "AS", "BALAJI", "AJAY", "SG", "GS", "SB", "RE", "JS", "RM", "RBT", "BD", "MS", "RAEEM", "TS", "TOSH", "LC", "SUMAN", "VANSH", "DK", "BHAWANI", "BP", "SHIV", "SHREE HARI", "A", "KS", "KJ", "VK", "JK", "ARHAM", "SOVA", "KM", "PRAMOD", "PUJA", "DURGA", "JSB", "NS", "JAY HANUMAN", "MB", "MANOJ", "SHUBHAM", "KISHAN", "JAY", "AX", "SKC", "YUNUS", "BIJOY", "BN", "A.J.P", "J/MU/DK", "J/MU/HP", "AP", "ANISH", "RISHAV", "SKS", "BUL BUL", "KEDIA", "SMB", "NAIZA", "MH", "BULBUL", "RAKHECHA", "R.JAIN", "MKC", "NC", "MRR", "P", "J.A.K.", "JAK", "GOBINDA", "RAM", "TULSI G", "PP", "HARI OM", "MOTI", "GK", "KRISHNA", "SANJOY", "AA", "MP", "TANU", "ASHA", "DNJ(BHOWMICK)", "SUMIT", "TULSI/H", "KP", "K.L.K", "SWASTIK", "JC", "PM", "BB", "GM", "SHREE"];
-          // Try to async insert them to the DB so they are persistent
-          try {
-            await Promise.all(
-              fallbackNames.map((name, i) => {
-                const codeStr = String(i + 1).padStart(2, '0');
-                return dbModule.insert('marka_master', { marka_code: codeStr, marka_name: name }).catch(() => null);
-              })
-            );
-          } catch(e) {
-            console.warn("Could not insert seed markas to DB:", e);
-          }
           finalMarkas = fallbackNames.map((name, i) => ({
             id: i + 1,
             marka_code: String(i + 1).padStart(2, '0'),

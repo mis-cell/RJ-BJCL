@@ -267,25 +267,27 @@ export async function saveMaterialInspection({
   };
 
   try {
-    const mCols = Object.keys(masterPayload);
-    const mVals = mCols.map(k => sqlVal(masterPayload[k]));
-    const mUpdate = mCols.filter(k => k !== 'mr_no').map(k => `${k} = EXCLUDED.${k}`).join(', ');
-    const txQueries: string[] = [
-      `INSERT INTO material_inspection (${mCols.join(', ')}) VALUES (${mVals.join(', ')}) ON CONFLICT (mr_no) DO UPDATE SET ${mUpdate};`,
-      `DELETE FROM inspection_details WHERE mr_no = ${sqlVal(masterData.mr_no)};`,
-      `DELETE FROM inspection_checklist_details WHERE mr_no = ${sqlVal(masterData.mr_no)};`,
-      `DELETE FROM mill_inspection_detail WHERE mr_no = ${sqlVal(masterData.mr_no)};`,
-      `DELETE FROM material_inspection_details WHERE mr_no = ${sqlVal(masterData.mr_no)};`
-    ];
-    for (const r of validRowsToWrite) {
-      const dCols = Object.keys(r);
-      const dVals = dCols.map(k => sqlVal((r as any)[k]));
-      txQueries.push(`INSERT INTO material_inspection_details (${dCols.join(', ')}) VALUES (${dVals.join(', ')});`);
-      txQueries.push(`INSERT INTO mill_inspection_detail (${dCols.join(', ')}) VALUES (${dVals.join(', ')});`);
+    await dbModule.upsert("material_inspection", masterPayload, "mr_no");
+    await dbModule.upsert("mill_inspection_master", {
+      ...masterPayload,
+      inspection_no: masterData.mr_no,
+      supplier: masterPayload.supplier_name,
+      broker: masterPayload.broker_name,
+      lorry_no: masterPayload.lorry_number,
+    }, "mr_no").catch(() => {});
+
+    await supabase.from("inspection_details").delete().eq("mr_no", masterData.mr_no).then(() => {}, () => {});
+    await supabase.from("inspection_checklist_details").delete().eq("mr_no", masterData.mr_no).then(() => {}, () => {});
+    await supabase.from("mill_inspection_detail").delete().eq("mr_no", masterData.mr_no).then(() => {}, () => {});
+    await supabase.from("material_inspection_details").delete().eq("mr_no", masterData.mr_no).then(() => {}, () => {});
+    if (validRowsToWrite.length > 0) {
+      await supabase.from("inspection_details").insert(validRowsToWrite).then(() => {}, () => {});
+      await supabase.from("inspection_checklist_details").insert(validRowsToWrite).then(() => {}, () => {});
+      await supabase.from("mill_inspection_detail").insert(validRowsToWrite).then(() => {}, () => {});
+      await supabase.from("material_inspection_details").insert(validRowsToWrite).then(() => {}, () => {});
     }
-    await dbModule.executeTransaction(txQueries);
   } catch (_txErr) {
-    const { error: mErr } = await supabase.from("material_inspection").upsert(masterPayload);
+    const { error: mErr } = await supabase.from("material_inspection").upsert(masterPayload, { onConflict: "mr_no" });
     if (mErr) throw mErr;
     await supabase.from("inspection_details").delete().eq("mr_no", masterData.mr_no).then(() => {}, () => {});
     await supabase.from("inspection_checklist_details").delete().eq("mr_no", masterData.mr_no).then(() => {}, () => {});

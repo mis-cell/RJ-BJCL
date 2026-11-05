@@ -197,7 +197,7 @@ export const ReceiptVoucherInfoCard: React.FC<ReceiptVoucherInfoCardProps> = ({
                     }}
                     onFocus={() => {
                       setShowPoDropdown(true);
-                      fetchPurchaseOrders();
+                      if (purchaseOrders.length === 0) fetchPurchaseOrders();
                     }}
                     tabIndex={-1}
                     onBlur={() => setTimeout(() => setShowPoDropdown(false), 200)}
@@ -213,7 +213,7 @@ export const ReceiptVoucherInfoCard: React.FC<ReceiptVoucherInfoCardProps> = ({
                       e.preventDefault();
                       const nextState = !showPoDropdown;
                       setShowPoDropdown(nextState);
-                      if (nextState) fetchPurchaseOrders();
+                      if (nextState && purchaseOrders.length === 0) fetchPurchaseOrders();
                     }}
                   >
                     <ChevronDown size={14} />

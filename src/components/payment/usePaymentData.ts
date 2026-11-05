@@ -150,9 +150,9 @@ export function usePaymentData(onSaveSuccess?: () => void) {
           ALTER TABLE IF EXISTS payment_master ADD COLUMN IF NOT EXISTS advance_payment_done TEXT DEFAULT 'No';
           ALTER TABLE IF EXISTS payment_master ADD COLUMN IF NOT EXISTS advance_payment_from TEXT DEFAULT '1';
           ALTER TABLE IF EXISTS payment_master ADD COLUMN IF NOT EXISTS advance_payment_financier TEXT DEFAULT '1';
-          ALTER TABLE IF EXISTS payment_master ADD COLUMN IF NOT EXISTS payment_settlementdate DATE DEFAULT '';
+          ALTER TABLE IF EXISTS payment_master ADD COLUMN IF NOT EXISTS payment_settlementdate DATE;
           ALTER TABLE IF EXISTS payment_master ADD COLUMN IF NOT EXISTS tenor TEXT DEFAULT '';
-          ALTER TABLE IF EXISTS payment_master ADD COLUMN IF NOT EXISTS repayment_date DATE DEFAULT '';
+          ALTER TABLE IF EXISTS payment_master ADD COLUMN IF NOT EXISTS repayment_date DATE;
 
           CREATE TABLE IF NOT EXISTS payment_details (
             detail_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -1343,9 +1343,9 @@ export function usePaymentData(onSaveSuccess?: () => void) {
         advance_payment_done: masterData.advance_payment_done || 'Yes',
         advance_payment_from: masterData.advance_payment_from || '1',
         advance_payment_financier : masterData.advance_payment_financier || '',
-        payment_settlementdate: masterData.payment_settlementdate || '',
+        payment_settlementdate: masterData.payment_settlementdate || null,
         tenor: masterData.tenor || '',
-        repayment_date: masterData.repayment_date || ''
+        repayment_date: masterData.repayment_date || null
       };
 
       const targetArrivalPaymentStatus = (payableVal > 0 && parsedPaid >= payableVal - 0.01)
