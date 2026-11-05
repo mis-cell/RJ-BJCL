@@ -398,12 +398,113 @@ export async function executeSelect(payload: QueryPayload) {
   }
 }
 
+// Cache of valid columns per table in local PostgreSQL to automatically strip extra non-existent columns
+const tableColumnsCache = new Map<string, Set<string>>();
+
+async function getValidTableColumns(table: string): Promise<Set<string>> {
+  const cleanTable = sanitizeIdent(table);
+  if (tableColumnsCache.has(cleanTable)) {
+    return tableColumnsCache.get(cleanTable)!;
+  }
+  try {
+    const res = await pool.query(
+      `SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = $1`,
+      [cleanTable]
+    );
+    if (res.rows.length > 0) {
+      const colSet = new Set<string>(res.rows.map((r: any) => String(r.column_name)));
+      tableColumnsCache.set(cleanTable, colSet);
+      return colSet;
+    }
+  } catch (_) {}
+  return new Set<string>();
+}
+
+function filterRowByValidColumns(row: Record<string, any>, validCols: Set<string>): Record<string, any> {
+  if (!row || typeof row !== 'object') return {};
+  if (validCols.size === 0) return row;
+  const filtered: Record<string, any> = {};
+  for (const k of Object.keys(row)) {
+    if (validCols.has(k) && row[k] !== undefined) {
+      filtered[k] = row[k];
+    }
+  }
+  return filtered;
+}
+
+function buildWhereClause(payload: QueryPayload, params: any[]): string {
+  const whereClauses: string[] = [];
+
+  if (Array.isArray(payload.filters)) {
+    for (const f of payload.filters) {
+      const col = sanitizeIdent(f.column);
+      if (!col) continue;
+
+      if (f.op === 'is') {
+        if (f.value === null) {
+          whereClauses.push(`"${col}" IS NULL`);
+        } else if (f.value === true) {
+          whereClauses.push(`"${col}" IS TRUE`);
+        } else if (f.value === false) {
+          whereClauses.push(`"${col}" IS FALSE`);
+        }
+      } else if (f.op === 'in' && Array.isArray(f.value)) {
+        params.push(f.value);
+        whereClauses.push(`"${col}" = ANY($${params.length})`);
+      } else {
+        params.push(f.value);
+        const idx = params.length;
+        switch (f.op) {
+          case 'eq': whereClauses.push(`"${col}" = $${idx}`); break;
+          case 'neq': whereClauses.push(`"${col}" != $${idx}`); break;
+          case 'gt': whereClauses.push(`"${col}" > $${idx}`); break;
+          case 'gte': whereClauses.push(`"${col}" >= $${idx}`); break;
+          case 'lt': whereClauses.push(`"${col}" < $${idx}`); break;
+          case 'lte': whereClauses.push(`"${col}" <= $${idx}`); break;
+          case 'like': whereClauses.push(`"${col}" LIKE $${idx}`); break;
+          case 'ilike': whereClauses.push(`"${col}" ILIKE $${idx}`); break;
+          default: whereClauses.push(`"${col}" = $${idx}`); break;
+        }
+      }
+    }
+  }
+
+  if (Array.isArray(payload.orFilters) && payload.orFilters.length > 0) {
+    for (const orFilter of payload.orFilters) {
+      const parts = orFilter.split(',');
+      const subClauses: string[] = [];
+      for (const part of parts) {
+        const [c, op, ...rest] = part.split('.');
+        const val = rest.join('.');
+        const col = sanitizeIdent(c);
+        if (!col) continue;
+        const cleanVal = val.replace(/^[%(]+|[%)]+$/g, '');
+        if (op === 'ilike' || op === 'like') {
+          params.push(`%${cleanVal}%`);
+          subClauses.push(`"${col}" ILIKE $${params.length}`);
+        } else if (op === 'eq') {
+          params.push(cleanVal);
+          subClauses.push(`"${col}" = $${params.length}`);
+        }
+      }
+      if (subClauses.length > 0) {
+        whereClauses.push(`(${subClauses.join(' OR ')})`);
+      }
+    }
+  }
+
+  return whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
+}
+
 export async function executeInsert(payload: QueryPayload) {
   const table = sanitizeIdent(payload.table);
   const rawValues = Array.isArray(payload.values) ? payload.values : [payload.values];
   if (rawValues.length === 0) return { data: [], error: null };
 
-  const sample = rawValues[0];
+  const validCols = await getValidTableColumns(table);
+  const cleanedRows = rawValues.map(r => filterRowByValidColumns(r, validCols));
+
+  const sample = cleanedRows[0];
   const keys = Object.keys(sample).filter(k => sample[k] !== undefined);
   if (keys.length === 0) return { data: [], error: null };
 
@@ -411,12 +512,14 @@ export async function executeInsert(payload: QueryPayload) {
   const params: any[] = [];
   const valueRows: string[] = [];
 
-  for (const row of rawValues) {
+  for (const row of cleanedRows) {
     const rowPlaceholders: string[] = [];
     for (const k of keys) {
       let val = row[k];
       if (typeof val === 'object' && val !== null && !(val instanceof Date)) {
         val = JSON.stringify(val);
+      } else if (val === '') {
+        val = null;
       }
       params.push(val === undefined ? null : val);
       rowPlaceholders.push(`$${params.length}`);
@@ -424,16 +527,9 @@ export async function executeInsert(payload: QueryPayload) {
     valueRows.push(`(${rowPlaceholders.join(', ')})`);
   }
 
-  let onConflictSql = '';
-  if (Array.isArray(payload.onConflictCols) && payload.onConflictCols.length > 0) {
-    const conflictCols = payload.onConflictCols.map(c => `"${sanitizeIdent(c)}"`).join(', ');
-    onConflictSql = `ON CONFLICT (${conflictCols}) DO NOTHING`;
-  }
-
   const insertSql = `
     INSERT INTO "${table}" (${colsSql})
     VALUES ${valueRows.join(', ')}
-    ${onConflictSql}
     RETURNING *
   `;
 
@@ -441,11 +537,13 @@ export async function executeInsert(payload: QueryPayload) {
     const result = await pool.query(insertSql, params);
     return { data: result.rows, error: null };
   } catch (err: any) {
+    // If table columns changed dynamically, invalidate column cache and retry once
+    tableColumnsCache.delete(table);
     if (isConnectionError(err)) {
       return insertSupabaseFallback(payload);
     }
     console.warn(`[Local DB Insert Notice on table ${table}]:`, err.message);
-    return { data: [], error: null };
+    return { data: [], error: { message: err.message } };
   }
 }
 
@@ -454,57 +552,108 @@ export async function executeUpsert(payload: QueryPayload) {
   const rawValues = Array.isArray(payload.values) ? payload.values : [payload.values];
   if (rawValues.length === 0) return { data: [], error: null };
 
-  const sample = rawValues[0];
+  const validCols = await getValidTableColumns(table);
+  const cleanedRows = rawValues.map(r => filterRowByValidColumns(r, validCols));
+
+  const sample = cleanedRows[0];
   const keys = Object.keys(sample).filter(k => sample[k] !== undefined);
   if (keys.length === 0) return { data: [], error: null };
 
-  const colsSql = keys.map(k => `"${sanitizeIdent(k)}"`).join(', ');
-  const params: any[] = [];
-  const valueRows: string[] = [];
-
-  for (const row of rawValues) {
-    const rowPlaceholders: string[] = [];
-    for (const k of keys) {
-      let val = row[k];
-      if (typeof val === 'object' && val !== null && !(val instanceof Date)) {
-        val = JSON.stringify(val);
+  // Determine conflict columns
+  const defaultCandidates = ['po_no', 'voucher_no', 'mr_no', 'sauda_no', 'user_id', 'username', 'new_po_no', 'club_id', 'id'];
+  let conflictColsArr: string[] = [];
+  if (Array.isArray(payload.onConflictCols) && payload.onConflictCols.length > 0) {
+    conflictColsArr = payload.onConflictCols.filter(c => validCols.size === 0 || validCols.has(c));
+  }
+  if (conflictColsArr.length === 0) {
+    for (const cand of defaultCandidates) {
+      if (keys.includes(cand)) {
+        conflictColsArr = [cand];
+        break;
       }
-      params.push(val === undefined ? null : val);
-      rowPlaceholders.push(`$${params.length}`);
-    }
-    valueRows.push(`(${rowPlaceholders.join(', ')})`);
-  }
-
-  // Conflict resolution columns
-  const conflictColsArr = (Array.isArray(payload.onConflictCols) && payload.onConflictCols.length > 0)
-    ? payload.onConflictCols
-    : (keys.includes('user_id') ? ['user_id'] : (keys.includes('username') ? ['username'] : (keys.includes('id') ? ['id'] : [])));
-
-  let onConflictSql = '';
-  if (conflictColsArr.length > 0) {
-    const conflictColsStr = conflictColsArr.map(c => `"${sanitizeIdent(c)}"`).join(', ');
-    const updateCols = keys.filter(k => !conflictColsArr.includes(k));
-    if (updateCols.length > 0) {
-      const updateSets = updateCols
-        .map(k => `"${sanitizeIdent(k)}" = EXCLUDED."${sanitizeIdent(k)}"`)
-        .join(', ');
-      onConflictSql = `ON CONFLICT (${conflictColsStr}) DO UPDATE SET ${updateSets}`;
-    } else {
-      onConflictSql = `ON CONFLICT (${conflictColsStr}) DO NOTHING`;
     }
   }
 
-  const upsertSql = `
-    INSERT INTO "${table}" (${colsSql})
-    VALUES ${valueRows.join(', ')}
-    ${onConflictSql}
-    RETURNING *
-  `;
+  const savedResults: any[] = [];
 
   try {
-    const result = await pool.query(upsertSql, params);
-    return { data: result.rows, error: null };
+    for (const row of cleanedRows) {
+      const rowKeys = Object.keys(row).filter(k => row[k] !== undefined);
+      if (rowKeys.length === 0) continue;
+
+      let updatedRows: any[] = [];
+
+      // 1. If we have conflict columns and values for them, try UPDATE first (works even without UNIQUE constraint!)
+      const activeConflictCols = conflictColsArr.filter(c => row[c] !== undefined && row[c] !== null && row[c] !== '');
+      if (activeConflictCols.length > 0) {
+        const updateKeys = rowKeys.filter(k => !activeConflictCols.includes(k));
+        if (updateKeys.length > 0) {
+          const updParams: any[] = [];
+          const setClauses: string[] = [];
+          for (const k of updateKeys) {
+            let val = row[k];
+            if (typeof val === 'object' && val !== null && !(val instanceof Date)) {
+              val = JSON.stringify(val);
+            } else if (val === '') {
+              val = null;
+            }
+            updParams.push(val);
+            setClauses.push(`"${sanitizeIdent(k)}" = $${updParams.length}`);
+          }
+
+          const whereParts: string[] = [];
+          for (const c of activeConflictCols) {
+            updParams.push(row[c]);
+            whereParts.push(`"${sanitizeIdent(c)}" = $${updParams.length}`);
+          }
+
+          const updateSql = `UPDATE "${table}" SET ${setClauses.join(', ')} WHERE ${whereParts.join(' AND ')} RETURNING *`;
+          const updRes = await pool.query(updateSql, updParams);
+          if (updRes.rows.length > 0) {
+            updatedRows = updRes.rows;
+          }
+        } else {
+          // Check if row already exists
+          const selParams = activeConflictCols.map(c => row[c]);
+          const whereParts = activeConflictCols.map((c, idx) => `"${sanitizeIdent(c)}" = $${idx + 1}`);
+          const selRes = await pool.query(`SELECT * FROM "${table}" WHERE ${whereParts.join(' AND ')} LIMIT 1`, selParams);
+          if (selRes.rows.length > 0) {
+            updatedRows = selRes.rows;
+          }
+        }
+      }
+
+      if (updatedRows.length > 0) {
+        savedResults.push(...updatedRows);
+        continue;
+      }
+
+      // 2. Row did not exist yet — perform INSERT
+      const insParams: any[] = [];
+      const insPlaceholders: string[] = [];
+      const insColsSql = rowKeys.map(k => `"${sanitizeIdent(k)}"`).join(', ');
+
+      for (const k of rowKeys) {
+        let val = row[k];
+        if (typeof val === 'object' && val !== null && !(val instanceof Date)) {
+          val = JSON.stringify(val);
+        } else if (val === '') {
+          val = null;
+        }
+        insParams.push(val);
+        insPlaceholders.push(`$${insParams.length}`);
+      }
+
+      const insSql = `INSERT INTO "${table}" (${insColsSql}) VALUES (${insPlaceholders.join(', ')}) RETURNING *`;
+      const insRes = await pool.query(insSql, insParams);
+      if (insRes.rows.length > 0) {
+        savedResults.push(...insRes.rows);
+      }
+    }
+
+    return { data: savedResults, error: null };
   } catch (err: any) {
+    tableColumnsCache.delete(table);
     if (isConnectionError(err)) {
       return insertSupabaseFallback(payload);
     }
@@ -515,7 +664,10 @@ export async function executeUpsert(payload: QueryPayload) {
 
 export async function executeUpdate(payload: QueryPayload) {
   const table = sanitizeIdent(payload.table);
-  const values = payload.values || {};
+  const rawValues = payload.values || {};
+  const validCols = await getValidTableColumns(table);
+  const values = filterRowByValidColumns(rawValues, validCols);
+
   const keys = Object.keys(values).filter(k => values[k] !== undefined);
   if (keys.length === 0) return { data: [], error: null };
 
@@ -526,49 +678,33 @@ export async function executeUpdate(payload: QueryPayload) {
     let val = values[k];
     if (typeof val === 'object' && val !== null && !(val instanceof Date)) {
       val = JSON.stringify(val);
+    } else if (val === '') {
+      val = null;
     }
     params.push(val);
     setClauses.push(`"${sanitizeIdent(k)}" = $${params.length}`);
   }
 
-  const whereClauses: string[] = [];
-  if (Array.isArray(payload.filters)) {
-    for (const f of payload.filters) {
-      const col = sanitizeIdent(f.column);
-      params.push(f.value);
-      whereClauses.push(`"${col}" = $${params.length}`);
-    }
-  }
-
-  const whereSql = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
+  const whereSql = buildWhereClause(payload, params);
   const updateSql = `UPDATE "${table}" SET ${setClauses.join(', ')} ${whereSql} RETURNING *`;
 
   try {
     const result = await pool.query(updateSql, params);
     return { data: result.rows, error: null };
   } catch (err: any) {
+    tableColumnsCache.delete(table);
     if (isConnectionError(err)) {
       return updateSupabaseFallback(payload);
     }
     console.warn(`[Local DB Update Notice on table ${table}]:`, err.message);
-    return { data: [], error: null };
+    return { data: [], error: { message: err.message } };
   }
 }
 
 export async function executeDelete(payload: QueryPayload) {
   const table = sanitizeIdent(payload.table);
   const params: any[] = [];
-  const whereClauses: string[] = [];
-
-  if (Array.isArray(payload.filters)) {
-    for (const f of payload.filters) {
-      const col = sanitizeIdent(f.column);
-      params.push(f.value);
-      whereClauses.push(`"${col}" = $${params.length}`);
-    }
-  }
-
-  const whereSql = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
+  const whereSql = buildWhereClause(payload, params);
   const deleteSql = `DELETE FROM "${table}" ${whereSql} RETURNING *`;
 
   try {
@@ -579,14 +715,46 @@ export async function executeDelete(payload: QueryPayload) {
       return deleteSupabaseFallback(payload);
     }
     console.warn(`[Local DB Delete Notice on table ${table}]:`, err.message);
-    return { data: [], error: null };
+    return { data: [], error: { message: err.message } };
   }
 }
 
 export async function executeRpc(funcName: string, args: any) {
   const func = sanitizeIdent(funcName);
   try {
+    // 1. Direct execution for exec_sql and exec_sql_return
+    if (func === 'exec_sql' || func === 'exec_sql_return') {
+      const sqlQuery = args?.query || args?.sql_query || args?.sql || (typeof args === 'string' ? args : '');
+      if (!sqlQuery) return { data: { success: true }, error: null };
+      const res = await pool.query(sqlQuery);
+      if (func === 'exec_sql_return') {
+        return { data: res.rows || [], error: null };
+      }
+      return { data: { success: true }, error: null };
+    }
+
+    // 2. Direct execution for get_all_tables
+    if (func === 'get_all_tables') {
+      const res = await pool.query(
+        `SELECT table_name::text FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE' ORDER BY table_name`
+      );
+      return { data: res.rows, error: null };
+    }
+
+    // 3. Direct execution for search_all_tables
+    if (func === 'search_all_tables') {
+      const searchText = args?.search_text || args?.query || '';
+      const res = await pool.query(`SELECT * FROM public.search_all_tables($1::text)`, [String(searchText)]);
+      return { data: res.rows, error: null };
+    }
+
+    // 4. Generic stored function call
     if (args && typeof args === 'object' && !Array.isArray(args)) {
+      const argKeys = Object.keys(args);
+      if (argKeys.length === 1 && typeof args[argKeys[0]] === 'string') {
+        const res = await pool.query(`SELECT * FROM "${func}"($1)`, [args[argKeys[0]]]);
+        return { data: res.rows, error: null };
+      }
       const res = await pool.query(`SELECT * FROM "${func}"($1::jsonb)`, [JSON.stringify(args)]);
       return { data: res.rows, error: null };
     } else if (Array.isArray(args)) {
@@ -602,7 +770,7 @@ export async function executeRpc(funcName: string, args: any) {
       return rpcSupabaseFallback(funcName, args);
     }
     console.warn(`[Local DB RPC Notice on function ${funcName}]:`, err.message);
-    return { data: null, error: null };
+    return { data: null, error: { message: err.message } };
   }
 }
 

@@ -195,6 +195,9 @@ export class LocalQueryBuilder<T = any> implements PromiseLike<{ data: T[] | nul
       }
 
       const result = await res.json();
+      if (result?.error) {
+        return { data: null, error: result.error, count: 0 };
+      }
       let data = result?.data ?? [];
 
       // If mutation succeeded, dispatch local event to refresh UI across components
@@ -220,7 +223,7 @@ export class LocalQueryBuilder<T = any> implements PromiseLike<{ data: T[] | nul
 
       return { data, error: null, count: result?.count ?? 0 };
     } catch (err: any) {
-      return { data: [], error: null, count: 0 };
+      return { data: [], error: { message: err?.message || 'Network error' }, count: 0 };
     }
   }
 
@@ -255,12 +258,12 @@ export class LocalPostgresClient {
         body: JSON.stringify({ func: funcName, args })
       });
       if (!res.ok) {
-        return { data: null, error: null };
+        return { data: null, error: { message: `RPC ${funcName} failed with status ${res.status}` } };
       }
       const json = await res.json();
-      return { data: json?.data ?? null, error: null };
+      return { data: json?.data ?? null, error: json?.error ?? null };
     } catch (e: any) {
-      return { data: null, error: null };
+      return { data: null, error: { message: e?.message || 'RPC error' } };
     }
   }
 
