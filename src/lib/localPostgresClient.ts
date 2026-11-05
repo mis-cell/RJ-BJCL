@@ -195,6 +195,13 @@ export class LocalQueryBuilder<T = any> implements PromiseLike<{ data: T[] | nul
       const result = await res.json();
       let data = result?.data ?? [];
 
+      // If mutation succeeded, dispatch local event to refresh UI across components
+      if (this.mutationType && typeof window !== 'undefined') {
+        const table = this.tableName.toLowerCase();
+        window.dispatchEvent(new CustomEvent('app-data-updated', { detail: { table, tables: [table] } }));
+        window.dispatchEvent(new CustomEvent('app:data-updated', { detail: { table, tables: [table] } }));
+      }
+
       if (this.isSingleMode) {
         if (!data || data.length === 0) {
           return { data: null, error: { message: 'Row not found' }, count: result.count };
@@ -244,6 +251,53 @@ export class LocalPostgresClient {
       return { data: null, error: null };
     }
   }
+
+  // Realtime channel stub for backward compatibility
+  channel(_name: string) {
+    const channelObj = {
+      on: (_event: string, _filter: any, _callback: Function) => channelObj,
+      subscribe: (callback?: (status: string) => void) => {
+        if (callback) callback('SUBSCRIBED');
+        return channelObj;
+      },
+      unsubscribe: () => 'OK',
+    };
+    return channelObj;
+  }
+
+  // Storage stub
+  get storage() {
+    return {
+      from: (_bucket: string) => ({
+        upload: async () => ({ data: null, error: new Error('Storage is local') }),
+        download: async () => ({ data: null, error: new Error('Storage is local') }),
+        getPublicUrl: (filePath: string) => ({ data: { publicUrl: `/uploads/${filePath}` } }),
+      }),
+    };
+  }
+
+  // Auth stub
+  get auth() {
+    return {
+      getSession: async () => {
+        const raw = typeof window !== 'undefined' ? localStorage.getItem('bally_auth_session') : null;
+        return { data: { session: raw ? JSON.parse(raw) : null }, error: null };
+      },
+      getUser: async () => {
+        const raw = typeof window !== 'undefined' ? localStorage.getItem('bally_auth_session') : null;
+        const session = raw ? JSON.parse(raw) : null;
+        return { data: { user: session ? { id: session.userId, email: session.username } : null }, error: null };
+      },
+      onAuthStateChange: (callback: Function) => {
+        return { data: { subscription: { unsubscribe: () => {} } } };
+      },
+      signOut: async () => {
+        if (typeof window !== 'undefined') localStorage.removeItem('bally_auth_session');
+        return { error: null };
+      },
+    };
+  }
 }
 
 export const localPostgresClient = new LocalPostgresClient();
+

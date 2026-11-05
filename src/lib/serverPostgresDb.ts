@@ -8,11 +8,11 @@ const { Pool } = pg;
 const poolConfig: pg.PoolConfig = process.env.DATABASE_URL
   ? { connectionString: process.env.DATABASE_URL }
   : {
-      host: process.env.PGHOST || 'localhost',
-      port: Number(process.env.PGPORT) || 5432,
-      database: process.env.PGDATABASE || 'bjcl_db',
-      user: process.env.PGUSER || 'postgres',
-      password: process.env.PGPASSWORD || 'postgres',
+      host: process.env.PGHOST || process.env.LOCAL_DB_HOST || 'localhost',
+      port: Number(process.env.PGPORT || process.env.LOCAL_DB_PORT) || 5432,
+      database: process.env.PGDATABASE || process.env.LOCAL_DB_NAME || 'bjcl_db',
+      user: process.env.PGUSER || process.env.LOCAL_DB_USER || 'postgres',
+      password: process.env.PGPASSWORD || process.env.LOCAL_DB_PASSWORD || 'postgres',
     };
 
 export const pool = new Pool({
