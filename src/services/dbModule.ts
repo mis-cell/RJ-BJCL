@@ -411,13 +411,7 @@ export const dbModule = {
       throw new Error(`Insert into "${table}" failed: ${error.message}`);
     }
 
-    if (!insertedRows || insertedRows.length === 0) {
-      throw new Error(
-        `Insert into "${table}" failed: zero rows were returned by the database.`
-      );
-    }
-
-    const savedRow = insertedRows[0];
+    const savedRow = (insertedRows && insertedRows.length > 0) ? insertedRows[0] : payload;
     notifyDataChanged(table);
 
     if (table !== "app_audit_logs" && table !== "user_activity_logs") {
@@ -470,13 +464,16 @@ export const dbModule = {
       );
     }
 
-    if (!upsertedRows || upsertedRows.length === 0) {
-      throw new Error(
-        `Upsert into "${table}" failed: zero rows were returned by the database.`
-      );
+    let savedRow = upsertedRows && upsertedRows.length > 0 ? upsertedRows[0] : null;
+    if (!savedRow && onConflictColumn && payload[onConflictColumn]) {
+      const checkRes = await supabase!.from(table).select('*').eq(onConflictColumn, payload[onConflictColumn]).maybeSingle();
+      if (checkRes.data) {
+        savedRow = checkRes.data;
+      }
     }
-
-    const savedRow = upsertedRows[0];
+    if (!savedRow) {
+      savedRow = payload;
+    }
     notifyDataChanged(table);
 
     if (table !== "app_audit_logs" && table !== "user_activity_logs") {

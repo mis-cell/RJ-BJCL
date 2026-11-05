@@ -449,6 +449,70 @@ export async function executeInsert(payload: QueryPayload) {
   }
 }
 
+export async function executeUpsert(payload: QueryPayload) {
+  const table = sanitizeIdent(payload.table);
+  const rawValues = Array.isArray(payload.values) ? payload.values : [payload.values];
+  if (rawValues.length === 0) return { data: [], error: null };
+
+  const sample = rawValues[0];
+  const keys = Object.keys(sample).filter(k => sample[k] !== undefined);
+  if (keys.length === 0) return { data: [], error: null };
+
+  const colsSql = keys.map(k => `"${sanitizeIdent(k)}"`).join(', ');
+  const params: any[] = [];
+  const valueRows: string[] = [];
+
+  for (const row of rawValues) {
+    const rowPlaceholders: string[] = [];
+    for (const k of keys) {
+      let val = row[k];
+      if (typeof val === 'object' && val !== null && !(val instanceof Date)) {
+        val = JSON.stringify(val);
+      }
+      params.push(val === undefined ? null : val);
+      rowPlaceholders.push(`$${params.length}`);
+    }
+    valueRows.push(`(${rowPlaceholders.join(', ')})`);
+  }
+
+  // Conflict resolution columns
+  const conflictColsArr = (Array.isArray(payload.onConflictCols) && payload.onConflictCols.length > 0)
+    ? payload.onConflictCols
+    : (keys.includes('user_id') ? ['user_id'] : (keys.includes('username') ? ['username'] : (keys.includes('id') ? ['id'] : [])));
+
+  let onConflictSql = '';
+  if (conflictColsArr.length > 0) {
+    const conflictColsStr = conflictColsArr.map(c => `"${sanitizeIdent(c)}"`).join(', ');
+    const updateCols = keys.filter(k => !conflictColsArr.includes(k));
+    if (updateCols.length > 0) {
+      const updateSets = updateCols
+        .map(k => `"${sanitizeIdent(k)}" = EXCLUDED."${sanitizeIdent(k)}"`)
+        .join(', ');
+      onConflictSql = `ON CONFLICT (${conflictColsStr}) DO UPDATE SET ${updateSets}`;
+    } else {
+      onConflictSql = `ON CONFLICT (${conflictColsStr}) DO NOTHING`;
+    }
+  }
+
+  const upsertSql = `
+    INSERT INTO "${table}" (${colsSql})
+    VALUES ${valueRows.join(', ')}
+    ${onConflictSql}
+    RETURNING *
+  `;
+
+  try {
+    const result = await pool.query(upsertSql, params);
+    return { data: result.rows, error: null };
+  } catch (err: any) {
+    if (isConnectionError(err)) {
+      return insertSupabaseFallback(payload);
+    }
+    console.warn(`[Local DB Upsert Notice on table ${table}]:`, err.message);
+    return { data: [], error: { message: err.message } };
+  }
+}
+
 export async function executeUpdate(payload: QueryPayload) {
   const table = sanitizeIdent(payload.table);
   const values = payload.values || {};
@@ -617,8 +681,11 @@ class ServerDbQueryBuilder implements PromiseLike<{ data: any; error: any }> {
   }
 
   private async execute() {
-    if (this.mutationType === 'insert' || this.mutationType === 'upsert') {
+    if (this.mutationType === 'insert') {
       return executeInsert(this.payload);
+    }
+    if (this.mutationType === 'upsert') {
+      return executeUpsert(this.payload);
     }
     if (this.mutationType === 'update') {
       return executeUpdate(this.payload);

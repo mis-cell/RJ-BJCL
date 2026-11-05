@@ -7,7 +7,7 @@ import aiGatewayRouter from "./src/lib/ai-gateway.ts";
 import nodemailer from "nodemailer";
 import imaps from 'imap-simple';
 import { simpleParser } from 'mailparser';
-import { serverLocalDb, executeSelect, executeInsert, executeUpdate, executeDelete, executeRpc } from "./src/lib/serverPostgresDb.ts";
+import { serverLocalDb, executeSelect, executeInsert, executeUpsert, executeUpdate, executeDelete, executeRpc } from "./src/lib/serverPostgresDb.ts";
 
 // Pure Local PostgreSQL database instance (No Supabase connection or dependency)
 const supabase = serverLocalDb;
@@ -289,6 +289,15 @@ async function startServer() {
   app.post('/api/db/insert', async (req, res) => {
     try {
       const result = await executeInsert(req.body);
+      res.json(result);
+    } catch (err: any) {
+      res.status(500).json({ data: null, error: { message: err.message } });
+    }
+  });
+
+  app.post('/api/db/upsert', async (req, res) => {
+    try {
+      const result = await executeUpsert(req.body);
       res.json(result);
     } catch (err: any) {
       res.status(500).json({ data: null, error: { message: err.message } });

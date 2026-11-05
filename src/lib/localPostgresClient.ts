@@ -189,7 +189,9 @@ export class LocalQueryBuilder<T = any> implements PromiseLike<{ data: T[] | nul
       });
 
       if (!res.ok) {
-        return { data: [], error: null, count: 0 };
+        let errJson: any = null;
+        try { errJson = await res.json(); } catch (_) {}
+        return { data: [], error: errJson?.error || { message: `Request failed with status ${res.status}` }, count: 0 };
       }
 
       const result = await res.json();
