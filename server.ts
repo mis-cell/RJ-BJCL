@@ -264,9 +264,12 @@ async function startServer() {
     if (origin && isAllowedOrigin(origin)) {
       res.setHeader("Access-Control-Allow-Origin", origin);
       res.setHeader("Access-Control-Allow-Credentials", "true");
+    } else {
+      res.setHeader("Access-Control-Allow-Origin", "*");
     }
     res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS, PUT, PATCH, DELETE");
-    res.setHeader("Access-Control-Allow-Headers", "X-Requested-With,Content-Type,Authorization,X-Session-Token,X-User-Role");
+    res.setHeader("Access-Control-Allow-Headers", "X-Requested-With,Content-Type,Authorization,X-Session-Token,X-User-Role,apikey,Prefer,Range,Content-Profile,Accept-Profile,X-Client-Info");
+    res.setHeader("Access-Control-Expose-Headers", "Content-Range,Range-Unit");
     if (req.method === "OPTIONS") {
       return res.sendStatus(200);
     }
@@ -275,6 +278,178 @@ async function startServer() {
 
   // 2. Body Parser
   app.use(express.json({ limit: "50mb" }));
+
+  // Helper to parse PostgREST query string filters (for Android / Supabase SDK compatibility)
+  function parsePostgrestQuery(query: Record<string, any>) {
+    const filters: Array<{ column: string; op: 'eq' | 'neq' | 'gt' | 'gte' | 'lt' | 'lte' | 'like' | 'ilike' | 'is' | 'in'; value: any }> = [];
+    const orFilters: string[] = [];
+    const orders: Array<{ column: string; ascending: boolean }> = [];
+    let select = "*";
+    let limit: number | undefined;
+    let offset: number | undefined;
+    let onConflictCols: string[] | undefined;
+
+    for (const [key, rawVal] of Object.entries(query)) {
+      if (rawVal === undefined) continue;
+      const valStr = Array.isArray(rawVal) ? String(rawVal[rawVal.length - 1]) : String(rawVal);
+
+      if (key === "select") {
+        select = valStr || "*";
+      } else if (key === "limit") {
+        const parsed = parseInt(valStr, 10);
+        if (!isNaN(parsed)) limit = parsed;
+      } else if (key === "offset") {
+        const parsed = parseInt(valStr, 10);
+        if (!isNaN(parsed)) offset = parsed;
+      } else if (key === "on_conflict") {
+        onConflictCols = valStr.split(",").map((s) => s.trim()).filter(Boolean);
+      } else if (key === "order") {
+        const parts = valStr.split(",");
+        for (const p of parts) {
+          const segs = p.trim().split(".");
+          if (segs[0]) {
+            orders.push({
+              column: segs[0],
+              ascending: segs[1]?.toLowerCase() !== "desc"
+            });
+          }
+        }
+      } else if (key === "or") {
+        const cleaned = valStr.replace(/^\(/, "").replace(/\)$/, "");
+        if (cleaned) orFilters.push(cleaned);
+      } else {
+        const dotIdx = valStr.indexOf(".");
+        if (dotIdx > 0) {
+          const op = valStr.slice(0, dotIdx).toLowerCase();
+          const operand = valStr.slice(dotIdx + 1);
+          if (["eq", "neq", "gt", "gte", "lt", "lte"].includes(op)) {
+            filters.push({ op: op as any, column: key, value: operand });
+          } else if (op === "ilike" || op === "like") {
+            filters.push({ op: op as any, column: key, value: operand.replace(/\*/g, "%") });
+          } else if (op === "is") {
+            filters.push({
+              op: "is",
+              column: key,
+              value: operand.toLowerCase() === "null" ? null : operand.toLowerCase() === "true"
+            });
+          } else if (op === "in") {
+            const inner = operand.replace(/^\(/, "").replace(/\)$/, "");
+            const list = inner
+              ? inner.split(",").map((s) => s.trim().replace(/^"(.*)"$/, "$1"))
+              : [];
+            filters.push({ op: "in", column: key, value: list });
+          }
+        } else {
+          filters.push({ op: "eq", column: key, value: valStr });
+        }
+      }
+    }
+
+    return { select, filters, orFilters, orders, limit, offset, onConflictCols };
+  }
+
+  // 2a. Supabase / PostgREST-Compatible REST API (/rest/v1/:table) for Android App & External Clients
+  app.post("/rest/v1/rpc/:func", async (req, res) => {
+    try {
+      const result = await executeRpc(req.params.func, req.body || {});
+      if (result.error) {
+        return res.status(400).json({ message: result.error.message });
+      }
+      return res.json(result.data);
+    } catch (err: any) {
+      return res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.all("/rest/v1/:table", async (req, res) => {
+    const table = req.params.table;
+    const prefer = String(req.headers["prefer"] || "");
+    const accept = String(req.headers["accept"] || "");
+    const wantsSingleObject = accept.includes("application/vnd.pgrst.object+json");
+    const parsed = parsePostgrestQuery(req.query as Record<string, any>);
+
+    try {
+      if (req.method === "GET" || req.method === "HEAD") {
+        const isHead = req.method === "HEAD";
+        const wantCount = prefer.includes("count=exact");
+        const result = await executeSelect({
+          table,
+          select: parsed.select,
+          filters: parsed.filters,
+          orFilters: parsed.orFilters,
+          orders: parsed.orders,
+          limit: parsed.limit,
+          offset: parsed.offset,
+          count: wantCount ? "exact" : undefined
+        });
+        if (result.error) {
+          return res.status(400).json({ message: result.error.message });
+        }
+        const rows = Array.isArray(result.data) ? result.data : [];
+        const total = result.count ?? rows.length;
+        res.setHeader("Content-Range", `0-${Math.max(0, rows.length - 1)}/${total}`);
+        if (isHead) return res.status(200).end();
+        if (wantsSingleObject) {
+          return res.json(rows[0] || null);
+        }
+        return res.json(rows);
+      }
+
+      if (req.method === "POST") {
+        const isUpsert =
+          prefer.includes("resolution=merge-duplicates") ||
+          prefer.includes("resolution=ignore-duplicates") ||
+          Boolean(parsed.onConflictCols && parsed.onConflictCols.length > 0) ||
+          table === "lorry_weighments";
+        const result = isUpsert
+          ? await executeUpsert({
+              table,
+              values: req.body,
+              onConflictCols: parsed.onConflictCols || (table === "lorry_weighments" ? ["gate_pass"] : undefined)
+            })
+          : await executeInsert({
+              table,
+              values: req.body
+            });
+        if (result.error) {
+          return res.status(400).json({ message: result.error.message });
+        }
+        const rows = Array.isArray(result.data) ? result.data : result.data ? [result.data] : [];
+        return res.status(201).json(wantsSingleObject ? (rows[0] || null) : rows);
+      }
+
+      if (req.method === "PATCH" || req.method === "PUT") {
+        const result = await executeUpdate({
+          table,
+          values: req.body,
+          filters: parsed.filters,
+          orFilters: parsed.orFilters
+        });
+        if (result.error) {
+          return res.status(400).json({ message: result.error.message });
+        }
+        const rows = Array.isArray(result.data) ? result.data : result.data ? [result.data] : [];
+        return res.json(wantsSingleObject ? (rows[0] || null) : rows);
+      }
+
+      if (req.method === "DELETE") {
+        const result = await executeDelete({
+          table,
+          filters: parsed.filters,
+          orFilters: parsed.orFilters
+        });
+        if (result.error) {
+          return res.status(400).json({ message: result.error.message });
+        }
+        const rows = Array.isArray(result.data) ? result.data : [];
+        return res.json(rows);
+      }
+
+      return res.status(405).json({ message: `Method ${req.method} not allowed` });
+    } catch (err: any) {
+      return res.status(500).json({ message: err.message });
+    }
+  });
 
   // 2b. Native Local PostgreSQL Database API Routes (Executes directly via local pg.Pool)
   app.post('/api/db/query', async (req, res) => {

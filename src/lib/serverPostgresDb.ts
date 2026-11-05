@@ -518,6 +518,7 @@ async function ensureDatabaseIntegrity() {
       { table: 'mr_settlement_master', keyExpr: `TRIM(UPPER(mr_no))` },
       { table: 'payment_master', keyExpr: `TRIM(UPPER(voucher_no))` },
       { table: 'sauda_master', keyExpr: `TRIM(UPPER(sauda_no))` },
+      { table: 'lorry_weighments', keyExpr: `TRIM(UPPER(gate_pass))` },
       { table: 'satta_differentials', keyExpr: `TRIM(UPPER(area)) || '||' || TRIM(UPPER(grade))` }
     ];
 
@@ -532,6 +533,33 @@ async function ensureDatabaseIntegrity() {
           AND (${keyExpr.replace(/\b([a-z_]+)\b/g, (m) => ['TRIM', 'UPPER', 'COALESCE', 'NULLIF'].includes(m) ? m : `a.${m}`)}) <> '';
       `).catch(() => {});
     }
+
+    // 3. Ensure lorry_weighments columns & defaults for Android Gate/Weighbridge App compatibility
+    await pool.query(`
+      ALTER TABLE IF EXISTS "lorry_weighments" ALTER COLUMN "id" SET DEFAULT gen_random_uuid();
+      ALTER TABLE IF EXISTS "lorry_weighments" ALTER COLUMN "chalan_no" SET DEFAULT '';
+      ALTER TABLE IF EXISTS "lorry_weighments" ALTER COLUMN "chalan_no" DROP NOT NULL;
+      ALTER TABLE IF EXISTS "lorry_weighments" ALTER COLUMN "in_time" SET DEFAULT '';
+      ALTER TABLE IF EXISTS "lorry_weighments" ALTER COLUMN "in_time" DROP NOT NULL;
+      ALTER TABLE IF EXISTS "lorry_weighments" ALTER COLUMN "party_name" SET DEFAULT '';
+      ALTER TABLE IF EXISTS "lorry_weighments" ALTER COLUMN "party_name" DROP NOT NULL;
+      ALTER TABLE IF EXISTS "lorry_weighments" ALTER COLUMN "description" SET DEFAULT '';
+      ALTER TABLE IF EXISTS "lorry_weighments" ALTER COLUMN "description" DROP NOT NULL;
+      ALTER TABLE IF EXISTS "lorry_weighments" ALTER COLUMN "entry_date" SET DEFAULT '';
+      ALTER TABLE IF EXISTS "lorry_weighments" ALTER COLUMN "entry_date" DROP NOT NULL;
+      ALTER TABLE IF EXISTS "lorry_weighments" ALTER COLUMN "lorry_no" SET DEFAULT '';
+      ALTER TABLE IF EXISTS "lorry_weighments" ALTER COLUMN "lorry_no" DROP NOT NULL;
+      ALTER TABLE IF EXISTS "lorry_weighments" ADD COLUMN IF NOT EXISTS "driver_number" TEXT;
+      ALTER TABLE IF EXISTS "lorry_weighments" ADD COLUMN IF NOT EXISTS "driver_name" TEXT;
+      ALTER TABLE IF EXISTS "lorry_weighments" ADD COLUMN IF NOT EXISTS "department" TEXT DEFAULT 'Jute';
+      ALTER TABLE IF EXISTS "lorry_weighments" ADD COLUMN IF NOT EXISTS "mokam" VARCHAR(100);
+      ALTER TABLE IF EXISTS "lorry_weighments" ADD COLUMN IF NOT EXISTS "marka" VARCHAR(100);
+      ALTER TABLE IF EXISTS "lorry_weighments" ADD COLUMN IF NOT EXISTS "grade" TEXT;
+      ALTER TABLE IF EXISTS "lorry_weighments" ADD COLUMN IF NOT EXISTS "grade_details" JSONB;
+      ALTER TABLE IF EXISTS "lorry_weighments" ADD COLUMN IF NOT EXISTS "electric_gross_weight" NUMERIC(12, 2) DEFAULT 0.0;
+      ALTER TABLE IF EXISTS "lorry_weighments" ADD COLUMN IF NOT EXISTS "electric_tare_weight" NUMERIC(12, 2) DEFAULT 0.0;
+      ALTER TABLE IF EXISTS "lorry_weighments" ADD COLUMN IF NOT EXISTS "unload_status" VARCHAR(50) DEFAULT 'Pending';
+    `).catch(() => {});
   } catch (_) {}
 }
 
