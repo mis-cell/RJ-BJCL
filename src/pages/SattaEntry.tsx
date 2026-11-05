@@ -564,7 +564,18 @@ export default function SattaEntry({ initialData, onSave, onCancel }: { initialD
         return `'${String(v).replace(/'/g, "''")}'`;
       };
 
-      const targetSattaId = sattaData.satta_id || (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `satta-${Date.now()}`);
+      const generateSafeUuid = () =>
+        typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+          ? crypto.randomUUID()
+          : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+              const r = (Math.random() * 16) | 0;
+              const v = c === 'x' ? r : (r & 0x3) | 0x8;
+              return v.toString(16);
+            });
+      const isValidUuidStr = (val: any) =>
+        typeof val === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val.trim());
+
+      const targetSattaId = isValidUuidStr(sattaData.satta_id) ? String(sattaData.satta_id).trim() : generateSafeUuid();
       sattaData.satta_id = targetSattaId;
 
       try {

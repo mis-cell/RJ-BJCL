@@ -1010,7 +1010,18 @@ export default function SaudaEntry({
         return `'${String(v).replace(/'/g, "''")}'`;
       };
 
-      const targetSaudaId = saudaPayload.sauda_id || (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `sauda-${Date.now()}`);
+      const generateSafeUuid = () =>
+        typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+          ? crypto.randomUUID()
+          : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+              const r = (Math.random() * 16) | 0;
+              const v = c === 'x' ? r : (r & 0x3) | 0x8;
+              return v.toString(16);
+            });
+      const isValidUuidStr = (val: any) =>
+        typeof val === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val.trim());
+
+      const targetSaudaId = isValidUuidStr(saudaPayload.sauda_id) ? String(saudaPayload.sauda_id).trim() : generateSafeUuid();
       saudaPayload.sauda_id = targetSaudaId;
 
       try {

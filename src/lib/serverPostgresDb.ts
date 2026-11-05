@@ -1,7 +1,25 @@
 import pg from 'pg';
+import crypto from 'crypto';
 import dotenv from 'dotenv';
 
 dotenv.config();
+
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export function isValidUuid(val: any): boolean {
+  return typeof val === 'string' && UUID_REGEX.test(val.trim());
+}
+
+/**
+ * Deterministically converts any non-UUID string (e.g. "sauda-1793871147468", "local-123", "satta-456")
+ * into a valid RFC-4122 v4 UUID so header and detail tables always share the exact same valid UUID.
+ */
+export function toDeterministicUuid(input: string): string {
+  const clean = String(input || '').trim();
+  if (UUID_REGEX.test(clean)) return clean.toLowerCase();
+  const hash = crypto.createHash('md5').update(clean || crypto.randomUUID()).digest('hex');
+  return `${hash.slice(0, 8)}-${hash.slice(8, 12)}-4${hash.slice(13, 16)}-8${hash.slice(17, 20)}-${hash.slice(20, 32)}`;
+}
 
 // Force node-postgres to return DATE (1082) and TIMESTAMP (1114) as raw strings
 // Prevents local-to-UTC serialization from shifting dates backward by 1 day!
@@ -273,70 +291,10 @@ async function rpcSupabaseFallback(funcName: string, args: any) {
 
 export async function executeSelect(payload: QueryPayload) {
   const table = sanitizeIdent(payload.table);
+  const validCols = await getValidTableColumns(table);
+  const colTypes = tableColumnTypesCache.get(table);
   const params: any[] = [];
-  const whereClauses: string[] = [];
-
-  // Handle standard filters
-  if (Array.isArray(payload.filters)) {
-    for (const f of payload.filters) {
-      const col = sanitizeIdent(f.column);
-      if (!col) continue;
-
-      if (f.op === 'is') {
-        if (f.value === null) {
-          whereClauses.push(`"${col}" IS NULL`);
-        } else if (f.value === true) {
-          whereClauses.push(`"${col}" IS TRUE`);
-        } else if (f.value === false) {
-          whereClauses.push(`"${col}" IS FALSE`);
-        }
-      } else if (f.op === 'in' && Array.isArray(f.value)) {
-        params.push(f.value);
-        whereClauses.push(`"${col}" = ANY($${params.length})`);
-      } else {
-        params.push(f.value);
-        const idx = params.length;
-        switch (f.op) {
-          case 'eq': whereClauses.push(`"${col}" = $${idx}`); break;
-          case 'neq': whereClauses.push(`"${col}" != $${idx}`); break;
-          case 'gt': whereClauses.push(`"${col}" > $${idx}`); break;
-          case 'gte': whereClauses.push(`"${col}" >= $${idx}`); break;
-          case 'lt': whereClauses.push(`"${col}" < $${idx}`); break;
-          case 'lte': whereClauses.push(`"${col}" <= $${idx}`); break;
-          case 'like': whereClauses.push(`"${col}" LIKE $${idx}`); break;
-          case 'ilike': whereClauses.push(`"${col}" ILIKE $${idx}`); break;
-          default: whereClauses.push(`"${col}" = $${idx}`); break;
-        }
-      }
-    }
-  }
-
-  // Handle or filters
-  if (Array.isArray(payload.orFilters) && payload.orFilters.length > 0) {
-    for (const orFilter of payload.orFilters) {
-      const parts = orFilter.split(',');
-      const subClauses: string[] = [];
-      for (const part of parts) {
-        const [c, op, ...rest] = part.split('.');
-        const val = rest.join('.');
-        const col = sanitizeIdent(c);
-        if (!col) continue;
-        const cleanVal = val.replace(/^[%(]+|[%)]+$/g, '');
-        if (op === 'ilike' || op === 'like') {
-          params.push(`%${cleanVal}%`);
-          subClauses.push(`"${col}" ILIKE $${params.length}`);
-        } else if (op === 'eq') {
-          params.push(cleanVal);
-          subClauses.push(`"${col}" = $${params.length}`);
-        }
-      }
-      if (subClauses.length > 0) {
-        whereClauses.push(`(${subClauses.join(' OR ')})`);
-      }
-    }
-  }
-
-  const whereSql = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
+  const whereSql = buildWhereClause(payload, params, validCols, colTypes);
 
   // Count query if requested
   let totalCount: number | null = null;
@@ -348,22 +306,34 @@ export async function executeSelect(payload: QueryPayload) {
     } catch (_) {}
   }
 
-  // Select columns
+  // Select columns (filter out any non-existent columns if validCols is known)
   let selectSql = '*';
   if (payload.select && payload.select !== '*' && !payload.select.includes('(')) {
-    selectSql = payload.select.split(',').map(c => `"${sanitizeIdent(c.trim())}"`).join(', ');
+    const reqCols = payload.select
+      .split(',')
+      .map(c => sanitizeIdent(c.trim()))
+      .filter(c => c && (validCols.size === 0 || validCols.has(c)));
+    if (reqCols.length > 0) {
+      selectSql = reqCols.map(c => `"${c}"`).join(', ');
+    }
   }
 
-  // Ordering
+  // Ordering (filter out any non-existent order columns)
   let orderSql = '';
   if (Array.isArray(payload.orders) && payload.orders.length > 0) {
-    const orderParts = payload.orders.map(o => {
+    const validOrders = payload.orders.filter(o => {
       const col = sanitizeIdent(o.column);
-      const dir = o.ascending ? 'ASC' : 'DESC';
-      const nulls = o.nullsFirst ? 'NULLS FIRST' : 'NULLS LAST';
-      return `"${col}" ${dir} ${nulls}`;
+      return col && (validCols.size === 0 || validCols.has(col));
     });
-    orderSql = `ORDER BY ${orderParts.join(', ')}`;
+    if (validOrders.length > 0) {
+      const orderParts = validOrders.map(o => {
+        const col = sanitizeIdent(o.column);
+        const dir = o.ascending ? 'ASC' : 'DESC';
+        const nulls = o.nullsFirst ? 'NULLS FIRST' : 'NULLS LAST';
+        return `"${col}" ${dir} ${nulls}`;
+      });
+      orderSql = `ORDER BY ${orderParts.join(', ')}`;
+    }
   }
 
   // Limit & Offset
@@ -398,8 +368,9 @@ export async function executeSelect(payload: QueryPayload) {
   }
 }
 
-// Cache of valid columns per table in local PostgreSQL to automatically strip extra non-existent columns
+// Cache of valid columns and their PostgreSQL data types per table
 const tableColumnsCache = new Map<string, Set<string>>();
+const tableColumnTypesCache = new Map<string, Map<string, string>>();
 
 // Primary key columns that identify a row uniquely and should never be overwritten by a newly generated ID when updating via business key
 const TABLE_PK_COLUMNS = new Set<string>([
@@ -465,12 +436,134 @@ const TABLE_COMPOSITE_KEYS: Record<string, string[]> = {
   satta_calculated_rates: ['start_date', 'area', 'grade']
 };
 
-// Automatic startup maintenance: ensure BIGINT PK sequences exist and deduplicate any accidental duplicate master rows
+// Automatic startup maintenance: ensure all missing columns, BIGINT PK sequences, deduplication, and unique indexes exist
 let integrityInitialized = false;
 async function ensureDatabaseIntegrity() {
   if (integrityInitialized) return;
   integrityInitialized = true;
   try {
+    // 0. Ensure missing columns across all tables (from migrations & empty-table schema exports)
+    await pool.query(`
+      -- satta_quality_details (was exported with only id & created_at)
+      ALTER TABLE IF EXISTS "satta_quality_details" ADD COLUMN IF NOT EXISTS "satta_id" UUID;
+      ALTER TABLE IF EXISTS "satta_quality_details" ADD COLUMN IF NOT EXISTS "satta_no" TEXT;
+      ALTER TABLE IF EXISTS "satta_quality_details" ADD COLUMN IF NOT EXISTS "financial_year" TEXT;
+      ALTER TABLE IF EXISTS "satta_quality_details" ADD COLUMN IF NOT EXISTS "quality" TEXT;
+      ALTER TABLE IF EXISTS "satta_quality_details" ADD COLUMN IF NOT EXISTS "quality_code" TEXT;
+      ALTER TABLE IF EXISTS "satta_quality_details" ADD COLUMN IF NOT EXISTS "quality_name" TEXT;
+      ALTER TABLE IF EXISTS "satta_quality_details" ADD COLUMN IF NOT EXISTS "qty" NUMERIC DEFAULT 0;
+      ALTER TABLE IF EXISTS "satta_quality_details" ADD COLUMN IF NOT EXISTS "agency" TEXT;
+      ALTER TABLE IF EXISTS "satta_quality_details" ADD COLUMN IF NOT EXISTS "marka" TEXT;
+      ALTER TABLE IF EXISTS "satta_quality_details" ADD COLUMN IF NOT EXISTS "rs" NUMERIC DEFAULT 0;
+      ALTER TABLE IF EXISTS "satta_quality_details" ADD COLUMN IF NOT EXISTS "base_rate" NUMERIC DEFAULT 0;
+      ALTER TABLE IF EXISTS "satta_quality_details" ADD COLUMN IF NOT EXISTS "premium" NUMERIC DEFAULT 0;
+      ALTER TABLE IF EXISTS "satta_quality_details" ADD COLUMN IF NOT EXISTS "remarks" TEXT;
+
+      -- mill_inspection_print_logs (was exported with only id & created_at)
+      ALTER TABLE IF EXISTS "mill_inspection_print_logs" ADD COLUMN IF NOT EXISTS "mr_no" TEXT;
+      ALTER TABLE IF EXISTS "mill_inspection_print_logs" ADD COLUMN IF NOT EXISTS "po_no" TEXT;
+      ALTER TABLE IF EXISTS "mill_inspection_print_logs" ADD COLUMN IF NOT EXISTS "printed_by" TEXT;
+      ALTER TABLE IF EXISTS "mill_inspection_print_logs" ADD COLUMN IF NOT EXISTS "printed_by_id" TEXT;
+      ALTER TABLE IF EXISTS "mill_inspection_print_logs" ADD COLUMN IF NOT EXISTS "printed_by_name" TEXT;
+      ALTER TABLE IF EXISTS "mill_inspection_print_logs" ADD COLUMN IF NOT EXISTS "printed_at" TIMESTAMPTZ DEFAULT NOW();
+      ALTER TABLE IF EXISTS "mill_inspection_print_logs" ADD COLUMN IF NOT EXISTS "print_type" TEXT;
+      ALTER TABLE IF EXISTS "mill_inspection_print_logs" ADD COLUMN IF NOT EXISTS "print_count" INTEGER DEFAULT 1;
+      ALTER TABLE IF EXISTS "mill_inspection_print_logs" ADD COLUMN IF NOT EXISTS "remarks" TEXT;
+      ALTER TABLE IF EXISTS "mill_inspection_print_logs" ADD COLUMN IF NOT EXISTS "details" JSONB;
+
+      -- sauda_master, purchase_master, sauda_check_point extra workflow & dispute columns
+      ALTER TABLE IF EXISTS "sauda_master" ADD COLUMN IF NOT EXISTS "mismatch_cleared" BOOLEAN DEFAULT FALSE;
+      ALTER TABLE IF EXISTS "sauda_master" ADD COLUMN IF NOT EXISTS "satta_dispute_approved" BOOLEAN DEFAULT FALSE;
+      ALTER TABLE IF EXISTS "sauda_master" ADD COLUMN IF NOT EXISTS "mismatch_remarks" TEXT;
+      ALTER TABLE IF EXISTS "sauda_master" ADD COLUMN IF NOT EXISTS "satta_remarks" TEXT;
+      ALTER TABLE IF EXISTS "sauda_master" ADD COLUMN IF NOT EXISTS "approval_level" TEXT;
+      ALTER TABLE IF EXISTS "sauda_master" ADD COLUMN IF NOT EXISTS "open_remarks" JSONB;
+
+      ALTER TABLE IF EXISTS "purchase_master" ADD COLUMN IF NOT EXISTS "mismatch_cleared" BOOLEAN DEFAULT FALSE;
+      ALTER TABLE IF EXISTS "purchase_master" ADD COLUMN IF NOT EXISTS "satta_dispute_approved" BOOLEAN DEFAULT FALSE;
+      ALTER TABLE IF EXISTS "purchase_master" ADD COLUMN IF NOT EXISTS "mismatch_remarks" TEXT;
+      ALTER TABLE IF EXISTS "purchase_master" ADD COLUMN IF NOT EXISTS "satta_remarks" TEXT;
+      ALTER TABLE IF EXISTS "purchase_master" ADD COLUMN IF NOT EXISTS "approved_by" TEXT;
+      ALTER TABLE IF EXISTS "purchase_master" ADD COLUMN IF NOT EXISTS "approved_at" TIMESTAMPTZ;
+      ALTER TABLE IF EXISTS "purchase_master" ADD COLUMN IF NOT EXISTS "approval_level" TEXT;
+      ALTER TABLE IF EXISTS "purchase_master" ADD COLUMN IF NOT EXISTS "is_closed" BOOLEAN DEFAULT FALSE;
+      ALTER TABLE IF EXISTS "purchase_master" ADD COLUMN IF NOT EXISTS "is_reopened" BOOLEAN DEFAULT FALSE;
+      ALTER TABLE IF EXISTS "purchase_master" ADD COLUMN IF NOT EXISTS "close_remarks" JSONB;
+
+      ALTER TABLE IF EXISTS "sauda_check_point" ADD COLUMN IF NOT EXISTS "mismatch_cleared" BOOLEAN DEFAULT FALSE;
+      ALTER TABLE IF EXISTS "sauda_check_point" ADD COLUMN IF NOT EXISTS "satta_dispute_approved" BOOLEAN DEFAULT FALSE;
+      ALTER TABLE IF EXISTS "sauda_check_point" ADD COLUMN IF NOT EXISTS "mismatch_remarks" TEXT;
+      ALTER TABLE IF EXISTS "sauda_check_point" ADD COLUMN IF NOT EXISTS "satta_remarks" TEXT;
+      ALTER TABLE IF EXISTS "sauda_check_point" ADD COLUMN IF NOT EXISTS "approved_by" TEXT;
+      ALTER TABLE IF EXISTS "sauda_check_point" ADD COLUMN IF NOT EXISTS "approved_at" TIMESTAMPTZ;
+      ALTER TABLE IF EXISTS "sauda_check_point" ADD COLUMN IF NOT EXISTS "approval_level" TEXT;
+      ALTER TABLE IF EXISTS "sauda_check_point" ADD COLUMN IF NOT EXISTS "sauda_no" TEXT;
+      ALTER TABLE IF EXISTS "sauda_check_point" ADD COLUMN IF NOT EXISTS "broker_code" TEXT;
+      ALTER TABLE IF EXISTS "sauda_check_point" ADD COLUMN IF NOT EXISTS "supplier_code" TEXT;
+      ALTER TABLE IF EXISTS "sauda_check_point" ADD COLUMN IF NOT EXISTS "challan_supplier_code" TEXT;
+      ALTER TABLE IF EXISTS "sauda_check_point" ADD COLUMN IF NOT EXISTS "area_code" TEXT;
+      ALTER TABLE IF EXISTS "sauda_check_point" ADD COLUMN IF NOT EXISTS "agency" TEXT;
+      ALTER TABLE IF EXISTS "sauda_check_point" ADD COLUMN IF NOT EXISTS "grade" TEXT;
+      ALTER TABLE IF EXISTS "sauda_check_point" ADD COLUMN IF NOT EXISTS "quality" TEXT;
+      ALTER TABLE IF EXISTS "sauda_check_point" ADD COLUMN IF NOT EXISTS "marka" TEXT;
+      ALTER TABLE IF EXISTS "sauda_check_point" ADD COLUMN IF NOT EXISTS "is_closed" BOOLEAN DEFAULT FALSE;
+      ALTER TABLE IF EXISTS "sauda_check_point" ADD COLUMN IF NOT EXISTS "is_reopened" BOOLEAN DEFAULT FALSE;
+      ALTER TABLE IF EXISTS "sauda_check_point" ADD COLUMN IF NOT EXISTS "close_remarks" JSONB;
+
+      -- payment_master, final_arrival, inspection & mismatch extra columns
+      ALTER TABLE IF EXISTS "payment_master" ADD COLUMN IF NOT EXISTS "summary_delivery_claim" NUMERIC DEFAULT 0;
+      ALTER TABLE IF EXISTS "payment_master" ADD COLUMN IF NOT EXISTS "summary_deduction_amount" NUMERIC DEFAULT 0;
+      ALTER TABLE IF EXISTS "payment_master" ADD COLUMN IF NOT EXISTS "val_ex_short" NUMERIC DEFAULT 0;
+
+      ALTER TABLE IF EXISTS "final_arrival" ADD COLUMN IF NOT EXISTS "deductions" JSONB;
+      ALTER TABLE IF EXISTS "final_arrival" ADD COLUMN IF NOT EXISTS "deduction_rows" JSONB;
+      ALTER TABLE IF EXISTS "final_arrival" ADD COLUMN IF NOT EXISTS "deduction_amount" NUMERIC DEFAULT 0;
+
+      ALTER TABLE IF EXISTS "mill_inspection_master" ADD COLUMN IF NOT EXISTS "deduction_rows" JSONB;
+      ALTER TABLE IF EXISTS "mill_inspection_master" ADD COLUMN IF NOT EXISTS "deductions_json" TEXT;
+      ALTER TABLE IF EXISTS "inspection_master" ADD COLUMN IF NOT EXISTS "deduction_rows" JSONB;
+      ALTER TABLE IF EXISTS "inspection_master" ADD COLUMN IF NOT EXISTS "deductions_json" TEXT;
+
+      ALTER TABLE IF EXISTS "material_inspection_details" ADD COLUMN IF NOT EXISTS "moisture_deduction_kg" NUMERIC DEFAULT 0;
+      ALTER TABLE IF EXISTS "material_inspection_details" ADD COLUMN IF NOT EXISTS "dust_deduction_kg" NUMERIC DEFAULT 0;
+      ALTER TABLE IF EXISTS "material_inspection_details" ADD COLUMN IF NOT EXISTS "ncv_deduction_kg" NUMERIC DEFAULT 0;
+      ALTER TABLE IF EXISTS "mill_inspection_detail" ADD COLUMN IF NOT EXISTS "moisture_deduction_kg" NUMERIC DEFAULT 0;
+      ALTER TABLE IF EXISTS "mill_inspection_detail" ADD COLUMN IF NOT EXISTS "dust_deduction_kg" NUMERIC DEFAULT 0;
+      ALTER TABLE IF EXISTS "mill_inspection_detail" ADD COLUMN IF NOT EXISTS "ncv_deduction_kg" NUMERIC DEFAULT 0;
+      ALTER TABLE IF EXISTS "inspection_details" ADD COLUMN IF NOT EXISTS "moisture_deduction_kg" NUMERIC DEFAULT 0;
+      ALTER TABLE IF EXISTS "inspection_details" ADD COLUMN IF NOT EXISTS "dust_deduction_kg" NUMERIC DEFAULT 0;
+      ALTER TABLE IF EXISTS "inspection_details" ADD COLUMN IF NOT EXISTS "ncv_deduction_kg" NUMERIC DEFAULT 0;
+      ALTER TABLE IF EXISTS "inspection_checklist_details" ADD COLUMN IF NOT EXISTS "moisture_deduction_kg" NUMERIC DEFAULT 0;
+      ALTER TABLE IF EXISTS "inspection_checklist_details" ADD COLUMN IF NOT EXISTS "dust_deduction_kg" NUMERIC DEFAULT 0;
+      ALTER TABLE IF EXISTS "inspection_checklist_details" ADD COLUMN IF NOT EXISTS "ncv_deduction_kg" NUMERIC DEFAULT 0;
+
+      ALTER TABLE IF EXISTS "material_mismatch" ADD COLUMN IF NOT EXISTS "mismatch_id" TEXT;
+      ALTER TABLE IF EXISTS "material_mismatch" ADD COLUMN IF NOT EXISTS "supplier" TEXT;
+      ALTER TABLE IF EXISTS "material_mismatch" ADD COLUMN IF NOT EXISTS "broker" TEXT;
+      ALTER TABLE IF EXISTS "material_mismatch" ADD COLUMN IF NOT EXISTS "agency" TEXT;
+      ALTER TABLE IF EXISTS "material_mismatch" ADD COLUMN IF NOT EXISTS "ptf_mode" TEXT;
+      ALTER TABLE IF EXISTS "material_mismatch" ADD COLUMN IF NOT EXISTS "challan_supplier" TEXT;
+      ALTER TABLE IF EXISTS "material_mismatch" ADD COLUMN IF NOT EXISTS "rate_per_mt" TEXT;
+      ALTER TABLE IF EXISTS "material_mismatch" ADD COLUMN IF NOT EXISTS "lorry_number" TEXT;
+      ALTER TABLE IF EXISTS "material_mismatch" ADD COLUMN IF NOT EXISTS "issue_description" TEXT;
+      ALTER TABLE IF EXISTS "material_mismatch" ADD COLUMN IF NOT EXISTS "difference" TEXT;
+      ALTER TABLE IF EXISTS "material_mismatch" ADD COLUMN IF NOT EXISTS "mismatched_fields" TEXT;
+      ALTER TABLE IF EXISTS "material_mismatch" ADD COLUMN IF NOT EXISTS "severity" TEXT;
+      ALTER TABLE IF EXISTS "material_mismatch" ADD COLUMN IF NOT EXISTS "approved_by" TEXT;
+      ALTER TABLE IF EXISTS "material_mismatch" ADD COLUMN IF NOT EXISTS "approved_at" TIMESTAMPTZ;
+
+      ALTER TABLE IF EXISTS "sauda_check_point_deductions" ADD COLUMN IF NOT EXISTS "is_locked" BOOLEAN DEFAULT TRUE;
+      ALTER TABLE IF EXISTS "sauda_check_point_deductions" ADD COLUMN IF NOT EXISTS "is_final" BOOLEAN DEFAULT TRUE;
+      ALTER TABLE IF EXISTS "sauda_check_point_deductions" ADD COLUMN IF NOT EXISTS "settled_at" TIMESTAMPTZ DEFAULT NOW();
+      ALTER TABLE IF EXISTS "sauda_check_point_deductions" ADD COLUMN IF NOT EXISTS "settled_by" TEXT;
+
+      ALTER TABLE IF EXISTS "m_r_settlement" ADD COLUMN IF NOT EXISTS "mr_no" TEXT;
+      ALTER TABLE IF EXISTS "m_r_settlement" ADD COLUMN IF NOT EXISTS "settled_weight" NUMERIC DEFAULT 0;
+      ALTER TABLE IF EXISTS "m_r_settlement" ADD COLUMN IF NOT EXISTS "gross_amount" NUMERIC DEFAULT 0;
+      ALTER TABLE IF EXISTS "m_r_settlement" ADD COLUMN IF NOT EXISTS "net_payable" NUMERIC DEFAULT 0;
+      ALTER TABLE IF EXISTS "m_r_settlement" ADD COLUMN IF NOT EXISTS "status" TEXT;
+    `).catch(() => {});
+
     // 1. Ensure BIGINT id columns have auto-incrementing sequences so detail inserts never fail
     const bigintTables: Array<{ table: string; pk: string }> = [
       { table: 'material_inspection_details', pk: 'id' },
@@ -518,6 +611,7 @@ async function ensureDatabaseIntegrity() {
       { table: 'mr_settlement_master', keyExpr: `TRIM(UPPER(mr_no))` },
       { table: 'payment_master', keyExpr: `TRIM(UPPER(voucher_no))` },
       { table: 'sauda_master', keyExpr: `TRIM(UPPER(sauda_no))` },
+      { table: 'satta_master', keyExpr: `TRIM(UPPER(satta_no))` },
       { table: 'lorry_weighments', keyExpr: `TRIM(UPPER(gate_pass))` },
       { table: 'satta_differentials', keyExpr: `TRIM(UPPER(area)) || '||' || TRIM(UPPER(grade))` }
     ];
@@ -532,6 +626,25 @@ async function ensureDatabaseIntegrity() {
           AND (${keyExpr.replace(/\b([a-z_]+)\b/g, (m) => ['TRIM', 'UPPER', 'COALESCE', 'NULLIF'].includes(m) ? m : `a.${m}`)}) IS NOT NULL
           AND (${keyExpr.replace(/\b([a-z_]+)\b/g, (m) => ['TRIM', 'UPPER', 'COALESCE', 'NULLIF'].includes(m) ? m : `a.${m}`)}) <> '';
       `).catch(() => {});
+    }
+
+    // 2b. Create unique indexes on natural business keys so raw SQL ON CONFLICT (voucher_no / po_no / sauda_no / etc.) works natively
+    const uniqueIndexStatements = [
+      `CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_payment_master_voucher_no ON "payment_master" ("voucher_no") WHERE "voucher_no" IS NOT NULL`,
+      `CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_sauda_master_sauda_no ON "sauda_master" ("sauda_no") WHERE "sauda_no" IS NOT NULL`,
+      `CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_satta_master_satta_no ON "satta_master" ("satta_no") WHERE "satta_no" IS NOT NULL`,
+      `CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_sauda_check_point_po_no ON "sauda_check_point" ("po_no") WHERE "po_no" IS NOT NULL`,
+      `CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_purchase_master_po_no ON "purchase_master" ("po_no") WHERE "po_no" IS NOT NULL`,
+      `CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_temp_arrival_no ON "temporary_material_received" ("temporary_arrival_no") WHERE "temporary_arrival_no" IS NOT NULL`,
+      `CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_mr_settlement_mr_no ON "mr_settlement_master" ("mr_no") WHERE "mr_no" IS NOT NULL`,
+      `CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_lorry_weighments_gate_pass ON "lorry_weighments" ("gate_pass") WHERE "gate_pass" IS NOT NULL`,
+      `CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_user_master_username ON "user_master" ("username") WHERE "username" IS NOT NULL`,
+      `CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_unit_master_unit_name ON "unit_master" ("unit_name") WHERE "unit_name" IS NOT NULL`,
+      `CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_marka_master_marka_name ON "marka_master" ("marka_name") WHERE "marka_name" IS NOT NULL`,
+      `CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_area_master_area_name ON "area_master" ("area_name") WHERE "area_name" IS NOT NULL`
+    ];
+    for (const stmt of uniqueIndexStatements) {
+      await pool.query(stmt).catch(() => {});
     }
 
     // 3. Ensure lorry_weighments columns & defaults for Android Gate/Weighbridge App compatibility
@@ -560,6 +673,10 @@ async function ensureDatabaseIntegrity() {
       ALTER TABLE IF EXISTS "lorry_weighments" ADD COLUMN IF NOT EXISTS "electric_tare_weight" NUMERIC(12, 2) DEFAULT 0.0;
       ALTER TABLE IF EXISTS "lorry_weighments" ADD COLUMN IF NOT EXISTS "unload_status" VARCHAR(50) DEFAULT 'Pending';
     `).catch(() => {});
+
+    // Clear column caches after schema additions so fresh metadata is loaded
+    tableColumnsCache.clear();
+    tableColumnTypesCache.clear();
   } catch (_) {}
 }
 
@@ -575,37 +692,153 @@ async function getValidTableColumns(table: string): Promise<Set<string>> {
   }
   try {
     const res = await pool.query(
-      `SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = $1`,
+      `SELECT column_name, data_type, udt_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = $1`,
       [cleanTable]
     );
     if (res.rows.length > 0) {
-      const colSet = new Set<string>(res.rows.map((r: any) => String(r.column_name)));
+      const colSet = new Set<string>();
+      const typeMap = new Map<string, string>();
+      for (const r of res.rows) {
+        const cName = String(r.column_name);
+        const dType = String(r.udt_name || r.data_type || '').toLowerCase();
+        colSet.add(cName);
+        typeMap.set(cName, dType);
+      }
       tableColumnsCache.set(cleanTable, colSet);
+      tableColumnTypesCache.set(cleanTable, typeMap);
       return colSet;
     }
   } catch (_) {}
   return new Set<string>();
 }
 
-function filterRowByValidColumns(row: Record<string, any>, validCols: Set<string>): Record<string, any> {
+function filterRowByValidColumns(
+  row: Record<string, any>,
+  validCols: Set<string>,
+  table?: string
+): Record<string, any> {
   if (!row || typeof row !== 'object') return {};
-  if (validCols.size === 0) return row;
+  const colTypes = table ? tableColumnTypesCache.get(sanitizeIdent(table)) : undefined;
   const filtered: Record<string, any> = {};
+
   for (const k of Object.keys(row)) {
-    if (validCols.has(k) && row[k] !== undefined) {
-      filtered[k] = row[k];
+    if (validCols.size > 0 && !validCols.has(k)) continue;
+    const rawVal = row[k];
+    if (rawVal === undefined) continue;
+
+    const cType = (colTypes?.get(k) || '').toLowerCase();
+
+    // 1. UUID column sanitization (prevents 'invalid input syntax for type uuid: "sauda-..."')
+    if (cType === 'uuid') {
+      if (rawVal === null || String(rawVal).trim() === '') {
+        if (TABLE_PK_COLUMNS.has(k)) {
+          filtered[k] = crypto.randomUUID();
+        } else {
+          filtered[k] = null;
+        }
+      } else if (isValidUuid(rawVal)) {
+        filtered[k] = String(rawVal).trim();
+      } else {
+        filtered[k] = toDeterministicUuid(String(rawVal));
+      }
+      continue;
     }
+
+    // 2. Integer / BigInt / SmallInt column sanitization
+    if (cType === 'int8' || cType === 'int4' || cType === 'int2' || cType === 'bigint' || cType === 'integer' || cType === 'smallint') {
+      if (rawVal === null || String(rawVal).trim() === '') {
+        if (k === 'id' || k === 'log_id') {
+          // Omit PK so PostgreSQL sequence nextval() generates it
+          continue;
+        }
+        filtered[k] = null;
+      } else {
+        const parsed = Number(rawVal);
+        if (!Number.isFinite(parsed)) {
+          if (k === 'id' || k === 'log_id') {
+            continue;
+          }
+          filtered[k] = 0;
+        } else {
+          filtered[k] = Math.round(parsed);
+        }
+      }
+      continue;
+    }
+
+    // 3. Numeric / Float column sanitization
+    if (cType === 'numeric' || cType === 'float8' || cType === 'float4' || cType === 'decimal' || cType === 'real' || cType === 'double precision') {
+      if (rawVal === null || String(rawVal).trim() === '') {
+        filtered[k] = null;
+      } else {
+        const parsed = Number(rawVal);
+        filtered[k] = Number.isFinite(parsed) ? parsed : 0;
+      }
+      continue;
+    }
+
+    // 4. Date / Timestamp column sanitization
+    if (cType === 'date' || cType.startsWith('timestamp') || cType === 'timestamptz') {
+      const s = rawVal === null ? '' : String(rawVal).trim();
+      if (!s || s.toLowerCase() === 'null' || s.toLowerCase() === 'invalid date') {
+        filtered[k] = null;
+      } else {
+        filtered[k] = rawVal;
+      }
+      continue;
+    }
+
+    // 5. Boolean column sanitization
+    if (cType === 'bool' || cType === 'boolean') {
+      if (rawVal === null || String(rawVal).trim() === '') {
+        filtered[k] = false;
+      } else if (typeof rawVal === 'boolean') {
+        filtered[k] = rawVal;
+      } else {
+        const s = String(rawVal).trim().toLowerCase();
+        filtered[k] = s === 'true' || s === '1' || s === 'yes' || s === 't';
+      }
+      continue;
+    }
+
+    // 6. JSON / JSONB column sanitization
+    if (cType === 'jsonb' || cType === 'json') {
+      if (rawVal === null || rawVal === '') {
+        filtered[k] = null;
+      } else if (typeof rawVal === 'string') {
+        try {
+          JSON.parse(rawVal);
+          filtered[k] = rawVal;
+        } catch (_) {
+          filtered[k] = JSON.stringify(rawVal);
+        }
+      } else {
+        filtered[k] = JSON.stringify(rawVal);
+      }
+      continue;
+    }
+
+    filtered[k] = rawVal;
   }
+
   return filtered;
 }
 
-function buildWhereClause(payload: QueryPayload, params: any[]): string {
+function buildWhereClause(
+  payload: QueryPayload,
+  params: any[],
+  validCols?: Set<string>,
+  colTypes?: Map<string, string>
+): string {
   const whereClauses: string[] = [];
 
   if (Array.isArray(payload.filters)) {
     for (const f of payload.filters) {
       const col = sanitizeIdent(f.column);
       if (!col) continue;
+      if (validCols && validCols.size > 0 && !validCols.has(col)) continue;
+
+      const cType = (colTypes?.get(col) || '').toLowerCase();
 
       if (f.op === 'is') {
         if (f.value === null) {
@@ -616,21 +849,43 @@ function buildWhereClause(payload: QueryPayload, params: any[]): string {
           whereClauses.push(`"${col}" IS FALSE`);
         }
       } else if (f.op === 'in' && Array.isArray(f.value)) {
-        params.push(f.value);
+        const mappedList = cType === 'uuid'
+          ? f.value.map((v: any) => (isValidUuid(v) ? String(v).trim() : toDeterministicUuid(String(v))))
+          : f.value;
+        params.push(mappedList);
         whereClauses.push(`"${col}" = ANY($${params.length})`);
-      } else {
+      } else if (f.op === 'like' || f.op === 'ilike') {
         params.push(f.value);
         const idx = params.length;
+        whereClauses.push(`CAST("${col}" AS TEXT) ${f.op === 'like' ? 'LIKE' : 'ILIKE'} $${idx}`);
+      } else {
+        let fVal = f.value;
+        let useTextCast = false;
+
+        if (cType === 'uuid' && fVal !== null && fVal !== undefined) {
+          const sVal = String(fVal).trim();
+          if (isValidUuid(sVal)) {
+            fVal = sVal;
+          } else if (/^(sauda-|satta-|local-|sat_|lorry_|hist_|audit_|g_)/i.test(sVal)) {
+            fVal = toDeterministicUuid(sVal);
+          } else {
+            useTextCast = true;
+          }
+        } else if ((cType === 'int8' || cType === 'int4' || cType === 'bigint' || cType === 'integer') && fVal !== null && !Number.isFinite(Number(fVal))) {
+          useTextCast = true;
+        }
+
+        params.push(fVal);
+        const idx = params.length;
+        const colExpr = useTextCast ? `CAST("${col}" AS TEXT)` : `"${col}"`;
         switch (f.op) {
-          case 'eq': whereClauses.push(`"${col}" = $${idx}`); break;
-          case 'neq': whereClauses.push(`"${col}" != $${idx}`); break;
-          case 'gt': whereClauses.push(`"${col}" > $${idx}`); break;
-          case 'gte': whereClauses.push(`"${col}" >= $${idx}`); break;
-          case 'lt': whereClauses.push(`"${col}" < $${idx}`); break;
-          case 'lte': whereClauses.push(`"${col}" <= $${idx}`); break;
-          case 'like': whereClauses.push(`"${col}" LIKE $${idx}`); break;
-          case 'ilike': whereClauses.push(`"${col}" ILIKE $${idx}`); break;
-          default: whereClauses.push(`"${col}" = $${idx}`); break;
+          case 'eq': whereClauses.push(`${colExpr} = $${idx}`); break;
+          case 'neq': whereClauses.push(`${colExpr} != $${idx}`); break;
+          case 'gt': whereClauses.push(`${colExpr} > $${idx}`); break;
+          case 'gte': whereClauses.push(`${colExpr} >= $${idx}`); break;
+          case 'lt': whereClauses.push(`${colExpr} < $${idx}`); break;
+          case 'lte': whereClauses.push(`${colExpr} <= $${idx}`); break;
+          default: whereClauses.push(`${colExpr} = $${idx}`); break;
         }
       }
     }
@@ -645,13 +900,15 @@ function buildWhereClause(payload: QueryPayload, params: any[]): string {
         const val = rest.join('.');
         const col = sanitizeIdent(c);
         if (!col) continue;
+        if (validCols && validCols.size > 0 && !validCols.has(col)) continue;
+
         const cleanVal = val.replace(/^[%(]+|[%)]+$/g, '');
         if (op === 'ilike' || op === 'like') {
           params.push(`%${cleanVal}%`);
-          subClauses.push(`"${col}" ILIKE $${params.length}`);
+          subClauses.push(`CAST("${col}" AS TEXT) ILIKE $${params.length}`);
         } else if (op === 'eq') {
           params.push(cleanVal);
-          subClauses.push(`"${col}" = $${params.length}`);
+          subClauses.push(`CAST("${col}" AS TEXT) = $${params.length}`);
         }
       }
       if (subClauses.length > 0) {
@@ -774,7 +1031,7 @@ export async function executeInsert(payload: QueryPayload) {
   }
 
   const validCols = await getValidTableColumns(table);
-  const cleanedRows = rawValues.map(r => filterRowByValidColumns(r, validCols));
+  const cleanedRows = rawValues.map(r => filterRowByValidColumns(r, validCols, table));
 
   const sample = cleanedRows[0];
   const keys = Object.keys(sample).filter(k => sample[k] !== undefined);
@@ -810,6 +1067,7 @@ export async function executeInsert(payload: QueryPayload) {
     return { data: result.rows, error: null };
   } catch (err: any) {
     tableColumnsCache.delete(table);
+    tableColumnTypesCache.delete(table);
     if (isConnectionError(err)) {
       return insertSupabaseFallback(payload);
     }
@@ -824,7 +1082,7 @@ export async function executeUpsert(payload: QueryPayload) {
   if (rawValues.length === 0) return { data: [], error: null };
 
   const validCols = await getValidTableColumns(table);
-  const cleanedRows = rawValues.map(r => filterRowByValidColumns(r, validCols));
+  const cleanedRows = rawValues.map(r => filterRowByValidColumns(r, validCols, table));
 
   const savedResults: any[] = [];
 
@@ -872,6 +1130,7 @@ export async function executeUpsert(payload: QueryPayload) {
     return { data: savedResults, error: null };
   } catch (err: any) {
     tableColumnsCache.delete(table);
+    tableColumnTypesCache.delete(table);
     if (isConnectionError(err)) {
       return insertSupabaseFallback(payload);
     }
@@ -884,7 +1143,8 @@ export async function executeUpdate(payload: QueryPayload) {
   const table = sanitizeIdent(payload.table);
   const rawValues = payload.values || {};
   const validCols = await getValidTableColumns(table);
-  const values = filterRowByValidColumns(rawValues, validCols);
+  const colTypes = tableColumnTypesCache.get(table);
+  const values = filterRowByValidColumns(rawValues, validCols, table);
 
   const keys = Object.keys(values).filter(k => values[k] !== undefined);
   if (keys.length === 0) return { data: [], error: null };
@@ -903,7 +1163,7 @@ export async function executeUpdate(payload: QueryPayload) {
     setClauses.push(`"${sanitizeIdent(k)}" = $${params.length}`);
   }
 
-  const whereSql = buildWhereClause(payload, params);
+  const whereSql = buildWhereClause(payload, params, validCols, colTypes);
   const updateSql = `UPDATE "${table}" SET ${setClauses.join(', ')} ${whereSql} RETURNING *`;
 
   try {
@@ -936,6 +1196,7 @@ export async function executeUpdate(payload: QueryPayload) {
     return { data: [], error: null };
   } catch (err: any) {
     tableColumnsCache.delete(table);
+    tableColumnTypesCache.delete(table);
     if (isConnectionError(err)) {
       return updateSupabaseFallback(payload);
     }
@@ -946,8 +1207,10 @@ export async function executeUpdate(payload: QueryPayload) {
 
 export async function executeDelete(payload: QueryPayload) {
   const table = sanitizeIdent(payload.table);
+  const validCols = await getValidTableColumns(table);
+  const colTypes = tableColumnTypesCache.get(table);
   const params: any[] = [];
-  const whereSql = buildWhereClause(payload, params);
+  const whereSql = buildWhereClause(payload, params, validCols, colTypes);
   const deleteSql = `DELETE FROM "${table}" ${whereSql} RETURNING *`;
 
   try {
@@ -967,9 +1230,17 @@ export async function executeRpc(funcName: string, args: any) {
   try {
     // 1. Direct execution for exec_sql and exec_sql_return
     if (func === 'exec_sql' || func === 'exec_sql_return') {
-      const sqlQuery = args?.query || args?.sql_query || args?.sql || (typeof args === 'string' ? args : '');
-      if (!sqlQuery) return { data: { success: true }, error: null };
-      const res = await pool.query(sqlQuery);
+      const rawSqlQuery = args?.query || args?.sql_query || args?.sql || (typeof args === 'string' ? args : '');
+      if (!rawSqlQuery) return { data: { success: true }, error: null };
+
+      // Automatically replace any non-UUID synthetic ID literals (e.g. 'sauda-1793871147468', 'satta-179...', 'local-179...')
+      // generated on non-HTTPS HTTP origins with valid deterministic UUIDs before PostgreSQL executes the SQL!
+      const sanitizedSqlQuery = String(rawSqlQuery).replace(
+        /'((?:sauda|satta|local)-[0-9]{10,}|(?:sat|lorry|hist|audit)_[0-9a-z_]{8,})'/gi,
+        (_full, innerId) => `'${toDeterministicUuid(innerId)}'`
+      );
+
+      const res = await pool.query(sanitizedSqlQuery);
       if (func === 'exec_sql_return') {
         return { data: res.rows || [], error: null };
       }

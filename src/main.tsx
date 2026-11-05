@@ -1,3 +1,28 @@
+// Ensure crypto.randomUUID is available on HTTP (non-HTTPS) static IP / LAN deployments
+if (typeof window !== 'undefined') {
+  const gCrypto = (window.crypto || (window as any).msCrypto || {}) as any;
+  if (typeof gCrypto.randomUUID !== 'function') {
+    const fallbackRandomUUID = (): `${string}-${string}-${string}-${string}-${string}` => {
+      return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+        let r = Math.random() * 16;
+        if (typeof gCrypto.getRandomValues === 'function') {
+          const buf = new Uint8Array(1);
+          gCrypto.getRandomValues(buf);
+          r = buf[0] % 16;
+        }
+        const v = c === 'x' ? r | 0 : (r & 0x3) | 0x8;
+        return v.toString(16);
+      }) as `${string}-${string}-${string}-${string}-${string}`;
+    };
+    try {
+      gCrypto.randomUUID = fallbackRandomUUID;
+      if (!window.crypto) {
+        (window as any).crypto = gCrypto;
+      }
+    } catch (_e) {}
+  }
+}
+
 import {StrictMode} from 'react';
 import {createRoot} from 'react-dom/client';
 import App from './App';
