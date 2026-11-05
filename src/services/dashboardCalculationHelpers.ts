@@ -146,8 +146,8 @@ export function parseRecordDate(rawDate: any): { dateObj: Date; dateStr: string;
     };
   }
   
-  // Handle YYYY-MM-DD or YYYY/MM/DD or ISO prefix
-  if (/^\d{1,4}[-/]\d{1,2}[-/]\d{1,4}/.test(str)) {
+  // Handle YYYY-MM-DD or YYYY/MM/DD or ISO prefix (must start with 4-digit year)
+  if (/^\d{4}[-/]\d{1,2}[-/]\d{1,2}/.test(str)) {
     const cleanDatePart = str.split('T')[0];
     const parts = cleanDatePart.split(/[-/]/);
     let year = parseInt(parts[0], 10);
@@ -171,8 +171,8 @@ export function parseRecordDate(rawDate: any): { dateObj: Date; dateStr: string;
     }
   }
 
-  // Handle DD-MM-YYYY or DD/MM/YYYY
-  if (/^\d{1,2}[-/]\d{1,2}[-/]\d{1,4}/.test(str)) {
+  // Handle DD-MM-YYYY or DD/MM/YYYY (ends with 4-digit year)
+  if (/^\d{1,2}[-/]\d{1,2}[-/]\d{4}/.test(str)) {
     const parts = str.split(/[-/]/);
     const day = parseInt(parts[0], 10);
     const month = parseInt(parts[1], 10) - 1; // 0-indexed

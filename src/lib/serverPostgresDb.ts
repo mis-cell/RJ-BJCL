@@ -3,6 +3,11 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
+// Force node-postgres to return DATE (1082) and TIMESTAMP (1114) as raw strings
+// Prevents local-to-UTC serialization from shifting dates backward by 1 day!
+pg.types.setTypeParser(1082, (val: string) => val);
+pg.types.setTypeParser(1114, (val: string) => val);
+
 const { Pool } = pg;
 
 const poolConfig: pg.PoolConfig = process.env.DATABASE_URL

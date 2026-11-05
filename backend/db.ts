@@ -1,8 +1,14 @@
-import { Pool } from 'pg';
+import pg from 'pg';
 import dotenv from 'dotenv';
 import path from 'path';
 
+// Force node-postgres to return DATE (1082) and TIMESTAMP (1114) as raw strings
+pg.types.setTypeParser(1082, (val: string) => val);
+pg.types.setTypeParser(1114, (val: string) => val);
+
 dotenv.config({ path: path.resolve(__dirname, '../.env') });
+
+const { Pool } = pg;
 
 // Direct connection to your LOCAL PostgreSQL database (bjcl_db)
 export const pool = new Pool({
