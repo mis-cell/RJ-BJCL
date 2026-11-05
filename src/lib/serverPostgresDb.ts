@@ -401,6 +401,145 @@ export async function executeSelect(payload: QueryPayload) {
 // Cache of valid columns per table in local PostgreSQL to automatically strip extra non-existent columns
 const tableColumnsCache = new Map<string, Set<string>>();
 
+// Primary key columns that identify a row uniquely and should never be overwritten by a newly generated ID when updating via business key
+const TABLE_PK_COLUMNS = new Set<string>([
+  'id',
+  'po_id',
+  'amad_id',
+  'final_arrival_id',
+  'sauda_id',
+  'settlement_id',
+  'payment_id',
+  'satta_id',
+  'issue_id',
+  'detail_id',
+  'item_id',
+  'ledger_id',
+  'report_id',
+  'log_id',
+  'user_id'
+]);
+
+// Authoritative lookup keys (Primary Key first, then Natural Business Key) for master/header tables
+const TABLE_UNIQUE_KEYS: Record<string, string[]> = {
+  sauda_master: ['sauda_id', 'sauda_no'],
+  sauda_check_point: ['po_id', 'po_no'],
+  purchase_master: ['po_id', 'po_no'],
+  po_archive: ['po_id', 'po_no'],
+  temporary_material_received: ['amad_id', 'temporary_arrival_no'],
+  issue_master: ['amad_id', 'amad_no'],
+  final_arrival: ['final_arrival_id', 'final_arrival_no', 'mr_no'],
+  mr_archive: ['final_arrival_id', 'final_arrival_no', 'mr_no'],
+  material_inspection: ['mr_no'],
+  mill_inspection_master: ['mr_no'],
+  inspection_master: ['mr_no'],
+  mr_settlement_master: ['settlement_id', 'mr_no'],
+  m_r_settlement: ['id', 'po_no'],
+  payment_master: ['payment_id', 'voucher_no'],
+  user_master: ['user_id', 'username'],
+  return_lorry: ['id', 'new_po_no'],
+  clubbed_pomr: ['id', 'club_id'],
+  satta_master: ['satta_id', 'satta_no'],
+  mill_issue_master: ['issue_id', 'issue_no'],
+  godown_to_factory_master: ['issue_id', 'issue_no'],
+  godown_entry: ['id', 'voucher_no'],
+  lorry_weighments: ['id', 'gate_pass'],
+  deduction_master: ['id', 'deduction'],
+  unit_master: ['id', 'unit_name'],
+  supply_master: ['id', 'supp_code'],
+  broker_master: ['id', 'brok_code'],
+  area_master: ['id', 'area_code'],
+  agency_master: ['id', 'agency_code'],
+  grade_master: ['id', 'grade_code'],
+  marka_master: ['id', 'marka_name'],
+  godown_master: ['id', 'gdn_code'],
+  batch_master: ['code'],
+  department_master: ['dept_code'],
+  financial_year_master: ['year_code'],
+  sauda_check_point_deductions: ['id', 'po_no']
+};
+
+// Composite conflict keys for rate/matrix tables
+const TABLE_COMPOSITE_KEYS: Record<string, string[]> = {
+  satta_differentials: ['area', 'grade'],
+  satta_calculated_rates: ['start_date', 'area', 'grade']
+};
+
+// Automatic startup maintenance: ensure BIGINT PK sequences exist and deduplicate any accidental duplicate master rows
+let integrityInitialized = false;
+async function ensureDatabaseIntegrity() {
+  if (integrityInitialized) return;
+  integrityInitialized = true;
+  try {
+    // 1. Ensure BIGINT id columns have auto-incrementing sequences so detail inserts never fail
+    const bigintTables: Array<{ table: string; pk: string }> = [
+      { table: 'material_inspection_details', pk: 'id' },
+      { table: 'material_inspection_deductions', pk: 'id' },
+      { table: 'mill_inspection_detail', pk: 'id' },
+      { table: 'mill_inspection_print_logs', pk: 'id' },
+      { table: 'inspection_details', pk: 'id' },
+      { table: 'inspection_checklist_details', pk: 'id' },
+      { table: 'satta_quality_details', pk: 'id' },
+      { table: 'agency_master', pk: 'id' },
+      { table: 'area_master', pk: 'id' },
+      { table: 'broker_master', pk: 'id' },
+      { table: 'godown_master', pk: 'id' },
+      { table: 'grade_master', pk: 'id' },
+      { table: 'marka_master', pk: 'id' },
+      { table: 'supply_master', pk: 'id' },
+      { table: 'user_activity_logs', pk: 'log_id' }
+    ];
+
+    for (const { table, pk } of bigintTables) {
+      const seqName = `${table}_${pk}_auto_seq`;
+      await pool.query(`
+        DO $$
+        DECLARE
+          max_val BIGINT;
+        BEGIN
+          IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = '${table}' AND column_name = '${pk}') THEN
+            EXECUTE format('CREATE SEQUENCE IF NOT EXISTS %I', '${seqName}');
+            EXECUTE format('SELECT COALESCE(MAX(%I), 0) + 1 FROM %I', '${pk}', '${table}') INTO max_val;
+            PERFORM setval('${seqName}', GREATEST(max_val, 1), false);
+            EXECUTE format('ALTER TABLE %I ALTER COLUMN %I SET DEFAULT nextval(%L)', '${table}', '${pk}', '${seqName}');
+          END IF;
+        EXCEPTION WHEN OTHERS THEN
+          NULL;
+        END $$;
+      `).catch(() => {});
+    }
+
+    // 2. Clean up any duplicate rows on master tables (keeping the latest row by ctid)
+    const dedupTargets: Array<{ table: string; keyExpr: string }> = [
+      { table: 'sauda_check_point', keyExpr: `TRIM(UPPER(po_no))` },
+      { table: 'purchase_master', keyExpr: `TRIM(UPPER(po_no))` },
+      { table: 'temporary_material_received', keyExpr: `TRIM(UPPER(temporary_arrival_no))` },
+      { table: 'final_arrival', keyExpr: `TRIM(UPPER(COALESCE(NULLIF(final_arrival_no, ''), mr_no)))` },
+      { table: 'mr_settlement_master', keyExpr: `TRIM(UPPER(mr_no))` },
+      { table: 'payment_master', keyExpr: `TRIM(UPPER(voucher_no))` },
+      { table: 'sauda_master', keyExpr: `TRIM(UPPER(sauda_no))` },
+      { table: 'satta_differentials', keyExpr: `TRIM(UPPER(area)) || '||' || TRIM(UPPER(grade))` }
+    ];
+
+    for (const { table, keyExpr } of dedupTargets) {
+      await pool.query(`
+        DELETE FROM "${table}" a
+        USING "${table}" b
+        WHERE a.ctid < b.ctid
+          AND (${keyExpr.replace(/\b([a-z_]+)\b/g, (m) => ['TRIM', 'UPPER', 'COALESCE', 'NULLIF'].includes(m) ? m : `a.${m}`)}) =
+              (${keyExpr.replace(/\b([a-z_]+)\b/g, (m) => ['TRIM', 'UPPER', 'COALESCE', 'NULLIF'].includes(m) ? m : `b.${m}`)})
+          AND (${keyExpr.replace(/\b([a-z_]+)\b/g, (m) => ['TRIM', 'UPPER', 'COALESCE', 'NULLIF'].includes(m) ? m : `a.${m}`)}) IS NOT NULL
+          AND (${keyExpr.replace(/\b([a-z_]+)\b/g, (m) => ['TRIM', 'UPPER', 'COALESCE', 'NULLIF'].includes(m) ? m : `a.${m}`)}) <> '';
+      `).catch(() => {});
+    }
+  } catch (_) {}
+}
+
+// Trigger startup integrity check asynchronously when module loads
+setTimeout(() => {
+  ensureDatabaseIntegrity().catch(() => {});
+}, 500);
+
 async function getValidTableColumns(table: string): Promise<Set<string>> {
   const cleanTable = sanitizeIdent(table);
   if (tableColumnsCache.has(cleanTable)) {
@@ -496,10 +635,115 @@ function buildWhereClause(payload: QueryPayload, params: any[]): string {
   return whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
 }
 
+/**
+ * Helper to find an existing row in a table by composite conflict columns or single unique/business keys,
+ * and if found, update it in place (preserving its original primary key) instead of inserting a duplicate row.
+ */
+async function tryUpdateExistingRowInPlace(
+  table: string,
+  row: Record<string, any>,
+  validCols: Set<string>,
+  explicitConflictCols?: string[]
+): Promise<any[] | null> {
+  const rowKeys = Object.keys(row).filter(k => row[k] !== undefined);
+  if (rowKeys.length === 0) return null;
+
+  // 1. Check composite conflict keys first (e.g., satta_differentials: ['area', 'grade'])
+  const compositeCols = (explicitConflictCols && explicitConflictCols.length > 1)
+    ? explicitConflictCols.filter(c => validCols.size === 0 || validCols.has(c))
+    : (TABLE_COMPOSITE_KEYS[table] || []).filter(c => validCols.size === 0 || validCols.has(c));
+
+  let matchedCtid: string | null = null;
+  let matchedByKey: string | null = null;
+
+  if (compositeCols.length > 1 && compositeCols.every(c => row[c] !== undefined && row[c] !== null && String(row[c]).trim() !== '')) {
+    const selParams = compositeCols.map(c => String(row[c]).trim());
+    const whereParts = compositeCols.map((c, idx) => `TRIM(UPPER(CAST("${sanitizeIdent(c)}" AS TEXT))) = TRIM(UPPER($${idx + 1}))`);
+    const selRes = await pool.query(
+      `SELECT ctid::text as _ctid, * FROM "${table}" WHERE ${whereParts.join(' AND ')} ORDER BY ctid DESC LIMIT 1`,
+      selParams
+    );
+    if (selRes.rows.length > 0) {
+      matchedCtid = selRes.rows[0]._ctid;
+      matchedByKey = compositeCols.join(',');
+    }
+  }
+
+  // 2. Check single-column unique / business keys in priority order (Primary Key first, then Business Key)
+  if (!matchedCtid) {
+    const singleCandidates = Array.from(new Set([
+      ...(explicitConflictCols && explicitConflictCols.length === 1 ? explicitConflictCols : []),
+      ...(TABLE_UNIQUE_KEYS[table] || [])
+    ])).filter(c => validCols.size === 0 || validCols.has(c));
+
+    for (const cand of singleCandidates) {
+      const rawVal = row[cand];
+      if (rawVal === undefined || rawVal === null || String(rawVal).trim() === '') continue;
+
+      const selRes = await pool.query(
+        `SELECT ctid::text as _ctid, * FROM "${table}" WHERE TRIM(UPPER(CAST("${sanitizeIdent(cand)}" AS TEXT))) = TRIM(UPPER($1)) ORDER BY ctid DESC LIMIT 1`,
+        [String(rawVal).trim()]
+      );
+      if (selRes.rows.length > 0) {
+        matchedCtid = selRes.rows[0]._ctid;
+        matchedByKey = cand;
+        break;
+      }
+    }
+  }
+
+  if (!matchedCtid) {
+    return null;
+  }
+
+  // 3. We found an existing row! Update it in place using its exact ctid,
+  // while preserving its primary key if we matched via a natural business key.
+  const updateKeys = rowKeys.filter(k => {
+    if (k === matchedByKey) return false;
+    // Never overwrite an existing row's primary key with a newly generated UUID when matched by business key
+    if (TABLE_PK_COLUMNS.has(k) && k !== matchedByKey) return false;
+    return true;
+  });
+
+  if (updateKeys.length === 0) {
+    const existingRes = await pool.query(`SELECT * FROM "${table}" WHERE ctid = $1::tid`, [matchedCtid]);
+    return existingRes.rows;
+  }
+
+  const updParams: any[] = [];
+  const setClauses: string[] = [];
+
+  for (const k of updateKeys) {
+    let val = row[k];
+    if (typeof val === 'object' && val !== null && !(val instanceof Date)) {
+      val = JSON.stringify(val);
+    } else if (val === '') {
+      val = null;
+    }
+    updParams.push(val);
+    setClauses.push(`"${sanitizeIdent(k)}" = $${updParams.length}`);
+  }
+
+  updParams.push(matchedCtid);
+  const updateSql = `UPDATE "${table}" SET ${setClauses.join(', ')} WHERE ctid = $${updParams.length}::tid RETURNING *`;
+  const updRes = await pool.query(updateSql, updParams);
+  return updRes.rows.length > 0 ? updRes.rows : null;
+}
+
 export async function executeInsert(payload: QueryPayload) {
   const table = sanitizeIdent(payload.table);
   const rawValues = Array.isArray(payload.values) ? payload.values : [payload.values];
   if (rawValues.length === 0) return { data: [], error: null };
+
+  // If this table is a master/header table with unique business keys (or conflict cols were provided),
+  // route through executeUpsert so editing/re-saving never creates a duplicate row!
+  if (
+    (Array.isArray(payload.onConflictCols) && payload.onConflictCols.length > 0) ||
+    TABLE_UNIQUE_KEYS[table] ||
+    TABLE_COMPOSITE_KEYS[table]
+  ) {
+    return executeUpsert(payload);
+  }
 
   const validCols = await getValidTableColumns(table);
   const cleanedRows = rawValues.map(r => filterRowByValidColumns(r, validCols));
@@ -537,7 +781,6 @@ export async function executeInsert(payload: QueryPayload) {
     const result = await pool.query(insertSql, params);
     return { data: result.rows, error: null };
   } catch (err: any) {
-    // If table columns changed dynamically, invalidate column cache and retry once
     tableColumnsCache.delete(table);
     if (isConnectionError(err)) {
       return insertSupabaseFallback(payload);
@@ -555,25 +798,6 @@ export async function executeUpsert(payload: QueryPayload) {
   const validCols = await getValidTableColumns(table);
   const cleanedRows = rawValues.map(r => filterRowByValidColumns(r, validCols));
 
-  const sample = cleanedRows[0];
-  const keys = Object.keys(sample).filter(k => sample[k] !== undefined);
-  if (keys.length === 0) return { data: [], error: null };
-
-  // Determine conflict columns
-  const defaultCandidates = ['po_no', 'voucher_no', 'mr_no', 'sauda_no', 'user_id', 'username', 'new_po_no', 'club_id', 'id'];
-  let conflictColsArr: string[] = [];
-  if (Array.isArray(payload.onConflictCols) && payload.onConflictCols.length > 0) {
-    conflictColsArr = payload.onConflictCols.filter(c => validCols.size === 0 || validCols.has(c));
-  }
-  if (conflictColsArr.length === 0) {
-    for (const cand of defaultCandidates) {
-      if (keys.includes(cand)) {
-        conflictColsArr = [cand];
-        break;
-      }
-    }
-  }
-
   const savedResults: any[] = [];
 
   try {
@@ -581,54 +805,20 @@ export async function executeUpsert(payload: QueryPayload) {
       const rowKeys = Object.keys(row).filter(k => row[k] !== undefined);
       if (rowKeys.length === 0) continue;
 
-      let updatedRows: any[] = [];
+      // 1. Check if an existing row already matches by PK or Business Key and update in place
+      const updatedInPlace = await tryUpdateExistingRowInPlace(
+        table,
+        row,
+        validCols,
+        payload.onConflictCols
+      );
 
-      // 1. If we have conflict columns and values for them, try UPDATE first (works even without UNIQUE constraint!)
-      const activeConflictCols = conflictColsArr.filter(c => row[c] !== undefined && row[c] !== null && row[c] !== '');
-      if (activeConflictCols.length > 0) {
-        const updateKeys = rowKeys.filter(k => !activeConflictCols.includes(k));
-        if (updateKeys.length > 0) {
-          const updParams: any[] = [];
-          const setClauses: string[] = [];
-          for (const k of updateKeys) {
-            let val = row[k];
-            if (typeof val === 'object' && val !== null && !(val instanceof Date)) {
-              val = JSON.stringify(val);
-            } else if (val === '') {
-              val = null;
-            }
-            updParams.push(val);
-            setClauses.push(`"${sanitizeIdent(k)}" = $${updParams.length}`);
-          }
-
-          const whereParts: string[] = [];
-          for (const c of activeConflictCols) {
-            updParams.push(row[c]);
-            whereParts.push(`"${sanitizeIdent(c)}" = $${updParams.length}`);
-          }
-
-          const updateSql = `UPDATE "${table}" SET ${setClauses.join(', ')} WHERE ${whereParts.join(' AND ')} RETURNING *`;
-          const updRes = await pool.query(updateSql, updParams);
-          if (updRes.rows.length > 0) {
-            updatedRows = updRes.rows;
-          }
-        } else {
-          // Check if row already exists
-          const selParams = activeConflictCols.map(c => row[c]);
-          const whereParts = activeConflictCols.map((c, idx) => `"${sanitizeIdent(c)}" = $${idx + 1}`);
-          const selRes = await pool.query(`SELECT * FROM "${table}" WHERE ${whereParts.join(' AND ')} LIMIT 1`, selParams);
-          if (selRes.rows.length > 0) {
-            updatedRows = selRes.rows;
-          }
-        }
-      }
-
-      if (updatedRows.length > 0) {
-        savedResults.push(...updatedRows);
+      if (updatedInPlace && updatedInPlace.length > 0) {
+        savedResults.push(...updatedInPlace);
         continue;
       }
 
-      // 2. Row did not exist yet — perform INSERT
+      // 2. Row does not exist yet — perform INSERT
       const insParams: any[] = [];
       const insPlaceholders: string[] = [];
       const insColsSql = rowKeys.map(k => `"${sanitizeIdent(k)}"`).join(', ');
@@ -690,7 +880,32 @@ export async function executeUpdate(payload: QueryPayload) {
 
   try {
     const result = await pool.query(updateSql, params);
-    return { data: result.rows, error: null };
+    if (result.rows.length > 0) {
+      return { data: result.rows, error: null };
+    }
+
+    // Fallback: if exact filter matched 0 rows (e.g., due to case/whitespace or wrong PK column name in Admin Desk),
+    // try matching via case-insensitive trimmed filter or via the row's unique keys!
+    if (Array.isArray(payload.filters) && payload.filters.length === 1 && payload.filters[0].op === 'eq') {
+      const fCol = sanitizeIdent(payload.filters[0].column);
+      const fVal = payload.filters[0].value;
+      if (fCol && validCols.has(fCol) && fVal !== undefined && fVal !== null && String(fVal).trim() !== '') {
+        const trimParams = params.slice(0, keys.length);
+        trimParams.push(String(fVal).trim());
+        const trimSql = `UPDATE "${table}" SET ${setClauses.join(', ')} WHERE TRIM(UPPER(CAST("${fCol}" AS TEXT))) = TRIM(UPPER($${trimParams.length})) RETURNING *`;
+        const trimRes = await pool.query(trimSql, trimParams);
+        if (trimRes.rows.length > 0) {
+          return { data: trimRes.rows, error: null };
+        }
+      }
+    }
+
+    const fallbackUpdated = await tryUpdateExistingRowInPlace(table, values, validCols);
+    if (fallbackUpdated && fallbackUpdated.length > 0) {
+      return { data: fallbackUpdated, error: null };
+    }
+
+    return { data: [], error: null };
   } catch (err: any) {
     tableColumnsCache.delete(table);
     if (isConnectionError(err)) {

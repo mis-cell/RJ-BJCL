@@ -81,6 +81,8 @@ export function usePurchaseOrderFormLogic({
   const [loading, setLoading] = useState(false);
   const [isCalcOpen, setIsCalcOpen] = useState(false);
   const [selectedItemSrl, setSelectedItemSrl] = useState<number | null>(null);
+  const editingPoIdRef = useRef<string | null>(null);
+  const editingOriginalPoNoRef = useRef<string>('');
 
   const [formData, setFormData] = useState<PoFormData>({
     is_ptf: false,
@@ -670,6 +672,8 @@ export function usePurchaseOrderFormLogic({
 
     const defaultSDate = todayStr;
     const defaultBRate = lookupSattaBaseRate(defaultSDate, sattaBaseRates);
+    editingPoIdRef.current = null;
+    editingOriginalPoNoRef.current = '';
 
     setFormData({
       is_ptf: true,
@@ -1010,6 +1014,8 @@ export function usePurchaseOrderFormLogic({
           : (poHeader.weight_per_lorry?.toString() || '29.500')
       });
 
+      editingPoIdRef.current = poHeader.po_id || null;
+      editingOriginalPoNoRef.current = String(poHeader.po_no || '').trim();
       setSelectedPoNo(poHeader.po_no);
       setSelectedItemSrl(1);
       setViewMode('form');
@@ -1206,7 +1212,11 @@ export function usePurchaseOrderFormLogic({
       const isWeightCompleted = tol.isCompleted;
 
       const cleanPoKey = finalPoNo.toUpperCase();
-      const existingPoInList = (poList || []).find((p: any) => exactPoNo(p.po_no, finalPoNo));
+      const existingPoInList = (poList || []).find((p: any) =>
+        (editingPoIdRef.current && p.po_id === editingPoIdRef.current) ||
+        exactPoNo(p.po_no, finalPoNo) ||
+        (editingOriginalPoNoRef.current && exactPoNo(p.po_no, editingOriginalPoNoRef.current))
+      );
       const isReopenedPo = Boolean(
         existingPoInList?.is_reopened ||
         localStorage.getItem(`sauda_reopened_${cleanPoKey}`) === 'true'
@@ -1218,7 +1228,10 @@ export function usePurchaseOrderFormLogic({
         selectedYear ||
         '2026-2027';
 
+      const resolvedPoId = editingPoIdRef.current || existingPoInList?.po_id || undefined;
+
       const payload: Record<string, any> = {
+        ...(resolvedPoId ? { po_id: resolvedPoId } : {}),
         financial_year: preservedFinancialYear,
         purchase_order: formData.purchase_order,
         po_type: formData.po_type,
@@ -1271,8 +1284,13 @@ export function usePurchaseOrderFormLogic({
         }
       }
 
-      // 1. Strict row-verified upsert into master table
-      await dbModule.upsert(MASTER_TABLE, payload, 'po_no');
+      // 1. Strict row-verified upsert into master table (matches po_id if editing, else po_no)
+      await dbModule.upsert(MASTER_TABLE, payload, resolvedPoId ? 'po_id' : 'po_no');
+
+      // If PO number was edited during update, remove old detail rows under previous po_no
+      if (editingOriginalPoNoRef.current && !exactPoNo(editingOriginalPoNoRef.current, finalPoNo) && supabase) {
+        await supabase.from(DETAIL_TABLE).delete().eq('po_no', editingOriginalPoNoRef.current).catch(() => {});
+      }
 
       // 2. Transactional / row-verified detail save
       await poService.savePoDetails(DETAIL_TABLE, finalPoNo, formData.items, {
@@ -1280,6 +1298,9 @@ export function usePurchaseOrderFormLogic({
         agencyList,
         markaList
       });
+
+      editingPoIdRef.current = null;
+      editingOriginalPoNoRef.current = '';
 
       // 3. Only after authoritative DB header + detail writes succeed, update localStorage cache & sync linked tables
       const deliveryCachePayload = {

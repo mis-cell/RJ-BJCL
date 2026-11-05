@@ -857,7 +857,6 @@ export default function SaudaEntry({
         'submitted_by',
         'submitted_at',
         'last_updated_at',
-        'version',
         'created_at',
         'quality_details'
       ];
@@ -883,6 +882,10 @@ export default function SaudaEntry({
           saudaPayload[field] = (saudaData as any)[field];
         }
       });
+
+      if (!saudaPayload.sauda_id && initialData?.sauda_id) {
+        saudaPayload.sauda_id = initialData.sauda_id;
+      }
 
       delete saudaPayload.signature_url;
       delete saudaPayload.digital_signature;
@@ -928,9 +931,14 @@ export default function SaudaEntry({
       let isEditMode = !!saudaPayload.sauda_id;
 
       if (!saudaPayload.sauda_id && saudaPayload.sauda_no) {
-        const targetFYear = saudaPayload.financial_year || '2026-2027';
+        const targetFYear = initialData?.financial_year || saudaPayload.financial_year || saudaPayload.session || '2026-2027';
         const allSaudas = await dbModule.fetchAll('sauda_master').catch(() => []);
-        const match = allSaudas.find((s: any) => s.sauda_no === saudaPayload.sauda_no && s.financial_year === targetFYear);
+        const normTargetNo = String(saudaPayload.sauda_no || '').trim().toUpperCase();
+        const match = allSaudas.find((s: any) => {
+          const sNo = String(s.sauda_no || '').trim().toUpperCase();
+          const sClean = cleanSaudaNo(s.sauda_no, s.session || s.financial_year || targetFYear).toUpperCase();
+          return sNo === normTargetNo || sClean === normTargetNo;
+        });
         if (match) {
           if (isSaudaApproved(match)) {
             alert(`🔒 Permission Denied: Sauda #${match.sauda_no} is approved by User 010. It cannot be overwritten or edited by any user.`);
@@ -1013,7 +1021,7 @@ export default function SaudaEntry({
         txQueries.push(
           `INSERT INTO sauda_master (${masterCols.join(', ')}) VALUES (${masterVals.join(', ')}) ON CONFLICT (sauda_id) DO UPDATE SET ${updateSet};`
         );
-        txQueries.push(`DELETE FROM sauda_quality_details WHERE sauda_id = ${sqlVal(targetSaudaId)};`);
+        txQueries.push(`DELETE FROM sauda_quality_details WHERE sauda_id = ${sqlVal(targetSaudaId)} OR sauda_no = ${sqlVal(saudaPayload.sauda_no)};`);
 
         for (const comb of flatCombinations) {
           if (comb.quality || comb.agency || comb.marka || comb.rs > 0) {
@@ -1028,12 +1036,11 @@ export default function SaudaEntry({
         if (isEditMode) {
           inserted = await dbModule.update('sauda_master', 'sauda_id', saudaPayload.sauda_id, saudaPayload);
         } else {
-          inserted = await dbModule.insert('sauda_master', saudaPayload);
+          inserted = await dbModule.upsert('sauda_master', saudaPayload, 'sauda_no');
         }
         if (inserted && flatCombinations.length > 0) {
-          if (isEditMode) {
-            await dbModule.delete('sauda_quality_details', 'sauda_id', inserted.sauda_id);
-          }
+          await dbModule.delete('sauda_quality_details', 'sauda_id', inserted.sauda_id || targetSaudaId).catch(() => {});
+          await dbModule.delete('sauda_quality_details', 'sauda_no', saudaPayload.sauda_no).catch(() => {});
           for (const comb of flatCombinations) {
             if (comb.quality || comb.agency || comb.marka || comb.rs > 0) {
               await dbModule.insert('sauda_quality_details', {
