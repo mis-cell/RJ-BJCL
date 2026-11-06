@@ -421,6 +421,9 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
     gradeWiseInspectionRows,
     totalFinalReceiptClaimMt,
     totalFinalReceiptClaimQtl,
+    totalGrossClaimMt,
+    totalNetClaimMt,
+    isMultipleLorry,
     lastMrRecord,
     lastMrNo,
     lastMrDate,
@@ -458,10 +461,17 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
 
     const mrEntries = Array.from(uniqueMrMap.values());
 
-    // Sort MR entries by date descending to identify the latest MR
-    mrEntries.sort((a, b) => (b.rawDate || '').localeCompare(a.rawDate || ''));
+    // Sort MR entries chronologically to determine earlier lorries and the last lorry
+    mrEntries.sort((a, b) => {
+      const dateA = a.rawDate || '';
+      const dateB = b.rawDate || '';
+      if (dateA !== dateB) return dateA.localeCompare(dateB);
+      return a.mrNo.localeCompare(b.mrNo, undefined, { numeric: true });
+    });
 
-    const latestMr = mrEntries.length > 0 ? mrEntries[0] : {
+    const isMultipleLorry = mrEntries.length > 1;
+
+    const latestMr = mrEntries.length > 0 ? mrEntries[mrEntries.length - 1] : {
       mrNo: String(po.last_arrival_mr_no || po.mr_no || 'MR-001').trim(),
       date: formatDisplayDate(po.arrival_date || po.last_arrival_date || po.mr_date || po.date),
       rawDate: normalizeToYMD(po.arrival_date || po.last_arrival_date || po.mr_date || po.date),
@@ -475,11 +485,14 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
     // Build itemized grade-wise breakdown rows
     const rows: any[] = [];
     let sumClaimMt = 0;
+    let sumGrossMt = 0;
+    let sumNetMt = 0;
 
     // Process details for each MR
-    mrEntries.forEach((mrEntry) => {
+    mrEntries.forEach((mrEntry, mrIdx) => {
       const mrKey = mrEntry.mrNo.toUpperCase();
-      
+      const isLastLorry = mrIdx === mrEntries.length - 1;
+
       // Look for rows in liveInspectionDetails / material_inspection_details
       const matchingDetails = (liveInspectionDetails || []).filter((d: any) => {
         const dMr = String(d.mr_no || '').trim().toUpperCase();
@@ -493,21 +506,36 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
           const rowCrop = d.crop_year || '2026-2027';
           const rowBags = Number(d.quantity || d.packets || d.bales || d.bags || 0);
 
-          // Sourced strictly from Mill Inspection -> Inspection Details -> Final Receipt Wt. (Claim)
-          let finalClaimMt = Number(d.final_receipt_wt || 0);
-          if (finalClaimMt <= 0) {
-            finalClaimMt = Number(d.reduced_weight || d.netto_pnto || d.receipt_gross_wt || 0);
+          // Gross weight from Mill Inspection
+          let rowGrossMt = Number(d.receipt_gross_wt || d.challan_gross_wt || d.gross_weight_batch || 0);
+
+          // Net weight from Mill Inspection
+          let rowNetMt = Number(d.final_receipt_wt || 0);
+          if (rowNetMt <= 0) {
+            rowNetMt = Number(d.reduced_weight || d.netto_pnto || 0);
           }
-          if (finalClaimMt <= 0 && d.quantity_rcpt) {
+          if (rowNetMt <= 0 && d.quantity_rcpt) {
             const raw = Number(d.quantity_rcpt);
-            finalClaimMt = raw > 500 ? raw / 100 : (raw > 50 ? raw / 10 : raw);
+            rowNetMt = raw > 500 ? raw / 100 : (raw > 50 ? raw / 10 : raw);
+          }
+          if (rowNetMt <= 0 && rowGrossMt > 0) {
+            rowNetMt = rowGrossMt;
+          }
+          if (rowGrossMt <= 0 && rowNetMt > 0) {
+            rowGrossMt = rowNetMt;
           }
 
+          // In Multiple-Lorry Sauda: Net weight of every lorry except the last; Gross weight of the last lorry.
+          // In Single-Lorry Sauda: Relevant Mill Inspection net weight.
+          const finalClaimMt = (isMultipleLorry && isLastLorry) ? rowGrossMt : rowNetMt;
           const finalClaimQtl = finalClaimMt * 10;
+
+          sumGrossMt += rowGrossMt;
+          sumNetMt += rowNetMt;
           sumClaimMt += finalClaimMt;
 
           const mrSattaRate = getSattaBaseRateOnDate(mrEntry.rawDate);
-          const rateDiff = Math.abs(saudaDateSattaRate - mrSattaRate);
+          const rateDiff = mrSattaRate > saudaDateSattaRate ? (mrSattaRate - saudaDateSattaRate) : 0;
 
           rows.push({
             mrNo: mrEntry.mrNo,
@@ -517,8 +545,12 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
             marka: rowMarka,
             cropYear: rowCrop,
             totalBags: rowBags,
+            grossWtMt: rowGrossMt,
+            netWtMt: rowNetMt,
             finalReceiptWtMt: finalClaimMt,
             finalReceiptWtQtl: finalClaimQtl,
+            weightBasis: (isMultipleLorry && isLastLorry) ? 'Gross (Last Lorry)' : (isMultipleLorry ? 'Net' : 'Net (Single)'),
+            isLastLorry,
             saudaRateQtl: saudaDateSattaRate,
             mrSattaRateQtl: mrSattaRate,
             rateDiffQtl: rateDiff,
@@ -528,20 +560,23 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
       } else {
         // Inspection master level or arrival record fallback
         const src = mrEntry.source;
-        let claimMt = 0;
         let bags = 0;
         let grade = 'TD6';
         let marka = '39';
         let crop = '2026-2027';
 
+        let masterGrossMt = 0;
+        let masterNetMt = 0;
+
         if (src) {
-          claimMt = Number(src.total_final_receipt_wt || src.final_receipt_wt || src.weight_reduced || src.reduced_weight || src.electronic_net_weight || src.final_weight_mt || 0);
-          if (claimMt <= 0 && src.weight_qtl) {
-            claimMt = Number(src.weight_qtl) / 10;
+          masterGrossMt = Number(src.receipt_gross_wt || src.gross_weight || src.challan_gross_wt || 0);
+          masterNetMt = Number(src.total_final_receipt_wt || src.final_receipt_wt || src.weight_reduced || src.reduced_weight || src.electronic_net_weight || src.final_weight_mt || 0);
+          if (masterNetMt <= 0 && src.weight_qtl) {
+            masterNetMt = Number(src.weight_qtl) / 10;
           }
-          if (claimMt <= 0 && src.weight) {
+          if (masterNetMt <= 0 && src.weight) {
             const w = Number(src.weight);
-            claimMt = w > 500 ? w / 100 : (w > 50 ? w / 10 : w);
+            masterNetMt = w > 500 ? w / 100 : (w > 50 ? w / 10 : w);
           }
           bags = Number(src.total_packets || src.quantity || src.packets || src.bags || 0);
           grade = src.receipt_grade_name || src.challan_grade_name || src.grading || src.grade || src.item_grade || 'TD6';
@@ -549,16 +584,22 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
           crop = src.crop_year || src.financial_year || '2026-2027';
         }
 
-        if (claimMt <= 0) {
-          // Fallback to proportional split of received_weight_mt
-          claimMt = mrEntries.length === 1 ? (parseFloat(po.received_weight_mt) || contractMt) : (parseFloat(po.received_weight_mt || contractMt) / mrEntries.length);
+        if (masterNetMt <= 0) {
+          masterNetMt = mrEntries.length === 1 ? (parseFloat(po.received_weight_mt) || contractMt) : (parseFloat(po.received_weight_mt || contractMt) / mrEntries.length);
+        }
+        if (masterGrossMt <= 0) {
+          masterGrossMt = masterNetMt;
         }
 
-        const claimQtl = claimMt * 10;
-        sumClaimMt += claimMt;
+        const finalClaimMt = (isMultipleLorry && isLastLorry) ? masterGrossMt : masterNetMt;
+        const finalClaimQtl = finalClaimMt * 10;
+
+        sumGrossMt += masterGrossMt;
+        sumNetMt += masterNetMt;
+        sumClaimMt += finalClaimMt;
 
         const mrSattaRate = getSattaBaseRateOnDate(mrEntry.rawDate);
-        const rateDiff = Math.abs(saudaDateSattaRate - mrSattaRate);
+        const rateDiff = mrSattaRate > saudaDateSattaRate ? (mrSattaRate - saudaDateSattaRate) : 0;
 
         rows.push({
           mrNo: mrEntry.mrNo,
@@ -568,8 +609,12 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
           marka: marka,
           cropYear: crop,
           totalBags: bags,
-          finalReceiptWtMt: claimMt,
-          finalReceiptWtQtl: claimQtl,
+          grossWtMt: masterGrossMt,
+          netWtMt: masterNetMt,
+          finalReceiptWtMt: finalClaimMt,
+          finalReceiptWtQtl: finalClaimQtl,
+          weightBasis: (isMultipleLorry && isLastLorry) ? 'Gross (Last Lorry)' : (isMultipleLorry ? 'Net' : 'Net (Single)'),
+          isLastLorry,
           saudaRateQtl: saudaDateSattaRate,
           mrSattaRateQtl: mrSattaRate,
           rateDiffQtl: rateDiff,
@@ -583,6 +628,8 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
       const rcvdMt = parseFloat(po.received_weight_mt || po.total_received_mt || 0) || contractMt;
       const rcvdQtl = rcvdMt * 10;
       sumClaimMt = rcvdMt;
+      sumGrossMt = rcvdMt;
+      sumNetMt = rcvdMt;
 
       rows.push({
         mrNo: latestMrNo || 'MR-001',
@@ -592,11 +639,15 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
         marka: po.marka || '39',
         cropYear: po.crop_year || '2026-2027',
         totalBags: Math.round(rcvdQtl),
+        grossWtMt: rcvdMt,
+        netWtMt: rcvdMt,
         finalReceiptWtMt: rcvdMt,
         finalReceiptWtQtl: rcvdQtl,
+        weightBasis: 'Net (Single)',
+        isLastLorry: true,
         saudaRateQtl: saudaDateSattaRate,
         mrSattaRateQtl: latestMrSattaRate,
-        rateDiffQtl: Math.abs(saudaDateSattaRate - latestMrSattaRate),
+        rateDiffQtl: latestMrSattaRate > saudaDateSattaRate ? (latestMrSattaRate - saudaDateSattaRate) : 0,
         sourceType: 'Sauda Contract Baseline'
       });
     }
@@ -605,18 +656,21 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
     const roundedSumClaimQtl = Math.round(roundedSumClaimMt * 10 * 100) / 100;
     const isClaimExcess = (contractMt - roundedSumClaimMt) < -0.0001;
 
-    // For Excess: if MR Satta Rate >= Sauda Date Satta Rate, Rate Diff is 0 (Applicable for Sauda Rate)
+    // Adjust rate diff per row for Excess / Short
     const adjustedRows = rows.map(r => ({
       ...r,
       rateDiffQtl: isClaimExcess
         ? Math.max(0, Number(r.saudaRateQtl || 0) - Number(r.mrSattaRateQtl || 0))
-        : Math.abs(Number(r.saudaRateQtl || 0) - Number(r.mrSattaRateQtl || 0))
+        : (Number(r.mrSattaRateQtl || 0) > Number(r.saudaRateQtl || 0) ? (Number(r.mrSattaRateQtl || 0) - Number(r.saudaRateQtl || 0)) : 0)
     }));
 
     return {
       gradeWiseInspectionRows: adjustedRows,
       totalFinalReceiptClaimMt: roundedSumClaimMt,
       totalFinalReceiptClaimQtl: roundedSumClaimQtl,
+      totalGrossClaimMt: Math.round(sumGrossMt * 1000) / 1000,
+      totalNetClaimMt: Math.round(sumNetMt * 1000) / 1000,
+      isMultipleLorry,
       lastMrRecord: latestMr,
       lastMrNo: latestMrNo,
       lastMrDate: latestMrDate,
@@ -641,55 +695,92 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
   ]);
 
   // 3. CALCULATE GROSS SHORT / EXCESS
-  // Compare: Sauda Contract Quantity - Total Final Receipt Wt. (Claim)
+  // Compare: Sauda Contract Quantity - Total Received Quantity
   const grossVarianceMt = Math.round((contractMt - totalFinalReceiptClaimMt) * 1000) / 1000;
   const isGrossShort = grossVarianceMt > 0.0001;
   const isGrossExcess = grossVarianceMt < -0.0001;
-  const grossShortMt = isGrossShort ? grossVarianceMt : 0;
-  const grossExcessMt = isGrossExcess ? Math.abs(grossVarianceMt) : 0;
+  const shortageMt = isGrossShort ? grossVarianceMt : 0;
+  const excessMt = isGrossExcess ? Math.abs(grossVarianceMt) : 0;
 
-  // 4. APPLY 3% EXECUTION EXEMPTION
-  // Calculated strictly from Sauda Total Contract Quantity:
-  // 3% Exemption = Sauda Total Contract Quantity × 3%
-  const tolResult = useMemo(
-    () => calculateWeightTolerance(contractMt, totalFinalReceiptClaimMt, unit),
-    [contractMt, totalFinalReceiptClaimMt, unit]
-  );
-  const exemptionPct = 3.0;
-  const exemptionMt = Math.round(tolResult.toleranceMt * 1000) / 1000;
-  const exemptionQtl = Math.round(tolResult.toleranceQtl * 100) / 100;
-  const exemptionKg = Math.round(tolResult.toleranceMt * 1000);
+  // 4. SHORTAGE AND TOLERANCE RULES:
+  // - Tolerance of 3% of the Sauda/P.O. quantity:
+  const tolerance3PctMt = Math.round((contractMt * 0.03) * 1000) / 1000;
+  const tolerance3PctQtl = Math.round((tolerance3PctMt * 10) * 100) / 100;
+  const tolerance3PctKg = Math.round(tolerance3PctMt * 1000);
 
-  // 5. FINAL DEDUCTIBLE QUANTITY (TOLERANCE / NO-DEDUCTION RULE)
-  // Final Deductible Short = MAX(0, Gross Short - 3% Exemption)
-  const finalDeductibleShortMt = isGrossShort ? Math.max(0, Math.round(tolResult.shortUnderToleranceMt * 1000) / 1000) : 0;
-  const finalDeductibleShortQtl = isGrossShort ? Math.max(0, Math.round(tolResult.shortUnderToleranceQtl * 100) / 100) : 0;
+  const exemptionPct = 3;
+  const exemptionMt = tolerance3PctMt;
+  const exemptionQtl = tolerance3PctQtl;
+  const exemptionKg = tolerance3PctKg;
 
-  const finalDeductibleExcessMt = isGrossExcess ? Math.max(0, Math.round(tolResult.excessOverToleranceMt * 1000) / 1000) : 0;
-  const finalDeductibleExcessQtl = isGrossExcess ? Math.max(0, Math.round(tolResult.excessOverToleranceQtl * 100) / 100) : 0;
+  // - If the shortage is more than 1.5 MT (1,500 kg), do not apply the 3% tolerance. The full shortage is chargeable.
+  // - If the shortage is 1.5 MT or less, apply a tolerance of 3% of the Sauda/P.O. quantity. Deduct only the shortage amount that exceeds this tolerance. If the shortage is within the tolerance, no shortage deduction is due.
+  let finalDeductibleShortMt = 0;
+  let toleranceAppliedMt = 0;
+  let isWithinTolerance = false;
+
+  if (isGrossShort) {
+    if (shortageMt > 1.5) {
+      toleranceAppliedMt = 0;
+      finalDeductibleShortMt = shortageMt;
+      isWithinTolerance = false;
+    } else if (shortageMt <= tolerance3PctMt) {
+      toleranceAppliedMt = shortageMt;
+      finalDeductibleShortMt = 0;
+      isWithinTolerance = true;
+    } else {
+      toleranceAppliedMt = tolerance3PctMt;
+      finalDeductibleShortMt = Math.round((shortageMt - tolerance3PctMt) * 1000) / 1000;
+      isWithinTolerance = false;
+    }
+  } else if (isGrossExcess) {
+    const tolResult = calculateWeightTolerance(contractMt, totalFinalReceiptClaimMt, unit);
+    toleranceAppliedMt = tolResult.toleranceMt;
+    isWithinTolerance = tolResult.isWithinTolerance;
+  } else {
+    isWithinTolerance = true;
+    toleranceAppliedMt = 0;
+  }
+
+  const finalDeductibleShortQtl = Math.round(finalDeductibleShortMt * 10 * 100) / 100;
+
+  // Excess deductible (existing logic preserved)
+  const finalDeductibleExcessMt = isGrossExcess ? Math.max(0, Math.round((excessMt - tolerance3PctMt) * 1000) / 1000) : 0;
+  const finalDeductibleExcessQtl = Math.round(finalDeductibleExcessMt * 10 * 100) / 100;
 
   const finalDeductibleQtyMt = isGrossExcess ? finalDeductibleExcessMt : finalDeductibleShortMt;
   const finalDeductibleQtyQtl = isGrossExcess ? finalDeductibleExcessQtl : finalDeductibleShortQtl;
 
-  const isWithin3PctExemption = tolResult.isWithinTolerance;
+  const isWithin3PctExemption = isWithinTolerance;
 
-  // For Excess: If Last MR Date Satta Rate >= Sauda Date Satta Rate (e.g., Sauda 13000 & Last MR 13500),
-  // DO NOT DEDUCT — It is Applicable for Sauda! Only deduct when Sauda Date Rate > Last MR Date Rate.
-  const isExcessApplicableForSauda = isGrossExcess && lastMrDateSattaRate >= saudaDateSattaRate;
+  // Rate rules:
+  // Apply a monetary deduction only when the final MR-received-date Satta rate is higher than the Sauda-date Satta rate.
+  // If the final rate is equal to or lower than the Sauda-date rate, do not deduct.
+  const isShortRateLowerOrEqual = isGrossShort && (lastMrDateSattaRate <= saudaDateSattaRate);
+  const isExcessApplicableForSauda = isGrossExcess && (lastMrDateSattaRate >= saudaDateSattaRate);
+
+  // Rate difference:
+  const rateDifference = isGrossShort
+    ? (lastMrDateSattaRate > saudaDateSattaRate ? (lastMrDateSattaRate - saudaDateSattaRate) : 0)
+    : Math.max(0, saudaDateSattaRate - lastMrDateSattaRate);
 
   // Policy Status Label
-  const policyStatusText: string = isWithin3PctExemption
-    ? 'Within 3% Exemption – No Deduction'
-    : isGrossExcess
-      ? (isExcessApplicableForSauda ? 'Applicable for Sauda – No Deduction' : 'Excess Weight Deduction')
-      : 'Short Weight Deduction';
-
-  // 6. DETERMINE THE APPLICABLE SATTA BASE RATE & RATE DIFFERENCE
-  // For Excess: Rate Difference = MAX(0, Sauda Date Satta Rate − Last MR Date Satta Rate)
-  // For Short: Rate Difference = |Sauda Date Satta Rate − Last MR Date Satta Rate|
-  const rateDifference = isGrossExcess
-    ? Math.max(0, saudaDateSattaRate - lastMrDateSattaRate)
-    : Math.abs(saudaDateSattaRate - lastMrDateSattaRate);
+  let policyStatusText: string;
+  if (isWithin3PctExemption) {
+    policyStatusText = 'Within 3% Exemption – No Deduction';
+  } else if (isGrossExcess) {
+    policyStatusText = isExcessApplicableForSauda ? 'Applicable for Sauda – No Deduction' : 'Excess Weight Deduction';
+  } else if (isGrossShort) {
+    if (selectedRateMode === 'rate_difference' && isShortRateLowerOrEqual) {
+      policyStatusText = 'Final MR Rate ≤ Sauda Rate – No Deduction';
+    } else if (shortageMt > 1.5) {
+      policyStatusText = 'Short Weight Deduction (Full Shortage > 1.5 MT Chargeable)';
+    } else {
+      policyStatusText = 'Short Weight Deduction (Exceeding 3% Tolerance)';
+    }
+  } else {
+    policyStatusText = 'Exact Weight – No Deduction';
+  }
 
   const applicableRate = useMemo(() => {
     let rate = 0;
@@ -721,23 +812,30 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
         return `Custom Rate Override (₹${applicableRate.toLocaleString()}/Qtl)`;
       case 'rate_difference':
       default:
-        return isExcessApplicableForSauda
-          ? `Applicable for Sauda Rate – No Deduction (₹0/Qtl)`
-          : `Rate Difference |Sauda Date − Last MR Date| (₹${applicableRate.toLocaleString()}/Qtl)`;
+        if (isGrossShort && isShortRateLowerOrEqual) {
+          return `Final MR Rate ≤ Sauda Rate – No Deduction (₹0/Qtl)`;
+        }
+        if (isExcessApplicableForSauda) {
+          return `Applicable for Sauda Rate – No Deduction (₹0/Qtl)`;
+        }
+        return isGrossShort
+          ? `Rate Difference (Final MR Date − Sauda Date) (₹${applicableRate.toLocaleString()}/Qtl)`
+          : `Rate Difference (Sauda Date − Last MR Date) (₹${applicableRate.toLocaleString()}/Qtl)`;
     }
-  }, [selectedRateMode, applicableRate, isExcessApplicableForSauda]);
+  }, [selectedRateMode, applicableRate, isGrossShort, isShortRateLowerOrEqual, isExcessApplicableForSauda]);
 
-  // 7. CALCULATE FINAL DEDUCTION AMOUNT
-  // Final Deduction = Deductible Quantity (Quintal) × Applicable Rate
+  // Deduction formula:
+  // Chargeable shortage in MT × 10 × (Final MR-date rate − Sauda-date rate)
   const totalCalculatedAmount = useMemo(() => {
     if (isWithin3PctExemption || finalDeductibleQtyQtl <= 0) return 0;
-    if (isExcessApplicableForSauda && selectedRateMode === 'rate_difference') return 0;
+    if (isGrossShort && selectedRateMode === 'rate_difference' && isShortRateLowerOrEqual) return 0;
+    if (isGrossExcess && isExcessApplicableForSauda && selectedRateMode === 'rate_difference') return 0;
     const rate = isNaN(applicableRate) || applicableRate < 0 ? 0 : applicableRate;
     const calc = Math.round(finalDeductibleQtyQtl * rate * 100) / 100;
     return isNaN(calc) || calc < 0 ? 0 : calc;
-  }, [isWithin3PctExemption, isExcessApplicableForSauda, selectedRateMode, finalDeductibleQtyQtl, applicableRate]);
+  }, [isWithin3PctExemption, finalDeductibleQtyQtl, isGrossShort, isShortRateLowerOrEqual, isGrossExcess, isExcessApplicableForSauda, selectedRateMode, applicableRate]);
 
-  // Total Final Payable (Excess or Short deduction is subtracted from Sauda Material Value)
+  // Total Final Payable
   const totalFinalPayable = useMemo(() => {
     const saudaAmt = isNaN(existingSaudaAmount) || existingSaudaAmount < 0 ? 0 : existingSaudaAmount;
     if (totalCalculatedAmount === 0) return saudaAmt;
@@ -972,13 +1070,13 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
             <p><strong>Sauda Date Satta Rate:</strong> ₹{saudaDateSattaRate.toLocaleString()} / Quintal</p>
           </div>
           <div>
-            <p><strong>Total Final Receipt Claim (Mill Inspection):</strong> {totalFinalReceiptClaimMt.toFixed(2)} MT ({totalFinalReceiptClaimQtl.toFixed(2)} Qtl)</p>
+            <p><strong>Total Final Receipt Claim (Mill Inspection):</strong> {totalFinalReceiptClaimMt.toFixed(2)} MT ({totalFinalReceiptClaimQtl.toFixed(2)} Qtl) {isMultipleLorry ? '(Lorries 1..N-1 Net + Last Lorry Gross)' : '(Net Weight)'}</p>
             <p><strong>Last MR No:</strong> {lastMrNo}</p>
             <p><strong>Last MR Date:</strong> {formatDisplayDate(lastMrDate)}</p>
             <p><strong>Last MR Date Satta Rate:</strong> ₹{lastMrDateSattaRate.toLocaleString()} / Quintal</p>
-            <p><strong>Rate Difference:</strong> ₹{rateDifference.toLocaleString()} / Quintal</p>
-            <p><strong>3% Execution Exemption:</strong> {exemptionMt.toFixed(2)} MT ({exemptionQtl.toFixed(2)} Qtl / {exemptionKg} KG)</p>
-            <p><strong>Final Deductible Short / Excess:</strong> {finalDeductibleQtyMt.toFixed(2)} MT ({finalDeductibleQtyQtl.toFixed(2)} Qtl)</p>
+            <p><strong>Rate Difference:</strong> ₹{rateDifference.toLocaleString()} / Quintal {isGrossShort && isShortRateLowerOrEqual ? '(Final Rate ≤ Sauda Rate - No Deduction)' : ''}</p>
+            <p><strong>3% Execution Exemption:</strong> {isGrossShort && shortageMt > 1.5 ? '0.00 MT (Not Applicable – Shortage > 1.5 MT)' : `${exemptionMt.toFixed(2)} MT (${exemptionQtl.toFixed(2)} Qtl / ${exemptionKg} KG)`}</p>
+            <p><strong>Final Chargeable Short / Excess:</strong> {finalDeductibleQtyMt.toFixed(2)} MT ({finalDeductibleQtyQtl.toFixed(2)} Qtl) {isGrossShort && shortageMt > 1.5 ? '(Full Shortage Chargeable)' : ''}</p>
           </div>
         </div>
 
@@ -993,8 +1091,11 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
                 <th className="border p-1 text-left">Grade</th>
                 <th className="border p-1 text-left">Marka</th>
                 <th className="border p-1 text-right">Bags</th>
-                <th className="border p-1 text-right">Final Receipt Claim (MT)</th>
-                <th className="border p-1 text-right">Final Receipt Claim (Qtl)</th>
+                <th className="border p-1 text-right">Gross Wt (MT)</th>
+                <th className="border p-1 text-right">Net Wt (MT)</th>
+                <th className="border p-1 text-right">Final Claim (MT)</th>
+                <th className="border p-1 text-right">Final Claim (Qtl)</th>
+                <th className="border p-1 text-left">Basis</th>
               </tr>
             </thead>
             <tbody>
@@ -1005,14 +1106,21 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
                   <td className="border p-1">{r.grade}</td>
                   <td className="border p-1">{r.marka}</td>
                   <td className="border p-1 text-right">{r.totalBags}</td>
-                  <td className="border p-1 text-right">{Number(r.finalReceiptWtMt).toFixed(3)} MT</td>
+                  <td className="border p-1 text-right">{Number(r.grossWtMt || 0).toFixed(3)} MT</td>
+                  <td className="border p-1 text-right">{Number(r.netWtMt || 0).toFixed(3)} MT</td>
+                  <td className="border p-1 text-right font-bold">{Number(r.finalReceiptWtMt).toFixed(3)} MT</td>
                   <td className="border p-1 text-right">{Number(r.finalReceiptWtQtl).toFixed(2)} Qtl</td>
+                  <td className="border p-1 text-xs">{r.weightBasis || 'Net'}</td>
                 </tr>
               ))}
               <tr className="font-bold bg-gray-50">
-                <td colSpan={5} className="border p-1 text-right uppercase">Total Final Receipt Claim:</td>
-                <td className="border p-1 text-right">{totalFinalReceiptClaimMt.toFixed(3)} MT</td>
+                <td colSpan={4} className="border p-1 text-right uppercase">Total Final Receipt Claim:</td>
+                <td className="border p-1 text-right">{gradeWiseInspectionRows.reduce((acc, r) => acc + (Number(r.totalBags) || 0), 0)}</td>
+                <td className="border p-1 text-right">{totalGrossClaimMt.toFixed(3)} MT</td>
+                <td className="border p-1 text-right">{totalNetClaimMt.toFixed(3)} MT</td>
+                <td className="border p-1 text-right font-bold">{totalFinalReceiptClaimMt.toFixed(3)} MT</td>
                 <td className="border p-1 text-right">{totalFinalReceiptClaimQtl.toFixed(2)} Qtl</td>
+                <td className="border p-1"></td>
               </tr>
             </tbody>
           </table>
@@ -1075,7 +1183,9 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
                 <span className="text-slate-600">•</span>
                 <span>Broker: <strong className="text-slate-300">{brokerName}</strong></span>
                 <span className="text-slate-600">•</span>
-                <span className="text-emerald-300">Policy: <strong>3% Sauda Execution Exemption</strong></span>
+                <span className="text-emerald-300">
+                  Policy: <strong>{isGrossShort && shortageMt > 1.5 ? 'Shortage > 1.5 MT (Full Chargeable)' : '3% Sauda Execution Exemption'}</strong>
+                </span>
               </p>
             </div>
           </div>
@@ -1143,9 +1253,29 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
                   1. Extra &amp; Short Settlement Calculation Trail
                 </span>
               </div>
-              <span className="text-[9px] font-mono font-bold text-emerald-900 bg-emerald-50 border border-emerald-300 px-2.5 py-0.5 rounded-full">
-                3% Sauda Execution Exemption Applied ({exemptionMt.toFixed(2)} MT / {exemptionKg} KG)
-              </span>
+              {isGrossShort ? (
+                shortageMt > 1.5 ? (
+                  <span className="text-[9px] font-mono font-bold text-rose-900 bg-rose-50 border border-rose-300 px-2.5 py-0.5 rounded-full">
+                    Shortage &gt; 1.5 MT – Full Shortage Chargeable (No 3% Tolerance)
+                  </span>
+                ) : isWithin3PctExemption ? (
+                  <span className="text-[9px] font-mono font-bold text-emerald-900 bg-emerald-50 border border-emerald-300 px-2.5 py-0.5 rounded-full">
+                    3% Sauda Execution Exemption Applied ({exemptionMt.toFixed(2)} MT / {exemptionKg} KG) – No Deduction
+                  </span>
+                ) : (
+                  <span className="text-[9px] font-mono font-bold text-amber-900 bg-amber-50 border border-amber-300 px-2.5 py-0.5 rounded-full">
+                    3% Sauda Execution Exemption ({exemptionMt.toFixed(2)} MT) Applied – Deducting Shortage Exceeding Tolerance
+                  </span>
+                )
+              ) : isGrossExcess ? (
+                <span className="text-[9px] font-mono font-bold text-purple-900 bg-purple-50 border border-purple-300 px-2.5 py-0.5 rounded-full">
+                  3% Sauda Execution Exemption Applied ({exemptionMt.toFixed(2)} MT / {exemptionKg} KG)
+                </span>
+              ) : (
+                <span className="text-[9px] font-mono font-bold text-emerald-900 bg-emerald-50 border border-emerald-300 px-2.5 py-0.5 rounded-full">
+                  Exact Weight – No Deduction
+                </span>
+              )}
             </div>
 
             {/* Structured Table for the Recommended UI calculation display */}
@@ -1158,16 +1288,26 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
                   <span className="font-black text-slate-900">{contractMt.toFixed(2)} MT <span className="text-[9px] text-slate-500 font-normal">({saudaQtyQtl.toFixed(2)} Qtl)</span></span>
                 </div>
 
-                <div className="flex justify-between items-center py-1 border-b border-slate-200/70">
-                  <span className="text-indigo-900 font-semibold flex items-center gap-1">
-                    <span>Total Final Receipt Claim:</span>
+                <div className="flex justify-between items-start py-1 border-b border-slate-200/70">
+                  <div>
+                    <span className="text-indigo-900 font-semibold block">Total Final Receipt Claim:</span>
+                    {isMultipleLorry ? (
+                      <span className="text-[9px] text-indigo-700/80 font-sans block">
+                        (Lorries 1..{gradeWiseInspectionRows.length - 1} Net + Last Lorry Gross)
+                      </span>
+                    ) : (
+                      <span className="text-[9px] text-slate-500 font-sans block">(Single Lorry Mill Net Wt)</span>
+                    )}
+                  </div>
+                  <span className="font-black text-indigo-950 text-right">
+                    {totalFinalReceiptClaimMt.toFixed(2)} MT 
+                    <span className="text-[9px] text-indigo-700 font-normal block">({totalFinalReceiptClaimQtl.toFixed(2)} Qtl)</span>
                   </span>
-                  <span className="font-black text-indigo-950">{totalFinalReceiptClaimMt.toFixed(2)} MT <span className="text-[9px] text-indigo-700 font-normal">({totalFinalReceiptClaimQtl.toFixed(2)} Qtl)</span></span>
                 </div>
 
                 <div className="flex justify-between items-center py-1 border-b border-slate-200/70">
                   <span className={cn("font-semibold", isGrossShort ? "text-amber-800" : "text-purple-800")}>
-                    {isGrossShort ? 'Gross Short:' : (isGrossExcess ? 'Gross Excess:' : 'Gross Variance:')}
+                    {isGrossShort ? 'Gross Shortage:' : (isGrossExcess ? 'Gross Excess:' : 'Gross Variance:')}
                   </span>
                   <span className={cn("font-black", isGrossShort ? "text-amber-900" : "text-purple-900")}>
                     {grossVarianceMt.toFixed(2)} MT <span className="text-[9px] font-normal">({(grossVarianceMt * 10).toFixed(2)} Qtl)</span>
@@ -1176,7 +1316,15 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
 
                 <div className="flex justify-between items-center py-1 border-b border-slate-200/70 bg-emerald-50/60 px-1.5 rounded">
                   <span className="text-emerald-900 font-bold">3% Execution Exemption:</span>
-                  <span className="font-black text-emerald-900">{exemptionMt.toFixed(2)} MT <span className="text-[9px] text-emerald-700 font-normal">({exemptionQtl.toFixed(2)} Qtl / {exemptionKg} KG)</span></span>
+                  {isGrossShort && shortageMt > 1.5 ? (
+                    <span className="font-black text-rose-800">
+                      0.00 MT <span className="text-[9px] text-rose-700 font-normal">(Not Applied – Shortage &gt; 1.5 MT)</span>
+                    </span>
+                  ) : (
+                    <span className="font-black text-emerald-900">
+                      {exemptionMt.toFixed(2)} MT <span className="text-[9px] text-emerald-700 font-normal">({exemptionQtl.toFixed(2)} Qtl / {exemptionKg} KG)</span>
+                    </span>
+                  )}
                 </div>
 
                 <div className={cn(
@@ -1185,10 +1333,20 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
                     ? "bg-emerald-100 text-emerald-950 border border-emerald-300"
                     : isGrossExcess 
                       ? "bg-purple-100 text-purple-950 border border-purple-300" 
-                      : "bg-amber-100 text-amber-950 border border-amber-300"
+                      : (shortageMt > 1.5 ? "bg-rose-100 text-rose-950 border border-rose-300" : "bg-amber-100 text-amber-950 border border-amber-300")
                 )}>
-                  <span>{isGrossExcess ? 'Final Deductible Excess:' : 'Final Deductible Short:'}</span>
-                  <span className="text-xs">{finalDeductibleQtyMt.toFixed(2)} MT <span className="text-[9.5px] font-bold">({finalDeductibleQtyQtl.toFixed(2)} Qtl)</span></span>
+                  <div>
+                    <span>{isGrossExcess ? 'Final Deductible Excess:' : 'Chargeable Shortage:'}</span>
+                    {isGrossShort && (
+                      <span className="text-[9px] font-normal block">
+                        {shortageMt > 1.5 ? '(Full Shortage Chargeable)' : (finalDeductibleQtyMt > 0 ? '(Shortage Exceeding 3% Tolerance)' : '(Within 3% Tolerance)')}
+                      </span>
+                    )}
+                  </div>
+                  <span className="text-xs text-right">
+                    {finalDeductibleQtyMt.toFixed(2)} MT 
+                    <span className="text-[9.5px] font-bold block">({finalDeductibleQtyQtl.toFixed(2)} Qtl)</span>
+                  </span>
                 </div>
               </div>
 
@@ -1215,9 +1373,18 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
                 </div>
 
                 <div className="flex justify-between items-center py-1 border-b border-slate-200/70 bg-amber-50/60 px-1.5 rounded">
-                  <span className="text-amber-900 font-bold">
-                    {isExcessApplicableForSauda ? 'Rate Difference (Applicable for Sauda):' : 'Rate Difference (|Sauda − Last MR|):'}
-                  </span>
+                  <div>
+                    <span className="text-amber-900 font-bold block">
+                      {isGrossShort
+                        ? 'Rate Difference (Final MR − Sauda):'
+                        : (isExcessApplicableForSauda ? 'Rate Difference (Applicable for Sauda):' : 'Rate Difference (|Sauda − Last MR|):')}
+                    </span>
+                    {isGrossShort && isShortRateLowerOrEqual && (
+                      <span className="text-[9px] text-emerald-800 font-medium block">
+                        (Final MR Rate ≤ Sauda Rate → ₹0 / Qtl)
+                      </span>
+                    )}
+                  </div>
                   <span className="font-black text-amber-900">₹{rateDifference.toLocaleString()} / Qtl</span>
                 </div>
 
@@ -1272,7 +1439,9 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
                     <th className="py-1.5 px-2">Marka</th>
                     <th className="py-1.5 px-2">Crop Year</th>
                     <th className="py-1.5 px-2 text-right">Bags</th>
-                    <th className="py-1.5 px-2 text-right text-indigo-950">Final Receipt Claim (MT)</th>
+                    <th className="py-1.5 px-2 text-right">Gross Wt (MT)</th>
+                    <th className="py-1.5 px-2 text-right">Net Wt (MT)</th>
+                    <th className="py-1.5 px-2 text-right text-indigo-950">Final Claim (MT)</th>
                     <th className="py-1.5 px-2 text-right">Final Claim (Qtl)</th>
                     <th className="py-1.5 px-2 text-right">Sauda Satta Rate</th>
                     <th className="py-1.5 px-2 text-right">MR Satta Rate</th>
@@ -1288,7 +1457,16 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
                       <td className="py-1.5 px-2 text-slate-600">{gRow.marka}</td>
                       <td className="py-1.5 px-2 text-slate-600">{gRow.cropYear}</td>
                       <td className="py-1.5 px-2 text-right text-slate-800">{gRow.totalBags}</td>
-                      <td className="py-1.5 px-2 text-right font-black text-indigo-950 bg-indigo-50/50">{Number(gRow.finalReceiptWtMt).toFixed(3)} MT</td>
+                      <td className="py-1.5 px-2 text-right text-slate-700">{Number(gRow.grossWtMt || 0).toFixed(3)} MT</td>
+                      <td className="py-1.5 px-2 text-right text-slate-700">{Number(gRow.netWtMt || 0).toFixed(3)} MT</td>
+                      <td className="py-1.5 px-2 text-right font-black text-indigo-950 bg-indigo-50/50">
+                        {Number(gRow.finalReceiptWtMt).toFixed(3)} MT
+                        {gRow.isLastLorry && isMultipleLorry ? (
+                          <span className="ml-1 text-[8px] bg-amber-200 text-amber-950 px-1 py-0.2 rounded font-bold">Gross (Last Lorry)</span>
+                        ) : (isMultipleLorry ? (
+                          <span className="ml-1 text-[8px] bg-slate-200 text-slate-800 px-1 py-0.2 rounded font-bold">Net</span>
+                        ) : null)}
+                      </td>
                       <td className="py-1.5 px-2 text-right font-bold text-slate-900">{Number(gRow.finalReceiptWtQtl).toFixed(2)} Qtl</td>
                       <td className="py-1.5 px-2 text-right text-slate-700">₹{Number(gRow.saudaRateQtl).toLocaleString()} / Qtl</td>
                       <td className="py-1.5 px-2 text-right text-slate-700">₹{Number(gRow.mrSattaRateQtl).toLocaleString()} / Qtl</td>
@@ -1300,6 +1478,8 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
                   <tr className="bg-slate-100/90 font-black border-t-2 border-slate-300 text-[10.5px]">
                     <td colSpan={5} className="py-1.5 px-2 text-right uppercase text-slate-700">Total Summed Final Receipt Claim:</td>
                     <td className="py-1.5 px-2 text-right">{gradeWiseInspectionRows.reduce((acc, r) => acc + (Number(r.totalBags) || 0), 0)}</td>
+                    <td className="py-1.5 px-2 text-right text-slate-800">{totalGrossClaimMt.toFixed(3)} MT</td>
+                    <td className="py-1.5 px-2 text-right text-slate-800">{totalNetClaimMt.toFixed(3)} MT</td>
                     <td className="py-1.5 px-2 text-right text-indigo-950 font-black bg-indigo-100/60">{totalFinalReceiptClaimMt.toFixed(3)} MT</td>
                     <td className="py-1.5 px-2 text-right text-slate-900 font-black">{totalFinalReceiptClaimQtl.toFixed(2)} Qtl</td>
                     <td colSpan={3} className="py-1.5 px-2 text-right text-[9.5px] text-slate-500 font-semibold italic">Sum of all MR Final Claims</td>
@@ -1350,9 +1530,13 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
                   <span className="text-[8.5px] text-slate-500">/ Qtl</span>
                 </div>
                 <p className="text-[8px] text-slate-600 mt-1 leading-tight">
-                  {isExcessApplicableForSauda
-                    ? `Last MR (₹${lastMrDateSattaRate}) ≥ Sauda (₹${saudaDateSattaRate}) → Applicable for Sauda`
-                    : `|Sauda Date (₹${saudaDateSattaRate}) − Last MR Date (₹${lastMrDateSattaRate})|`}
+                  {isGrossShort
+                    ? (isShortRateLowerOrEqual
+                        ? `Final MR (₹${lastMrDateSattaRate}) ≤ Sauda (₹${saudaDateSattaRate}) → No Deduction`
+                        : `Final MR Date (₹${lastMrDateSattaRate}) − Sauda Date (₹${saudaDateSattaRate}) = ₹${rateDifference}/Qtl`)
+                    : (isExcessApplicableForSauda
+                        ? `Last MR (₹${lastMrDateSattaRate}) ≥ Sauda (₹${saudaDateSattaRate}) → Applicable for Sauda`
+                        : `|Sauda Date (₹${saudaDateSattaRate}) − Last MR Date (₹${lastMrDateSattaRate})|`)}
                 </p>
               </div>
 

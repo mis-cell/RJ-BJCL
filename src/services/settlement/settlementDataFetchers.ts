@@ -414,56 +414,68 @@ export const fetchSaudaCheckpointDeduction = async (cleanPoNo: string) => {
       if (supabase && Number(updated.contract_weight_mt) > 0) {
         try {
           const [miRes, tmrRes, faRes] = await Promise.all([
-            supabase.from('material_inspection').select('mr_no, arrival_no, final_arrival_no, date, inspection_date, created_at, total_final_receipt_wt, final_receipt_wt, weight_reduced, reduced_weight, electronic_net_weight, final_weight_mt, weight_qtl, weight').ilike('po_no', `%${rawPoNo}%`).then(r => r.data || [], () => []),
-            supabase.from('temporary_material_received').select('temporary_arrival_no, amad_no, mr_no, arrival_no, date, arrival_date, created_at, total_final_receipt_wt, final_receipt_wt, weight_reduced, reduced_weight, electronic_net_weight, final_weight_mt, weight_qtl, weight').ilike('po_no', `%${rawPoNo}%`).then(r => r.data || [], () => []),
+            supabase.from('material_inspection').select('mr_no, arrival_no, final_arrival_no, date, inspection_date, created_at, receipt_gross_wt, challan_gross_wt, gross_weight, total_final_receipt_wt, final_receipt_wt, weight_reduced, reduced_weight, electronic_net_weight, final_weight_mt, weight_qtl, weight').ilike('po_no', `%${rawPoNo}%`).then(r => r.data || [], () => []),
+            supabase.from('temporary_material_received').select('temporary_arrival_no, amad_no, mr_no, arrival_no, date, arrival_date, created_at, receipt_gross_wt, gross_weight, total_final_receipt_wt, final_receipt_wt, weight_reduced, reduced_weight, electronic_net_weight, final_weight_mt, weight_qtl, weight').ilike('po_no', `%${rawPoNo}%`).then(r => r.data || [], () => []),
             supabase.from('final_arrival').select('final_arrival_no, mr_no, arrival_no, date, arrival_date, created_at, weight_qtl, electronic_net_weight, challan_material_weight, weight').ilike('po_no', `%${rawPoNo}%`).then(r => r.data || [], () => [])
           ]);
 
           const uniqueMrMap = new Map<string, any>();
           (miRes || []).forEach((insp: any) => {
             const num = String(insp.mr_no || insp.arrival_no || insp.final_arrival_no || '').trim();
-            if (num) uniqueMrMap.set(num.toUpperCase(), { mrNo: num, source: insp });
+            if (num) uniqueMrMap.set(num.toUpperCase(), { mrNo: num, source: insp, date: insp.inspection_date || insp.date || insp.created_at || '' });
           });
           (tmrRes || []).forEach((ar: any) => {
             const num = String(ar.temporary_arrival_no || ar.amad_no || ar.mr_no || ar.arrival_no || '').trim();
-            if (num && !uniqueMrMap.has(num.toUpperCase())) uniqueMrMap.set(num.toUpperCase(), { mrNo: num, source: ar });
+            if (num && !uniqueMrMap.has(num.toUpperCase())) uniqueMrMap.set(num.toUpperCase(), { mrNo: num, source: ar, date: ar.arrival_date || ar.date || ar.created_at || '' });
           });
           (faRes || []).forEach((ar: any) => {
             const num = String(ar.final_arrival_no || ar.mr_no || ar.arrival_no || '').trim();
-            if (num && !uniqueMrMap.has(num.toUpperCase())) uniqueMrMap.set(num.toUpperCase(), { mrNo: num, source: ar });
+            if (num && !uniqueMrMap.has(num.toUpperCase())) uniqueMrMap.set(num.toUpperCase(), { mrNo: num, source: ar, date: ar.arrival_date || ar.date || ar.created_at || '' });
           });
 
           const mrEntries = Array.from(uniqueMrMap.values());
+          // Sort chronologically to identify earlier lorries vs last lorry
+          mrEntries.sort((a, b) => String(a.date || '').localeCompare(String(b.date || '')));
+
           if (mrEntries.length > 0) {
-            // Compute total Final Arrival weight for fallback split (same as ExcessShortSettlementModal)
             const faTotalMt = (faRes || []).reduce((sum: number, f: any) => {
               const w = Number(f.weight_qtl) > 0 ? Number(f.weight_qtl) / 10 : Number(f.electronic_net_weight || f.challan_material_weight || 0);
               return sum + w;
             }, 0);
 
+            const isMultiLorry = mrEntries.length > 1;
             let liveClaimSumMt = 0;
-            mrEntries.forEach((entry) => {
+            mrEntries.forEach((entry, idx) => {
               const src = entry.source;
-              let claimMt = 0;
+              const isLast = idx === mrEntries.length - 1;
+              let grossMt = 0;
+              let netMt = 0;
+
               if (src) {
-                claimMt = Number(src.total_final_receipt_wt || src.final_receipt_wt || src.weight_reduced || src.reduced_weight || src.electronic_net_weight || src.final_weight_mt || 0);
-                if (claimMt <= 0 && src.weight_qtl) claimMt = Number(src.weight_qtl) / 10;
-                if (claimMt <= 0 && src.weight) {
+                grossMt = Number(src.receipt_gross_wt || src.challan_gross_wt || src.gross_weight || 0);
+                netMt = Number(src.total_final_receipt_wt || src.final_receipt_wt || src.weight_reduced || src.reduced_weight || src.electronic_net_weight || src.final_weight_mt || 0);
+                if (netMt <= 0 && src.weight_qtl) netMt = Number(src.weight_qtl) / 10;
+                if (netMt <= 0 && src.weight) {
                   const w = Number(src.weight);
-                  claimMt = w > 500 ? w / 100 : (w > 50 ? w / 10 : w);
+                  netMt = w > 500 ? w / 100 : (w > 50 ? w / 10 : w);
                 }
               }
-              if (claimMt <= 0) {
+              if (netMt <= 0 && grossMt <= 0) {
                 const baseTotal = faTotalMt > 0 ? faTotalMt : Number(updated.contract_weight_mt);
-                claimMt = baseTotal / mrEntries.length;
+                netMt = baseTotal / mrEntries.length;
               }
+              if (grossMt <= 0) grossMt = netMt;
+              if (netMt <= 0) netMt = grossMt;
+
+              // Multiple-lorry: Net of earlier lorries + Gross of last lorry.
+              // Single-lorry: Net weight.
+              const claimMt = (isMultiLorry && isLast) ? grossMt : netMt;
               liveClaimSumMt += claimMt;
             });
 
             const roundedLiveMt = Math.round(liveClaimSumMt * 1000) / 1000;
             const contractMt = Number(updated.contract_weight_mt);
             const tolMt = Math.round(contractMt * 0.03 * 1000) / 1000;
-            const minAccMt = Math.max(0, Math.round((contractMt - tolMt) * 1000) / 1000);
             const maxAccMt = Math.round((contractMt + tolMt) * 1000) / 1000;
 
             if (roundedLiveMt > 0 && Math.abs(roundedLiveMt - Number(updated.total_received_mt || 0)) > 0.05) {
@@ -471,12 +483,31 @@ export const fetchSaudaCheckpointDeduction = async (cleanPoNo: string) => {
               updated.variation_mt = Number((contractMt - roundedLiveMt).toFixed(3));
               updated.arrival_numbers = mrEntries.map(e => e.mrNo).join(', ');
 
-              if (roundedLiveMt >= minAccMt - 0.0001 && roundedLiveMt <= maxAccMt + 0.0001) {
-                updated.variation_type = 'within_tolerance';
-                updated.deduction_qty_mt = 0;
-                updated.deduction_qty_qtl = 0;
-                updated.deduction_amount = 0;
-                updated.remarks = 'Within 3% Exemption – No Deduction';
+              const shortageMt = Math.round((contractMt - roundedLiveMt) * 1000) / 1000;
+
+              if (shortageMt > 0.0001) {
+                // Shortage rules
+                if (shortageMt > 1.5) {
+                  // > 1.5 MT: no 3% tolerance, full shortage is chargeable
+                  updated.variation_type = 'short';
+                  updated.deduction_qty_mt = shortageMt;
+                  updated.deduction_qty_qtl = Math.round(shortageMt * 10 * 100) / 100;
+                } else if (shortageMt <= tolMt) {
+                  // <= 1.5 MT and within 3% tolerance: no deduction
+                  updated.variation_type = 'within_tolerance';
+                  updated.deduction_qty_mt = 0;
+                  updated.deduction_qty_qtl = 0;
+                  updated.deduction_amount = 0;
+                  updated.rate_difference = 0;
+                  updated.applicable_rate = 0;
+                  updated.remarks = 'Within 3% Exemption – No Deduction';
+                } else {
+                  // <= 1.5 MT but exceeding 3% tolerance: deduct only excess over tolerance
+                  updated.variation_type = 'short';
+                  const deductMt = Math.round((shortageMt - tolMt) * 1000) / 1000;
+                  updated.deduction_qty_mt = deductMt;
+                  updated.deduction_qty_qtl = Math.round(deductMt * 10 * 100) / 100;
+                }
               } else if (roundedLiveMt > maxAccMt + 0.0001) {
                 updated.variation_type = 'excess';
                 const exMt = Math.max(0, Math.round((roundedLiveMt - maxAccMt) * 1000) / 1000);
@@ -484,22 +515,43 @@ export const fetchSaudaCheckpointDeduction = async (cleanPoNo: string) => {
                 updated.deduction_qty_mt = exMt;
                 updated.deduction_qty_qtl = exQtl;
               } else {
-                updated.variation_type = 'short';
-                const shMt = Math.max(0, Math.round((minAccMt - roundedLiveMt) * 1000) / 1000);
-                const shQtl = Math.round(shMt * 10 * 100) / 100;
-                updated.deduction_qty_mt = shMt;
-                updated.deduction_qty_qtl = shQtl;
-                const sRate = Number(updated.sauda_rate || 0);
-                const mRate = Number(updated.satta_rate || 0);
-                const diff = Math.abs(sRate - mRate);
-                updated.rate_difference = diff;
-                if (updated.rate_basis !== 'custom') updated.applicable_rate = diff;
-                updated.deduction_amount = Math.round(shQtl * Number(updated.applicable_rate || 0) * 100) / 100;
+                updated.variation_type = 'within_tolerance';
+                updated.deduction_qty_mt = 0;
+                updated.deduction_qty_qtl = 0;
+                updated.deduction_amount = 0;
+                updated.remarks = 'Within 3% Exemption – No Deduction';
               }
               changed = true;
             }
           }
         } catch (_e) {}
+      }
+
+      // Enforce Short Satta Rate Rule:
+      // Apply monetary deduction ONLY when final MR-received-date Satta rate is higher than Sauda-date Satta rate.
+      // If final rate is equal to or lower than Sauda-date rate, do not deduct.
+      if (updated.variation_type === 'short' && updated.rate_basis !== 'custom') {
+        const sRate = Number(updated.sauda_rate || 0);
+        const mRate = Number(updated.satta_rate || 0);
+        if (mRate <= sRate) {
+          if (Number(updated.deduction_amount) !== 0 || Number(updated.rate_difference) !== 0) {
+            updated.rate_difference = 0;
+            updated.applicable_rate = 0;
+            updated.deduction_amount = 0;
+            updated.remarks = `Final MR Rate ≤ Sauda Rate – No Deduction (Final: ₹${mRate}, Sauda: ₹${sRate})`;
+            changed = true;
+          }
+        } else {
+          const diff = mRate - sRate;
+          const expectedAmt = Math.round(Number(updated.deduction_qty_qtl || 0) * diff * 100) / 100;
+          if (Number(updated.deduction_amount) !== expectedAmt || Number(updated.rate_difference) !== diff) {
+            updated.rate_difference = diff;
+            updated.applicable_rate = diff;
+            updated.deduction_amount = expectedAmt;
+            updated.remarks = `Short Weight Deduction: Deductible ${Number(updated.deduction_qty_qtl || 0).toFixed(2)} Qtl at ₹${diff}/Qtl = ₹${expectedAmt}.`;
+            changed = true;
+          }
+        }
       }
 
       // Enforce Excess Satta Rate Rule:
