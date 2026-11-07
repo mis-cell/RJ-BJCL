@@ -712,14 +712,42 @@ async function ensureDatabaseIntegrity() {
     tableColumnsCache.clear();
     tableColumnTypesCache.clear();
 
-    // 4. Automatically backfill any missing Temporary Arrival / Sauda / Final Arrival rows from complete_local_data.sql.gz or Supabase Cloud
-    try {
-      const countRes = await pool.query(`SELECT COUNT(*)::int AS cnt FROM "temporary_material_received"`);
-      const currentCnt = countRes.rows?.[0]?.cnt ?? 0;
-      if (currentCnt < 1398) {
-        await syncPendingDataToLocalPostgres();
-      }
-    } catch (_) {}
+    // 4. Child Detail Table Deduplication (prevent duplicate rows from inflating weight/bags)
+    const childDedupQueries = [
+      `DELETE FROM "sauda_check_point_details" a USING "sauda_check_point_details" b
+       WHERE a.ctid < b.ctid
+         AND TRIM(UPPER(COALESCE(a.po_no, ''))) = TRIM(UPPER(COALESCE(b.po_no, '')))
+         AND COALESCE(a.srl_no, 0) = COALESCE(b.srl_no, 0)
+         AND TRIM(UPPER(COALESCE(a.item_grade, ''))) = TRIM(UPPER(COALESCE(b.item_grade, '')))
+         AND TRIM(UPPER(COALESCE(a.po_no, ''))) <> '';`,
+      `DELETE FROM "material_inspection_details" a USING "material_inspection_details" b
+       WHERE a.ctid < b.ctid
+         AND TRIM(UPPER(COALESCE(a.mr_no, ''))) = TRIM(UPPER(COALESCE(b.mr_no, '')))
+         AND COALESCE(a.srl_no, 0) = COALESCE(b.srl_no, 0)
+         AND TRIM(UPPER(COALESCE(a.mr_no, ''))) <> '';`,
+      `DELETE FROM "mill_inspection_detail" a USING "mill_inspection_detail" b
+       WHERE a.ctid < b.ctid
+         AND TRIM(UPPER(COALESCE(a.mr_no, ''))) = TRIM(UPPER(COALESCE(b.mr_no, '')))
+         AND COALESCE(a.srl_no, 0) = COALESCE(b.srl_no, 0)
+         AND TRIM(UPPER(COALESCE(a.mr_no, ''))) <> '';`,
+      `DELETE FROM "material_inspection" a USING "material_inspection" b
+       WHERE a.ctid < b.ctid
+         AND TRIM(UPPER(COALESCE(a.mr_no, ''))) = TRIM(UPPER(COALESCE(b.mr_no, '')))
+         AND TRIM(UPPER(COALESCE(a.mr_no, ''))) <> '';`,
+      `DELETE FROM "mill_inspection_master" a USING "mill_inspection_master" b
+       WHERE a.ctid < b.ctid
+         AND TRIM(UPPER(COALESCE(a.mr_no, ''))) = TRIM(UPPER(COALESCE(b.mr_no, '')))
+         AND TRIM(UPPER(COALESCE(a.mr_no, ''))) <> '';`,
+      `DELETE FROM "mr_settlement_detail" a USING "mr_settlement_detail" b
+       WHERE a.ctid < b.ctid
+         AND TRIM(UPPER(COALESCE(a.mr_no, ''))) = TRIM(UPPER(COALESCE(b.mr_no, '')))
+         AND COALESCE(a.srl_no, 0) = COALESCE(b.srl_no, 0)
+         AND TRIM(UPPER(COALESCE(a.mr_no, ''))) <> '';`
+    ];
+
+    for (const q of childDedupQueries) {
+      await pool.query(q).catch(() => {});
+    }
   } catch (_) {}
 }
 
