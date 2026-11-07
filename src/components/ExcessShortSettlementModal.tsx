@@ -482,13 +482,116 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
     const latestMrDate = latestMr.rawDate || normalizeToYMD(saudaDate);
     const latestMrSattaRate = getSattaBaseRateOnDate(latestMrDate);
 
-    // Build itemized grade-wise breakdown rows
+    // Helper to extract true Gross and Net weights from inspection record / grid_details / details
+    const extractMrWeights = (mrNoStr: string, src: any, fallbackMatchingDetails: any[]) => {
+      let grossMt = 0;
+      let netMt = 0;
+      let bags = 0;
+      let grade = src?.receipt_grade_name || src?.challan_grade_name || src?.grade || src?.grading || '';
+      let marka = src?.challan_marka_name || src?.marka || src?.marks || '';
+      let crop = src?.crop_year || src?.financial_year || '';
+
+      // 1. Try parsing grid_details or details JSON from material_inspection
+      let gridItems: any[] = [];
+      if (src?.grid_details) {
+        try {
+          gridItems = typeof src.grid_details === 'string' ? JSON.parse(src.grid_details) : src.grid_details;
+        } catch (_e) {}
+      }
+      if ((!gridItems || !gridItems.length) && src?.details) {
+        try {
+          gridItems = typeof src.details === 'string' ? JSON.parse(src.details) : src.details;
+        } catch (_e) {}
+      }
+
+      // 2. Use grid items if present; otherwise use matching child detail rows
+      const itemsToUse = (Array.isArray(gridItems) && gridItems.length > 0)
+        ? gridItems
+        : (Array.isArray(fallbackMatchingDetails) ? fallbackMatchingDetails : []);
+
+      if (itemsToUse && itemsToUse.length > 0) {
+        let sumGross = 0;
+        let sumNet = 0;
+        let sumBags = 0;
+
+        itemsToUse.forEach((it: any) => {
+          let g = Number(it.challan_gross_wt ?? it.receipt_gross_wt ?? it.gross_weight_batch ?? it.gross_weight ?? 0);
+          if (g >= 500) g = g / 1000;
+          else if (g > 50 && g < 500) g = g / 10;
+          sumGross += g;
+
+          let n = Number(it.final_receipt_wt ?? it.reduced_weight ?? it.netto_pnto ?? it.net_weight ?? 0);
+          if (n >= 500) n = n / 1000;
+          else if (n > 50 && n < 500) n = n / 10;
+          sumNet += n;
+
+          sumBags += Number(it.quantity ?? it.packets ?? it.bales ?? it.bags ?? 0);
+
+          if (!grade && (it.arrival_grade || it.stock_grade_name || it.grade)) {
+            grade = it.arrival_grade || it.stock_grade_name || it.grade;
+          }
+          if (!marka && (it.marks || it.marka)) {
+            marka = it.marks || it.marka;
+          }
+          if (!crop && it.crop_year) {
+            crop = it.crop_year;
+          }
+        });
+
+        if (sumGross > 0) grossMt = sumGross;
+        if (sumNet > 0) netMt = sumNet;
+        if (sumBags > 0) bags = sumBags;
+      }
+
+      // 3. Check direct columns on src (material_inspection)
+      if (grossMt <= 0 && src) {
+        let g = Number(src.challan_gross_wt ?? src.receipt_gross_wt ?? src.gross_weight ?? src.gross_weight_batch ?? 0);
+        if (g >= 500) g = g / 1000;
+        else if (g > 50 && g < 500) g = g / 10;
+        grossMt = g;
+      }
+      if (netMt <= 0 && src) {
+        let n = Number(src.final_receipt_wt ?? src.total_final_receipt_wt ?? src.weight_reduced ?? src.reduced_weight ?? src.net_weight ?? src.electronic_net_weight ?? 0);
+        if (n >= 500) n = n / 1000;
+        else if (n > 50 && n < 500) n = n / 10;
+        netMt = n;
+      }
+      if (bags <= 0 && src) {
+        bags = Number(src.total_packets ?? src.quantity ?? src.packets ?? src.bags ?? 0);
+      }
+
+      // 4. Fallback if still 0: check temporary / final arrivals cache
+      if (grossMt <= 0 || netMt <= 0) {
+        const cMr = clean(mrNoStr);
+        const matchFa = (liveFinalArrivals || allFinalArrivals || []).find((f: any) => clean(f.mr_no || f.arrival_no) === cMr);
+        if (matchFa) {
+          const faGross = Number(matchFa.receipt_gross_wt ?? matchFa.challan_gross_wt ?? matchFa.gross_weight ?? 0);
+          const faNet = Number(matchFa.electronic_net_weight ?? matchFa.net_weight ?? matchFa.weight_qtl ? (Number(matchFa.weight_qtl) / 10) : 0);
+          if (grossMt <= 0 && faGross > 0) grossMt = faGross >= 500 ? faGross / 1000 : faGross;
+          if (netMt <= 0 && faNet > 0) netMt = faNet >= 500 ? faNet / 1000 : faNet;
+        }
+      }
+
+      // Ensure sanity: if gross or net is zero, equalize
+      if (grossMt <= 0 && netMt > 0) grossMt = netMt;
+      if (netMt <= 0 && grossMt > 0) netMt = grossMt;
+
+      return {
+        grossMt: Math.round(grossMt * 1000) / 1000,
+        netMt: Math.round(netMt * 1000) / 1000,
+        bags,
+        grade: grade || 'TD6',
+        marka: marka || '39',
+        crop: crop || '2026-27'
+      };
+    };
+
+    // Build consolidated MR breakdown rows (strictly one authoritative row per MR)
     const rows: any[] = [];
     let sumClaimMt = 0;
     let sumGrossMt = 0;
     let sumNetMt = 0;
 
-    // Process details for each MR
     mrEntries.forEach((mrEntry, mrIdx) => {
       const mrKey = mrEntry.mrNo.toUpperCase();
       const isLastLorry = mrIdx === mrEntries.length - 1;
@@ -499,128 +602,41 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
         return dMr === mrKey;
       });
 
-      if (matchingDetails.length > 0) {
-        matchingDetails.forEach((d: any) => {
-          const rowGrade = d.receipt_grade_name || d.arrival_grade || d.challan_grade_name || d.stock_grade_name || d.grade || 'TD6';
-          const rowMarka = d.marka || d.marks || '39';
-          const rowCrop = d.crop_year || '2026-2027';
-          const rowBags = Number(d.quantity || d.packets || d.bales || d.bags || 0);
+      const parsedWeights = extractMrWeights(mrEntry.mrNo, mrEntry.source, matchingDetails);
+      const rowGrossMt = parsedWeights.grossMt;
+      const rowNetMt = parsedWeights.netMt;
 
-          // Gross weight from Mill Inspection
-          let rowGrossMt = Number(d.receipt_gross_wt || d.challan_gross_wt || d.gross_weight_batch || 0);
+      // In Multiple-Lorry Sauda: Net weight of every prior lorry (1..N-1) + Gross weight of the last lorry (N).
+      // In Single-Lorry Sauda: Relevant Mill Inspection net weight.
+      const finalClaimMt = (isMultipleLorry && isLastLorry) ? rowGrossMt : rowNetMt;
+      const finalClaimQtl = finalClaimMt * 10;
 
-          // Net weight from Mill Inspection
-          let rowNetMt = Number(d.final_receipt_wt || 0);
-          if (rowNetMt <= 0) {
-            rowNetMt = Number(d.reduced_weight || d.netto_pnto || 0);
-          }
-          if (rowNetMt <= 0 && d.quantity_rcpt) {
-            const raw = Number(d.quantity_rcpt);
-            rowNetMt = raw > 500 ? raw / 100 : (raw > 50 ? raw / 10 : raw);
-          }
-          if (rowNetMt <= 0 && rowGrossMt > 0) {
-            rowNetMt = rowGrossMt;
-          }
-          if (rowGrossMt <= 0 && rowNetMt > 0) {
-            rowGrossMt = rowNetMt;
-          }
+      sumGrossMt += rowGrossMt;
+      sumNetMt += rowNetMt;
+      sumClaimMt += finalClaimMt;
 
-          // In Multiple-Lorry Sauda: Net weight of every lorry except the last; Gross weight of the last lorry.
-          // In Single-Lorry Sauda: Relevant Mill Inspection net weight.
-          const finalClaimMt = (isMultipleLorry && isLastLorry) ? rowGrossMt : rowNetMt;
-          const finalClaimQtl = finalClaimMt * 10;
+      const mrSattaRate = getSattaBaseRateOnDate(mrEntry.rawDate);
+      const rateDiff = mrSattaRate > saudaDateSattaRate ? (mrSattaRate - saudaDateSattaRate) : 0;
 
-          sumGrossMt += rowGrossMt;
-          sumNetMt += rowNetMt;
-          sumClaimMt += finalClaimMt;
-
-          const mrSattaRate = getSattaBaseRateOnDate(mrEntry.rawDate);
-          const rateDiff = mrSattaRate > saudaDateSattaRate ? (mrSattaRate - saudaDateSattaRate) : 0;
-
-          rows.push({
-            mrNo: mrEntry.mrNo,
-            mrDate: mrEntry.date,
-            rawDate: mrEntry.rawDate,
-            grade: rowGrade,
-            marka: rowMarka,
-            cropYear: rowCrop,
-            totalBags: rowBags,
-            grossWtMt: rowGrossMt,
-            netWtMt: rowNetMt,
-            finalReceiptWtMt: finalClaimMt,
-            finalReceiptWtQtl: finalClaimQtl,
-            weightBasis: (isMultipleLorry && isLastLorry) ? 'Gross (Last Lorry)' : (isMultipleLorry ? 'Net' : 'Net (Single)'),
-            isLastLorry,
-            saudaRateQtl: saudaDateSattaRate,
-            mrSattaRateQtl: mrSattaRate,
-            rateDiffQtl: rateDiff,
-            sourceType: 'Mill Inspection Detail'
-          });
-        });
-      } else {
-        // Inspection master level or arrival record fallback
-        const src = mrEntry.source;
-        let bags = 0;
-        let grade = 'TD6';
-        let marka = '39';
-        let crop = '2026-2027';
-
-        let masterGrossMt = 0;
-        let masterNetMt = 0;
-
-        if (src) {
-          masterGrossMt = Number(src.receipt_gross_wt || src.gross_weight || src.challan_gross_wt || 0);
-          masterNetMt = Number(src.total_final_receipt_wt || src.final_receipt_wt || src.weight_reduced || src.reduced_weight || src.electronic_net_weight || src.final_weight_mt || 0);
-          if (masterNetMt <= 0 && src.weight_qtl) {
-            masterNetMt = Number(src.weight_qtl) / 10;
-          }
-          if (masterNetMt <= 0 && src.weight) {
-            const w = Number(src.weight);
-            masterNetMt = w > 500 ? w / 100 : (w > 50 ? w / 10 : w);
-          }
-          bags = Number(src.total_packets || src.quantity || src.packets || src.bags || 0);
-          grade = src.receipt_grade_name || src.challan_grade_name || src.grading || src.grade || src.item_grade || 'TD6';
-          marka = src.challan_marka_name || src.marka || '39';
-          crop = src.crop_year || src.financial_year || '2026-2027';
-        }
-
-        if (masterNetMt <= 0) {
-          masterNetMt = mrEntries.length === 1 ? (parseFloat(po.received_weight_mt) || contractMt) : (parseFloat(po.received_weight_mt || contractMt) / mrEntries.length);
-        }
-        if (masterGrossMt <= 0) {
-          masterGrossMt = masterNetMt;
-        }
-
-        const finalClaimMt = (isMultipleLorry && isLastLorry) ? masterGrossMt : masterNetMt;
-        const finalClaimQtl = finalClaimMt * 10;
-
-        sumGrossMt += masterGrossMt;
-        sumNetMt += masterNetMt;
-        sumClaimMt += finalClaimMt;
-
-        const mrSattaRate = getSattaBaseRateOnDate(mrEntry.rawDate);
-        const rateDiff = mrSattaRate > saudaDateSattaRate ? (mrSattaRate - saudaDateSattaRate) : 0;
-
-        rows.push({
-          mrNo: mrEntry.mrNo,
-          mrDate: mrEntry.date,
-          rawDate: mrEntry.rawDate,
-          grade: grade,
-          marka: marka,
-          cropYear: crop,
-          totalBags: bags,
-          grossWtMt: masterGrossMt,
-          netWtMt: masterNetMt,
-          finalReceiptWtMt: finalClaimMt,
-          finalReceiptWtQtl: finalClaimQtl,
-          weightBasis: (isMultipleLorry && isLastLorry) ? 'Gross (Last Lorry)' : (isMultipleLorry ? 'Net' : 'Net (Single)'),
-          isLastLorry,
-          saudaRateQtl: saudaDateSattaRate,
-          mrSattaRateQtl: mrSattaRate,
-          rateDiffQtl: rateDiff,
-          sourceType: 'Mill Inspection Master'
-        });
-      }
+      rows.push({
+        mrNo: mrEntry.mrNo,
+        mrDate: mrEntry.date,
+        rawDate: mrEntry.rawDate,
+        grade: parsedWeights.grade,
+        marka: parsedWeights.marka,
+        cropYear: parsedWeights.crop,
+        totalBags: parsedWeights.bags,
+        grossWtMt: rowGrossMt,
+        netWtMt: rowNetMt,
+        finalReceiptWtMt: finalClaimMt,
+        finalReceiptWtQtl: finalClaimQtl,
+        weightBasis: (isMultipleLorry && isLastLorry) ? 'Gross (Last Lorry)' : (isMultipleLorry ? 'Net' : 'Net (Single)'),
+        isLastLorry,
+        saudaRateQtl: saudaDateSattaRate,
+        mrSattaRateQtl: mrSattaRate,
+        rateDiffQtl: rateDiff,
+        sourceType: 'Mill Inspection'
+      });
     });
 
     // If no MR records at all, produce single row from PO
@@ -703,55 +719,54 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
   const excessMt = isGrossExcess ? Math.abs(grossVarianceMt) : 0;
 
   // 4. SHORTAGE AND TOLERANCE RULES:
-  // - Tolerance of 3% of the Sauda/P.O. quantity:
+  // - "3% Tolerance Policy not Applicable for Excess, Tolerance Only For Short and If short received under 1.5 MT Then Only"
   const tolerance3PctMt = Math.round((contractMt * 0.03) * 1000) / 1000;
   const tolerance3PctQtl = Math.round((tolerance3PctMt * 10) * 100) / 100;
   const tolerance3PctKg = Math.round(tolerance3PctMt * 1000);
 
-  const exemptionPct = 3;
-  const exemptionMt = tolerance3PctMt;
-  const exemptionQtl = tolerance3PctQtl;
-  const exemptionKg = tolerance3PctKg;
-
-  // - If the shortage is more than 1.5 MT (1,500 kg), do not apply the 3% tolerance. The full shortage is chargeable.
-  // - If the shortage is 1.5 MT or less, apply a tolerance of 3% of the Sauda/P.O. quantity. Deduct only the shortage amount that exceeds this tolerance. If the shortage is within the tolerance, no shortage deduction is due.
   let finalDeductibleShortMt = 0;
+  let finalDeductibleExcessMt = 0;
   let toleranceAppliedMt = 0;
   let isWithinTolerance = false;
 
   if (isGrossShort) {
     if (shortageMt > 1.5) {
+      // Shortage > 1.5 MT (1,500 KG): No 3% tolerance applied. Full shortage is chargeable!
       toleranceAppliedMt = 0;
       finalDeductibleShortMt = shortageMt;
       isWithinTolerance = false;
     } else if (shortageMt <= tolerance3PctMt) {
+      // Shortage <= 1.5 MT and within 3% tolerance: No deduction due
       toleranceAppliedMt = shortageMt;
       finalDeductibleShortMt = 0;
       isWithinTolerance = true;
     } else {
+      // Shortage <= 1.5 MT but exceeds 3% tolerance: deduct only excess over tolerance
       toleranceAppliedMt = tolerance3PctMt;
       finalDeductibleShortMt = Math.round((shortageMt - tolerance3PctMt) * 1000) / 1000;
       isWithinTolerance = false;
     }
   } else if (isGrossExcess) {
-    const tolResult = calculateWeightTolerance(contractMt, totalFinalReceiptClaimMt, unit);
-    toleranceAppliedMt = tolResult.toleranceMt;
-    isWithinTolerance = tolResult.isWithinTolerance;
+    // EXCESS POLICY: 3% tolerance policy is NOT applicable on excess. Full excess is deductible/chargeable.
+    toleranceAppliedMt = 0;
+    isWithinTolerance = false;
+    finalDeductibleExcessMt = excessMt;
   } else {
     isWithinTolerance = true;
     toleranceAppliedMt = 0;
   }
 
   const finalDeductibleShortQtl = Math.round(finalDeductibleShortMt * 10 * 100) / 100;
-
-  // Excess deductible (existing logic preserved)
-  const finalDeductibleExcessMt = isGrossExcess ? Math.max(0, Math.round((excessMt - tolerance3PctMt) * 1000) / 1000) : 0;
   const finalDeductibleExcessQtl = Math.round(finalDeductibleExcessMt * 10 * 100) / 100;
 
   const finalDeductibleQtyMt = isGrossExcess ? finalDeductibleExcessMt : finalDeductibleShortMt;
   const finalDeductibleQtyQtl = isGrossExcess ? finalDeductibleExcessQtl : finalDeductibleShortQtl;
 
   const isWithin3PctExemption = isWithinTolerance;
+
+  const exemptionMt = isGrossExcess ? 0 : (shortageMt > 1.5 ? 0 : tolerance3PctMt);
+  const exemptionQtl = isGrossExcess ? 0 : (shortageMt > 1.5 ? 0 : tolerance3PctQtl);
+  const exemptionKg = isGrossExcess ? 0 : (shortageMt > 1.5 ? 0 : tolerance3PctKg);
 
   // Rate rules:
   // Apply a monetary deduction only when the final MR-received-date Satta rate is higher than the Sauda-date Satta rate.
@@ -861,11 +876,11 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
       supplier: supplierName,
       broker: brokerName,
       contract_weight_mt: Number(contractMt.toFixed(3)),
-      tolerance_pct: exemptionPct,
+      tolerance_pct: isGrossExcess ? 0 : (shortageMt > 1.5 ? 0 : 3),
       tolerance_mt: Number(exemptionMt.toFixed(3)),
-      tolerance_type: '3% Sauda Total Contract Execution Exemption',
+      tolerance_type: isGrossExcess ? 'No Tolerance (Excess 100% Chargeable)' : (shortageMt > 1.5 ? 'No Tolerance (Shortage > 1.5 MT)' : '3% Sauda Shortage Exemption'),
       min_acceptable_mt: Number(Math.max(0, contractMt - exemptionMt).toFixed(3)),
-      max_acceptable_mt: Number((contractMt + exemptionMt).toFixed(3)),
+      max_acceptable_mt: Number(contractMt.toFixed(3)),
       total_received_mt: Number(totalFinalReceiptClaimMt.toFixed(3)),
       variation_type: isWithin3PctExemption ? 'within_tolerance' : (isGrossExcess ? 'excess' : 'short'),
       variation_mt: Number(grossVarianceMt.toFixed(3)),
@@ -947,11 +962,11 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
       supplier: supplierName,
       broker: brokerName,
       contract_weight_mt: Number(contractMt.toFixed(3)),
-      tolerance_pct: exemptionPct,
+      tolerance_pct: isGrossExcess ? 0 : (shortageMt > 1.5 ? 0 : 3),
       tolerance_mt: Number(exemptionMt.toFixed(3)),
-      tolerance_type: '3% Sauda Total Contract Execution Exemption',
+      tolerance_type: isGrossExcess ? 'No Tolerance (Excess 100% Chargeable)' : (shortageMt > 1.5 ? 'No Tolerance (Shortage > 1.5 MT)' : '3% Sauda Shortage Exemption'),
       min_acceptable_mt: Number(Math.max(0, contractMt - exemptionMt).toFixed(3)),
-      max_acceptable_mt: Number((contractMt + exemptionMt).toFixed(3)),
+      max_acceptable_mt: Number(contractMt.toFixed(3)),
       total_received_mt: Number(totalFinalReceiptClaimMt.toFixed(3)),
       variation_type: isWithin3PctExemption ? 'within_tolerance' : (isGrossExcess ? 'excess' : 'short'),
       variation_mt: Number(grossVarianceMt.toFixed(3)),
@@ -1184,7 +1199,7 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
                 <span>Broker: <strong className="text-slate-300">{brokerName}</strong></span>
                 <span className="text-slate-600">•</span>
                 <span className="text-emerald-300">
-                  Policy: <strong>{isGrossShort && shortageMt > 1.5 ? 'Shortage > 1.5 MT (Full Chargeable)' : '3% Sauda Execution Exemption'}</strong>
+                  Policy: <strong>{isGrossExcess ? 'Excess Delivery – Tolerance Not Applicable (100% Chargeable)' : (isGrossShort && shortageMt > 1.5 ? 'Shortage > 1.5 MT (Full Chargeable)' : '3% Sauda Shortage Exemption')}</strong>
                 </span>
               </p>
             </div>
@@ -1269,7 +1284,7 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
                 )
               ) : isGrossExcess ? (
                 <span className="text-[9px] font-mono font-bold text-purple-900 bg-purple-50 border border-purple-300 px-2.5 py-0.5 rounded-full">
-                  3% Sauda Execution Exemption Applied ({exemptionMt.toFixed(2)} MT / {exemptionKg} KG)
+                  Excess Received ({excessMt.toFixed(2)} MT) – 3% Tolerance Not Applicable (Full Excess Chargeable)
                 </span>
               ) : (
                 <span className="text-[9px] font-mono font-bold text-emerald-900 bg-emerald-50 border border-emerald-300 px-2.5 py-0.5 rounded-full">
@@ -1316,7 +1331,11 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
 
                 <div className="flex justify-between items-center py-1 border-b border-slate-200/70 bg-emerald-50/60 px-1.5 rounded">
                   <span className="text-emerald-900 font-bold">3% Execution Exemption:</span>
-                  {isGrossShort && shortageMt > 1.5 ? (
+                  {isGrossExcess ? (
+                    <span className="font-black text-purple-900">
+                      0.00 MT <span className="text-[9px] text-purple-700 font-normal">(Not Applicable for Excess – Tolerance Only For Short)</span>
+                    </span>
+                  ) : isGrossShort && shortageMt > 1.5 ? (
                     <span className="font-black text-rose-800">
                       0.00 MT <span className="text-[9px] text-rose-700 font-normal">(Not Applied – Shortage &gt; 1.5 MT)</span>
                     </span>

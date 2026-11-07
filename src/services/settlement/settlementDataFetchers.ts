@@ -451,13 +451,54 @@ export const fetchSaudaCheckpointDeduction = async (cleanPoNo: string) => {
               let grossMt = 0;
               let netMt = 0;
 
+              // Parse grid_details or details if available
+              let gridItems: any[] = [];
+              if (src?.grid_details) {
+                try {
+                  gridItems = typeof src.grid_details === 'string' ? JSON.parse(src.grid_details) : src.grid_details;
+                } catch (_e) {}
+              }
+              if ((!gridItems || !gridItems.length) && src?.details) {
+                try {
+                  gridItems = typeof src.details === 'string' ? JSON.parse(src.details) : src.details;
+                } catch (_e) {}
+              }
+
+              if (Array.isArray(gridItems) && gridItems.length > 0) {
+                let sumG = 0;
+                let sumN = 0;
+                gridItems.forEach((it: any) => {
+                  let g = Number(it.challan_gross_wt ?? it.receipt_gross_wt ?? it.gross_weight ?? 0);
+                  if (g >= 500) g = g / 1000;
+                  else if (g > 50 && g < 500) g = g / 10;
+                  sumG += g;
+
+                  let n = Number(it.final_receipt_wt ?? it.reduced_weight ?? it.netto_pnto ?? 0);
+                  if (n >= 500) n = n / 1000;
+                  else if (n > 50 && n < 500) n = n / 10;
+                  sumN += n;
+                });
+                if (sumG > 0) grossMt = sumG;
+                if (sumN > 0) netMt = sumN;
+              }
+
               if (src) {
-                grossMt = Number(src.receipt_gross_wt || src.challan_gross_wt || src.gross_weight || 0);
-                netMt = Number(src.total_final_receipt_wt || src.final_receipt_wt || src.weight_reduced || src.reduced_weight || src.electronic_net_weight || src.final_weight_mt || 0);
-                if (netMt <= 0 && src.weight_qtl) netMt = Number(src.weight_qtl) / 10;
-                if (netMt <= 0 && src.weight) {
-                  const w = Number(src.weight);
-                  netMt = w > 500 ? w / 100 : (w > 50 ? w / 10 : w);
+                if (grossMt <= 0) {
+                  let g = Number(src.receipt_gross_wt || src.challan_gross_wt || src.gross_weight || 0);
+                  if (g >= 500) g = g / 1000;
+                  else if (g > 50 && g < 500) g = g / 10;
+                  grossMt = g;
+                }
+                if (netMt <= 0) {
+                  let n = Number(src.total_final_receipt_wt || src.final_receipt_wt || src.weight_reduced || src.reduced_weight || src.electronic_net_weight || src.final_weight_mt || 0);
+                  if (n <= 0 && src.weight_qtl) n = Number(src.weight_qtl) / 10;
+                  if (n <= 0 && src.weight) {
+                    const w = Number(src.weight);
+                    n = w > 500 ? w / 100 : (w > 50 ? w / 10 : w);
+                  }
+                  if (n >= 500) n = n / 1000;
+                  else if (n > 50 && n < 500) n = n / 10;
+                  netMt = n;
                 }
               }
               if (netMt <= 0 && grossMt <= 0) {
@@ -476,7 +517,6 @@ export const fetchSaudaCheckpointDeduction = async (cleanPoNo: string) => {
             const roundedLiveMt = Math.round(liveClaimSumMt * 1000) / 1000;
             const contractMt = Number(updated.contract_weight_mt);
             const tolMt = Math.round(contractMt * 0.03 * 1000) / 1000;
-            const maxAccMt = Math.round((contractMt + tolMt) * 1000) / 1000;
 
             if (roundedLiveMt > 0 && Math.abs(roundedLiveMt - Number(updated.total_received_mt || 0)) > 0.05) {
               updated.total_received_mt = roundedLiveMt;
@@ -508,9 +548,10 @@ export const fetchSaudaCheckpointDeduction = async (cleanPoNo: string) => {
                   updated.deduction_qty_mt = deductMt;
                   updated.deduction_qty_qtl = Math.round(deductMt * 10 * 100) / 100;
                 }
-              } else if (roundedLiveMt > maxAccMt + 0.0001) {
+              } else if (roundedLiveMt > contractMt + 0.0001) {
+                // EXCESS RULE: 3% tolerance NOT applicable for excess! Full excess is chargeable.
                 updated.variation_type = 'excess';
-                const exMt = Math.max(0, Math.round((roundedLiveMt - maxAccMt) * 1000) / 1000);
+                const exMt = Math.max(0, Math.round((roundedLiveMt - contractMt) * 1000) / 1000);
                 const exQtl = Math.round(exMt * 10 * 100) / 100;
                 updated.deduction_qty_mt = exMt;
                 updated.deduction_qty_qtl = exQtl;
@@ -519,7 +560,7 @@ export const fetchSaudaCheckpointDeduction = async (cleanPoNo: string) => {
                 updated.deduction_qty_mt = 0;
                 updated.deduction_qty_qtl = 0;
                 updated.deduction_amount = 0;
-                updated.remarks = 'Within 3% Exemption – No Deduction';
+                updated.remarks = 'Exact Weight – No Deduction';
               }
               changed = true;
             }
