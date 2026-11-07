@@ -3381,67 +3381,70 @@ export function useSettlementWorkflow({ onClose, onLogEvent }: { onClose?: () =>
         });
       } catch (_sqlErr) {}
 
-      // 2. Clear old detail rows 
-      await supabase
-        .from('mr_settlement_detail')
-        .delete()
-        .eq('mr_no', targetMrNo);
+      // 2. Prepare active columns (where grade or area is present, or fallback to first column)
+      const activeDetailCols = detailCols.filter(c => c.grade.trim() !== '' || c.area.trim() !== '' || Number(c.quantity) > 0 || Number(c.arr_qty_wt) > 0);
+      const colsToPersist = activeDetailCols.length > 0 ? activeDetailCols : (detailCols.length > 0 ? [detailCols[0]] : []);
 
-      // 3. Write active columns (where grade or area is present)
-      const rowsToWrite = detailCols
-        .filter(c => c.grade.trim() !== '')
-        .map(c => ({
-          mr_no: targetMrNo,
-          col_index: c.col_index,
-          grade: c.grade,
-          area: c.area,
-          agency: c.agency,
-          marka_crop: c.marka_crop,
-          quantity: Number(c.quantity) || 0,
-          arr_qty_wt: Number(c.arr_qty_wt) || 0,
-          min_qty_wt: Number(c.min_qty_wt) || 0,
-          wt_phota: Number(c.wt_phota) || 0,
-          wt_quantity: Number(c.wt_quantity) || 0,
-          rate_value: Number(c.rate_value) || 0,
-          premium: Number(c.premium) || 0,
-          sett_pct: Number(c.sett_pct) || (Number(c.gd_sett) > 0 ? Number(c.gd_sett) : Number(c.gd_claim || 0)),
-          deduction_rate: Number(c.deduction_rate) || 0,
-          sett_rate: getEffectiveColSettRate(c),
-          quantity_qtl: Number(c.quantity_qtl) > 0 ? Number(c.quantity_qtl) : Number((getColWtMt(c) * 10).toFixed(2)),
-          amount: getColAmount(c),
-          lower_grade: c.lower_grade || '',
-          target_lower_grade: c.target_lower_grade || '',
-          lower_grade_rate: Number(c.lower_grade_rate) || 0,
-          grade_diff: Number(c.grade_diff) || 0,
-          gd_claim: Number(c.gd_claim) || 0,
-          gd_sett: Number(c.gd_sett) || 0,
-          gd_rev: Number(c.gd_rev) || 0,
-          gd_final: Number(c.gd_final) || 0,
-          moist_claim: Number(c.moist_claim) || 0,
-          moist_sett: Number(c.moist_sett) || 0,
-          moist_rev: Number(c.moist_rev) || 0,
-          moist_final: Number(c.moist_final) || 0,
-          dust_claim: Number(c.dust_claim) || 0,
-          dust_sett: Number(c.dust_sett) || 0,
-          dust_rev: Number(c.dust_rev) || 0,
-          dust_final: Number(c.dust_final) || 0,
-          ncv_claim: Number(c.ncv_claim) || 0,
-          ncv_sett: Number(c.ncv_sett) || 0,
-          ncv_rev: Number(c.ncv_rev) || 0,
-          ncv_final: Number(c.ncv_final) || 0,
-          po_grade_claim: Number(c.po_grade_claim) || 0,
-          po_grade_sett: Number(c.po_grade_sett) || 0,
-          po_grade_rev: Number(c.po_grade_rev) || 0,
-          po_grade_final: Number(c.po_grade_final) || 0,
-          adjust_type: c.adjust_type,
-          remark: c.remark,
-          claim_settlement: Number(c.claim_settlement) || 0
-        }));
+      const rowsToWrite = colsToPersist.map((c, idx) => ({
+        mr_no: targetMrNo,
+        srl_no: c.col_index || idx + 1,
+        col_index: c.col_index || idx + 1,
+        grade: c.grade || (masterData as any).arrival_grade || 'TD6',
+        area: c.area,
+        agency: c.agency,
+        marka_crop: c.marka_crop,
+        quantity: Number(c.quantity) || 0,
+        arr_qty_wt: Number(c.arr_qty_wt) || 0,
+        min_qty_wt: Number(c.min_qty_wt) || 0,
+        wt_phota: Number(c.wt_phota) || 0,
+        wt_quantity: Number(c.wt_quantity) || 0,
+        rate_value: Number(c.rate_value) || 0,
+        premium: Number(c.premium) || 0,
+        sett_pct: Number(c.sett_pct) || (Number(c.gd_sett) > 0 ? Number(c.gd_sett) : Number(c.gd_claim || 0)),
+        deduction_rate: Number(c.deduction_rate) || 0,
+        sett_rate: getEffectiveColSettRate(c),
+        quantity_qtl: Number(c.quantity_qtl) > 0 ? Number(c.quantity_qtl) : Number((getColWtMt(c) * 10).toFixed(2)),
+        amount: getColAmount(c),
+        lower_grade: c.lower_grade || '',
+        target_lower_grade: c.target_lower_grade || '',
+        lower_grade_rate: Number(c.lower_grade_rate) || 0,
+        grade_diff: Number(c.grade_diff) || 0,
+        gd_claim: Number(c.gd_claim) || 0,
+        gd_sett: Number(c.gd_sett) || 0,
+        gd_rev: Number(c.gd_rev) || 0,
+        gd_final: Number(c.gd_final) || 0,
+        moist_claim: Number(c.moist_claim) || 0,
+        moist_sett: Number(c.moist_sett) || 0,
+        moist_rev: Number(c.moist_rev) || 0,
+        moist_final: Number(c.moist_final) || 0,
+        dust_claim: Number(c.dust_claim) || 0,
+        dust_sett: Number(c.dust_sett) || 0,
+        dust_rev: Number(c.dust_rev) || 0,
+        dust_final: Number(c.dust_final) || 0,
+        ncv_claim: Number(c.ncv_claim) || 0,
+        ncv_sett: Number(c.ncv_sett) || 0,
+        ncv_rev: Number(c.ncv_rev) || 0,
+        ncv_final: Number(c.ncv_final) || 0,
+        po_grade_claim: Number(c.po_grade_claim) || 0,
+        po_grade_sett: Number(c.po_grade_sett) || 0,
+        po_grade_rev: Number(c.po_grade_rev) || 0,
+        po_grade_final: Number(c.po_grade_final) || 0,
+        adjust_type: c.adjust_type,
+        remark: c.remark,
+        claim_settlement: Number(c.claim_settlement) || 0
+      }));
 
-      for (const detailRow of rowsToWrite) {
-        await dbModule.insert('mr_settlement_detail', detailRow).catch((err) => {
-          console.warn("mr_settlement_detail insert warning:", err);
-        });
+      if (rowsToWrite.length > 0) {
+        await supabase
+          .from('mr_settlement_detail')
+          .delete()
+          .eq('mr_no', targetMrNo);
+
+        for (const detailRow of rowsToWrite) {
+          await dbModule.insert('mr_settlement_detail', detailRow).catch((err) => {
+            console.warn("mr_settlement_detail insert warning:", err);
+          });
+        }
       }
 
       // Live sync to custom table 'm_r_settlement' with manual weight entries and status checks

@@ -576,7 +576,85 @@ export function usePurchaseOrderData({
 
         const totalFinalMt = matchingFinal.reduce((sum: number, ar: any) => sum + finalWeightOf(ar), 0);
         const totalTempMt = matchingTemp.reduce((sum: number, ar: any) => sum + tempWeightOf(ar), 0);
-        const totalReceivedMt = totalFinalMt + totalTempMt;
+        let totalReceivedMt = totalFinalMt + totalTempMt;
+
+        // If material_inspection records exist for this PO, compute received weight using
+        // Single lorry -> Net weight (final_receipt_wt)
+        // Multiple lorries -> Net weight (final_receipt_wt) for 1st..N-1 lorries + Gross weight (challan_gross_wt) for Last lorry (by MR sequence)
+        const matchingMatReceipts = queryRecordIndex(matInspectionsIndex, poKeys);
+        let lastInspMrNo = '';
+        let lastInspMrDate = '';
+        if (matchingMatReceipts.length > 0) {
+          const extractSeq = (mr: string): number => {
+            const m = String(mr || '').trim().match(/(\d+)$/);
+            return m ? parseInt(m[1], 10) : 0;
+          };
+          const uniqueInspByMr = new Map<string, any>();
+          matchingMatReceipts.forEach((insp: any) => {
+            const mrKey = String(insp.mr_no || insp.arrival_no || '').trim().toUpperCase();
+            if (mrKey && !uniqueInspByMr.has(mrKey)) {
+              uniqueInspByMr.set(mrKey, insp);
+            }
+          });
+          const sortedInsps = Array.from(uniqueInspByMr.values()).sort((a: any, b: any) => {
+            const seqA = extractSeq(a.mr_no || a.arrival_no || '');
+            const seqB = extractSeq(b.mr_no || b.arrival_no || '');
+            if (seqA > 0 && seqB > 0 && seqA !== seqB) return seqA - seqB;
+            return String(a.mr_date || a.date || '').localeCompare(String(b.mr_date || b.date || ''));
+          });
+
+          if (sortedInsps.length > 0) {
+            const isMulti = sortedInsps.length > 1;
+            let inspSumMt = 0;
+            sortedInsps.forEach((insp: any, idx: number) => {
+              const isLast = idx === sortedInsps.length - 1;
+              let gMt = 0;
+              let nMt = 0;
+              let gItems: any[] = [];
+              if (insp.grid_details) {
+                try { gItems = typeof insp.grid_details === 'string' ? JSON.parse(insp.grid_details) : insp.grid_details; } catch (_e) {}
+              }
+              if ((!gItems || !gItems.length) && insp.details) {
+                try { gItems = typeof insp.details === 'string' ? JSON.parse(insp.details) : insp.details; } catch (_e) {}
+              }
+              if (Array.isArray(gItems) && gItems.length > 0) {
+                gItems.forEach((it: any) => {
+                  let g = Number(it.challan_gross_wt ?? it.receipt_gross_wt ?? it.gross_weight ?? 0);
+                  if (g >= 500) g = g / 1000;
+                  else if (g > 50 && g < 500) g = g / 10;
+                  gMt += g;
+
+                  let n = Number(it.final_receipt_wt ?? it.reduced_weight ?? it.netto_pnto ?? 0);
+                  if (n >= 500) n = n / 1000;
+                  else if (n > 50 && n < 500) n = n / 10;
+                  nMt += n;
+                });
+              }
+              if (gMt <= 0) {
+                let g = Number(insp.challan_gross_wt || insp.receipt_gross_wt || insp.gross_weight || 0);
+                if (g >= 500) g = g / 1000;
+                else if (g > 50 && g < 500) g = g / 10;
+                gMt = g;
+              }
+              if (nMt <= 0) {
+                let n = Number(insp.final_receipt_wt || insp.total_final_receipt_wt || insp.reduced_weight || 0);
+                if (n >= 500) n = n / 1000;
+                else if (n > 50 && n < 500) n = n / 10;
+                nMt = n;
+              }
+              if (gMt <= 0) gMt = nMt;
+              if (nMt <= 0) nMt = gMt;
+              inspSumMt += (isMulti && isLast) ? gMt : nMt;
+              if (isLast) {
+                lastInspMrNo = String(insp.mr_no || insp.arrival_no || '').trim();
+                lastInspMrDate = String(insp.mr_date || insp.date || insp.arrival_date || '').trim();
+              }
+            });
+            if (inspSumMt > 0) {
+              totalReceivedMt = Math.round(inspSumMt * 1000) / 1000;
+            }
+          }
+        }
 
         const unit = p.purchase_unit_name || p.unit_type || p.unit || 'BALES';
         const tol = calculateWeightTolerance(contractWeight, totalReceivedMt, unit);
@@ -592,7 +670,7 @@ export function usePurchaseOrderData({
         });
         const matchedArrivalForWt = allMatchedArrivalsSorted[0] || matchingTempArrivals[0] || matchingTemp[0] || matchingFinal[0];
         const saudaDateStr = p.s_date || p.po_date || p.date || p.contract_date || (p.created_at ? p.created_at.slice(0, 10) : '');
-        const arrivalDateStr = matchedArrivalForWt?.date || matchedArrivalForWt?.arrival_date || p.last_arrival_date || p.arrival_date || saudaDateStr;
+        const arrivalDateStr = lastInspMrDate || matchedArrivalForWt?.date || matchedArrivalForWt?.arrival_date || p.last_arrival_date || p.arrival_date || saudaDateStr;
         const normalizedArrivalDate = normalizeDateYMD(arrivalDateStr) || null;
 
         if (poNoStr && contractWeight > 0) {
@@ -601,7 +679,7 @@ export function usePurchaseOrderData({
 
           const saudaTd5Rate = parseFloat(p.b_rate || 0) > 0 ? parseFloat(p.b_rate) : getTd5BaseRateForDate(saudaDateStr);
           const arrivalTd5Rate = getTd5BaseRateForDate(arrivalDateStr);
-          const shortRateDiff = Math.abs((arrivalTd5Rate || 0) - (saudaTd5Rate || 0));
+          const shortRateDiff = (arrivalTd5Rate || 0) > (saudaTd5Rate || 0) ? ((arrivalTd5Rate || 0) - (saudaTd5Rate || 0)) : 0;
           // For Excess: If Last MR Date Rate >= Sauda Date Rate, do NOT deduct (Applicable for Sauda)
           const excessRateDiff = (saudaTd5Rate || 0) > (arrivalTd5Rate || 0) ? ((saudaTd5Rate || 0) - (arrivalTd5Rate || 0)) : 0;
 
@@ -619,15 +697,17 @@ export function usePurchaseOrderData({
             } else if (tol.isOverDelivery) {
               variationType = 'excess';
               effectiveRateDiff = excessRateDiff;
-              const excessMt = Math.max(0, tol.excessOverToleranceMt || 0);
-              const excessQtl = Math.max(0, tol.excessOverToleranceQtl || 0);
-              const rawPenalty = excessRateDiff * excessQtl;
+              // 3% tolerance policy is NOT applied for excess
+              const excessMt = Math.max(0, Math.round((totalReceivedMt - contractWeight) * 1000) / 1000);
+              const excessQtl = Math.round(excessMt * 10 * 100) / 100;
+              const excessKg = Math.round(excessMt * 1000);
+              const rawPenalty = excessRateDiff * excessKg;
               penaltyAmount = isNaN(rawPenalty) || rawPenalty < 0 ? 0 : Math.round(rawPenalty * 100) / 100;
               deductionQtyMt = Number(excessMt.toFixed(3));
               deductionQtyQtl = Number(excessQtl.toFixed(2));
               wtStatusRemarks = penaltyAmount > 0
-                ? `+${excessMt.toFixed(3)} MT Excess | Penalty: ₹${penaltyAmount}`
-                : `+${excessMt.toFixed(3)} MT Excess | Applicable for Sauda (₹0 Deduction)`;
+                ? `+${excessKg.toLocaleString()} kg (${excessMt.toFixed(3)} MT) Excess | Penalty: ₹${penaltyAmount.toLocaleString()}`
+                : `+${excessKg.toLocaleString()} kg (${excessMt.toFixed(3)} MT) Excess | Applicable for Sauda (₹0 Deduction)`;
             } else if (tol.isUnderDelivery) {
               variationType = 'short';
               effectiveRateDiff = shortRateDiff;
@@ -645,10 +725,11 @@ export function usePurchaseOrderData({
           }
 
           const linkedMrs = Array.from(new Set([
+            ...matchingMatReceipts.map((insp: any) => String(insp.mr_no || insp.arrival_no || '').trim()),
             ...matchingFinal.map((ar: any) => String(ar.final_arrival_no || ar.mr_no || ar.arrival_no || '').trim()),
             ...matchingTemp.map((ar: any) => String(ar.temporary_arrival_no || ar.amad_no || ar.mr_no || '').trim())
           ].filter(Boolean)));
-          const lastMrNo = linkedMrs[0] || String(p.last_arrival_mr_no || p.mr_no || 'MR-001').trim();
+          const lastMrNo = lastInspMrNo || linkedMrs[linkedMrs.length - 1] || String(p.last_arrival_mr_no || p.mr_no || 'MR-001').trim();
           const arrivalNumbersStr = linkedMrs.length > 0 ? linkedMrs.join(', ') : lastMrNo;
 
           const dedPayload: Record<string, any> = {
@@ -657,9 +738,9 @@ export function usePurchaseOrderData({
             supplier: String(p.supplier || p.supplier_name || p.supp_name || '').trim(),
             broker: String(p.broker || p.broker_name || '').trim(),
             contract_weight_mt: Number(contractWeight.toFixed(3)),
-            tolerance_pct: 3.0,
+            tolerance_pct: tol.isOverDelivery ? 0 : 3.0,
             tolerance_mt: Number(tol.toleranceMt.toFixed(3)),
-            tolerance_type: '3% Sauda Total Contract Execution Exemption',
+            tolerance_type: tol.isOverDelivery ? 'No Tolerance on Excess Weight' : '3% Sauda Total Contract Execution Exemption',
             min_acceptable_mt: Number(tol.minAcceptableMt.toFixed(3)),
             max_acceptable_mt: Number(tol.maxAcceptableMt.toFixed(3)),
             total_received_mt: Number(totalReceivedMt.toFixed(3)),

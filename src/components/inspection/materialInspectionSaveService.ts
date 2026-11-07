@@ -53,6 +53,14 @@ export async function saveMaterialInspection({
     };
   }
 
+  const summedGrossWt = Math.round(
+    activeInspectionRows.reduce((sum, r) => sum + (Number(r.challan_gross_wt || (r as any).receipt_gross_wt || 0) || 0), 0) * 1000
+  ) / 1000;
+  const summedFinalNetWt = Math.round(
+    activeInspectionRows.reduce((sum, r) => sum + (Number((r as any).final_receipt_wt || (r as any).reduced_weight || r.challan_gross_wt || 0) || 0), 0) * 1000
+  ) / 1000;
+  const summedBags = activeInspectionRows.reduce((sum, r) => sum + (Number(r.quantity) || 0), 0);
+
   const masterPayload: any = {
     mr_no: masterData.mr_no,
     mr_date: masterData.mr_date || null,
@@ -65,6 +73,14 @@ export async function saveMaterialInspection({
     broker: masterData.broker_name,
     supplier_name: masterData.supplier_name,
     supplier: masterData.supplier_name,
+    challan_gross_wt: summedGrossWt,
+    receipt_gross_wt: summedGrossWt,
+    gross_weight: summedGrossWt,
+    final_receipt_wt: summedFinalNetWt,
+    total_final_receipt_wt: summedFinalNetWt,
+    reduced_weight: summedFinalNetWt,
+    quantity: summedBags,
+    total_quantity: summedBags,
     actual_moisture: masterData.actual_moisture,
     claim_moisture: masterData.claim_moisture,
     actual_dust: masterData.actual_dust,

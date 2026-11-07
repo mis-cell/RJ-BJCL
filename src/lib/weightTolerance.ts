@@ -117,38 +117,59 @@ export function calculateWeightTolerance(
   const fixedToleranceMt = activeMaxMt !== Infinity ? activeMaxMt : pct3Mt;
   const fixedToleranceQtl = fixedToleranceMt * 10;
 
-  // Allowed Tolerance / Exemption = 3% of Sauda Contract Quantity (or custom policy limit if specified)
-  const toleranceMt = isPolicyActive && contractMt > 0 
-    ? (activeMaxMt !== Infinity ? Math.min(pct3Mt, activeMaxMt) : pct3Mt) 
+  // Allowed Tolerance / Exemption:
+  // - Applies ONLY to shortages, and ONLY when the shortage is under 1.5 MT (1,500 kg).
+  // - For excess calculations, the 3% tolerance policy must NOT be applied.
+  const shortageMtRaw = contractMt > receivedMt ? (contractMt - receivedMt) : 0;
+  const isShortageUnder1_5Mt = shortageMtRaw > 0.0001 && shortageMtRaw < 1.5;
+  const isExcess = receivedMt > (contractMt + 0.0001);
+
+  const rawShortToleranceMt = isPolicyActive && contractMt > 0
+    ? (activeMaxMt !== Infinity ? Math.min(pct3Mt, activeMaxMt) : pct3Mt)
     : 0;
+
+  const toleranceMt = isExcess
+    ? 0
+    : (shortageMtRaw >= 1.5 ? 0 : rawShortToleranceMt);
   const toleranceQtl = toleranceMt * 10;
   const tolerancePct = contractMt > 0 ? (toleranceMt / contractMt) * 100 : 0;
-  const toleranceBasis = isPolicyActive && contractMt > 0 
-    ? `${activePct}% Sauda Exemption`
-    : 'Standard';
+  const toleranceBasis = isExcess
+    ? 'No Tolerance on Excess'
+    : (shortageMtRaw >= 1.5 ? 'Shortage ≥ 1.5 MT (Full Chargeable)' : (isPolicyActive && contractMt > 0 ? `${activePct}% Sauda Exemption` : 'Standard'));
 
-  const minAcceptableMt = Math.max(0, contractMt - toleranceMt);
-  const maxAcceptableMt = contractMt + toleranceMt;
-  const minAcceptableQtl = Math.max(0, contractQtl - toleranceQtl);
-  const maxAcceptableQtl = contractQtl + toleranceQtl;
+  const minAcceptableMt = Math.max(0, contractMt - (shortageMtRaw >= 1.5 ? 0 : rawShortToleranceMt));
+  const maxAcceptableMt = contractMt;
+  const minAcceptableQtl = minAcceptableMt * 10;
+  const maxAcceptableQtl = maxAcceptableMt * 10;
 
-  const isWithinTolerance = contractMt > 0 && receivedMt >= (minAcceptableMt - 0.0001) && receivedMt <= (maxAcceptableMt + 0.0001);
-  const isOverDelivery = contractMt > 0 && receivedMt > (maxAcceptableMt + 0.0001);
-  const isUnderDelivery = contractMt > 0 && receivedMt > 0 && receivedMt < (minAcceptableMt - 0.0001);
+  const isWithinTolerance = contractMt > 0 && receivedMt > 0 && !isExcess && (
+    Math.abs(receivedMt - contractMt) <= 0.0001 ||
+    (isShortageUnder1_5Mt && shortageMtRaw <= (rawShortToleranceMt + 0.0001))
+  );
+  const isOverDelivery = contractMt > 0 && isExcess;
+  const isUnderDelivery = contractMt > 0 && receivedMt > 0 && !isWithinTolerance && receivedMt < (contractMt - 0.0001);
 
-  const excessOverToleranceMt = isOverDelivery ? Math.max(0, receivedMt - maxAcceptableMt) : 0;
-  const excessOverToleranceQtl = isOverDelivery ? Math.max(0, receivedQtl - maxAcceptableQtl) : 0;
-  const excessOverContractMt = receivedMt > contractMt ? Math.max(0, receivedMt - contractMt) : 0;
-  const excessOverContractQtl = receivedQtl > contractQtl ? Math.max(0, receivedQtl - contractQtl) : 0;
-  const shortUnderToleranceMt = isUnderDelivery ? Math.max(0, minAcceptableMt - receivedMt) : 0;
-  const shortUnderToleranceQtl = isUnderDelivery ? Math.max(0, minAcceptableQtl - receivedQtl) : 0;
+  const excessOverContractMt = isOverDelivery ? Math.max(0, Math.round((receivedMt - contractMt) * 1000) / 1000) : 0;
+  const excessOverContractQtl = Math.round(excessOverContractMt * 10 * 100) / 100;
+  // Since 3% tolerance is not applied to excess, excessOverTolerance equals excessOverContract
+  const excessOverToleranceMt = excessOverContractMt;
+  const excessOverToleranceQtl = excessOverContractQtl;
 
-  // Deductible Quantity = Excess/Short Difference − Allowed Tolerance
-  // Deduct only the quantity exceeding the allowed tolerance
-  const deductibleQtyQtl = isWithinTolerance 
-    ? 0 
-    : Math.max(0, absDiffQtl - toleranceQtl);
-  const deductibleQtyMt = deductibleQtyQtl / 10;
+  const shortUnderToleranceMt = isUnderDelivery
+    ? (shortageMtRaw >= 1.5
+        ? Math.max(0, Math.round(shortageMtRaw * 1000) / 1000)
+        : Math.max(0, Math.round((shortageMtRaw - rawShortToleranceMt) * 1000) / 1000))
+    : 0;
+  const shortUnderToleranceQtl = Math.round(shortUnderToleranceMt * 10 * 100) / 100;
+
+  // Deductible Quantity:
+  // - Excess: full excess over contract (no 3% tolerance)
+  // - Shortage < 1.5 MT: shortage exceeding 3% tolerance
+  // - Shortage >= 1.5 MT: full shortage
+  const deductibleQtyMt = isWithinTolerance
+    ? 0
+    : (isOverDelivery ? excessOverContractMt : shortUnderToleranceMt);
+  const deductibleQtyQtl = Math.round(deductibleQtyMt * 10 * 100) / 100;
 
   let policyStatus: 'Within Tolerance – No Deduction' | 'Excess Deduction' | 'Short Deduction' | 'Pending Arrival' = 'Pending Arrival';
   if (contractMt === 0 || receivedMt === 0) {
@@ -184,9 +205,11 @@ export function calculateWeightTolerance(
   if (receivedMt <= 0) {
     excessShortLabel = '-';
   } else if (isWithinTolerance) {
-    excessShortLabel = `Tolerable (±${toleranceMt.toFixed(3)} MT)`;
+    excessShortLabel = shortageMtRaw > 0.0001
+      ? `Tolerable (-${shortageMtRaw.toFixed(3)} MT ≤ 3%)`
+      : 'Exact (0.00 MT)';
   } else if (isOverDelivery) {
-    excessShortLabel = `+${excessOverToleranceMt.toFixed(3)} MT Excess`;
+    excessShortLabel = `+${excessOverContractMt.toFixed(3)} MT Excess`;
   } else if (isUnderDelivery) {
     excessShortLabel = `-${shortUnderToleranceMt.toFixed(3)} MT Short`;
   }
@@ -222,8 +245,8 @@ export function calculateWeightTolerance(
     maxAcceptableQtl,
     excessOverToleranceMt,
     excessOverToleranceQtl,
-    excessMt: excessOverToleranceMt,
-    excessQtl: excessOverToleranceQtl,
+    excessMt: excessOverContractMt,
+    excessQtl: excessOverContractQtl,
     excessOverContractMt,
     excessOverContractQtl,
     shortUnderToleranceMt,
@@ -240,17 +263,23 @@ export function calculateWeightTolerance(
     isOverDelivery,
     status,
     statusLabel,
-    formattedTolerance: `±${toleranceQtl.toFixed(2)} Qtl (${toleranceMt.toFixed(3)} MT)`,
+    formattedTolerance: isOverDelivery
+      ? '0.00 Qtl (No Excess Tolerance)'
+      : `-${(rawShortToleranceQtl(rawShortToleranceMt)).toFixed(2)} Qtl (${rawShortToleranceMt.toFixed(3)} MT, < 1.5 MT Short Only)`,
     formattedRange: `${minAcceptableQtl.toFixed(2)} – ${maxAcceptableQtl.toFixed(2)} Qtl (${minAcceptableMt.toFixed(3)} – ${maxAcceptableMt.toFixed(3)} MT)`,
     excessShortLabel
   };
+}
+
+function rawShortToleranceQtl(mt: number): number {
+  return mt * 10;
 }
 
 /**
  * Penalty calculation on Excess Quantity:
  * Based on Sauda Date (P.O Date) TD5 base rate and Last MR / Arrival Date TD5 base rate:
  * - If Arrival/Last MR Date Rate >= Sauda Date Rate: Do NOT deduct (₹0, Applicable for Sauda).
- * - If Sauda Date Rate > Arrival/Last MR Date Rate: Deduct (Sauda Date Rate − Arrival Date Rate) * Excess Quantity (in Quintals).
+ * - If Sauda Date Rate > Arrival/Last MR Date Rate: Deduct (Sauda Date Rate − Arrival Date Rate) * Excess Quantity (in kg).
  */
 export function calculateExcessPenalty(
   excessQtl: number,
@@ -268,7 +297,8 @@ export function calculateExcessPenalty(
   const aRate = Math.max(0, Number(arrivalTd5BaseRate) || 0);
   const rateDifference = sRate > aRate ? (sRate - aRate) : 0;
   const eq = Math.max(0, Number(excessQtl) || 0);
-  const penaltyAmount = Math.round(rateDifference * eq * 100) / 100;
+  const excessKg = Math.round(eq * 100);
+  const penaltyAmount = Math.round(rateDifference * excessKg * 100) / 100;
   return {
     saudaTd5BaseRate: sRate,
     arrivalTd5BaseRate: aRate,
@@ -277,6 +307,6 @@ export function calculateExcessPenalty(
     penaltyAmount,
     formula: aRate >= sRate
       ? `Last MR Rate (₹${aRate.toLocaleString()}) ≥ Sauda Rate (₹${sRate.toLocaleString()}) → Applicable for Sauda (₹0 Deduction)`
-      : `(Sauda Rate ₹${sRate.toLocaleString()} − Last MR Rate ₹${aRate.toLocaleString()}) = ₹${rateDifference.toLocaleString()}/Qtl × ${eq.toFixed(2)} Qtl = ₹${penaltyAmount.toLocaleString()}`
+      : `(Sauda Rate ₹${sRate.toLocaleString()} − Last MR Rate ₹${aRate.toLocaleString()}) = ₹${rateDifference.toLocaleString()} × ${excessKg.toLocaleString()} kg = ₹${penaltyAmount.toLocaleString()}`
   };
 }
