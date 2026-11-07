@@ -2851,10 +2851,12 @@ export function useSettlementWorkflow({ onClose, onLogEvent }: { onClose?: () =>
       ? Math.round(totalArrWeightQtl * poDeliveryPenaltyRate * deliveryDelayDays)
       : 0;
 
-    // Delivery Claim in Grade-wise summary panel: auto-calculated penalty unless manually set
-    const deliveryClaimAmt = (masterData.summary_delivery_claim !== undefined && masterData.summary_delivery_claim !== null && masterData.summary_delivery_claim !== 0 && Number(masterData.summary_delivery_claim) !== 5550)
-      ? Number(masterData.summary_delivery_claim)
-      : autoDeliveryClaimAmt;
+    // Delivery Claim in Grade-wise summary panel: auto-calculated penalty unless manually set; 0 if PO penalty rate is 0
+    const deliveryClaimAmt = (poDeliveryPenaltyRate === 0)
+      ? 0
+      : ((masterData.summary_delivery_claim !== undefined && masterData.summary_delivery_claim !== null && masterData.summary_delivery_claim !== 0 && Number(masterData.summary_delivery_claim) !== 5550)
+          ? Number(masterData.summary_delivery_claim)
+          : autoDeliveryClaimAmt);
 
     // 1. Grand Total = Sum of Gross Column Values from active visible columns (matching Grand Total card)
     const grandTotal = visibleSpecCols.reduce((sum, idx) => sum + getColAmount(detailCols[idx - 1]), 0);
@@ -2966,9 +2968,11 @@ export function useSettlementWorkflow({ onClose, onLogEvent }: { onClose?: () =>
       const nextActualApmcFees = calculatedApmcFees;
       const targetRateAffCdCl = prev.summary_rate_aff_cd_cl > 0 ? prev.summary_rate_aff_cd_cl : nextRatePerMt;
 
-      const targetDeliveryClaim = (prev.summary_delivery_claim !== undefined && prev.summary_delivery_claim !== null && prev.summary_delivery_claim !== 0 && Number(prev.summary_delivery_claim) !== 5550)
-        ? Number(prev.summary_delivery_claim)
-        : autoDeliveryClaimAmt;
+      const targetDeliveryClaim = (poDeliveryPenaltyRate === 0)
+        ? 0
+        : ((prev.summary_delivery_claim !== undefined && prev.summary_delivery_claim !== null && prev.summary_delivery_claim !== 0 && Number(prev.summary_delivery_claim) !== 5550)
+            ? Number(prev.summary_delivery_claim)
+            : autoDeliveryClaimAmt);
 
       if (
         prev.summary_material_value !== calculatedMaterialValue ||

@@ -121,10 +121,9 @@ export const SettlementValuationCard: React.FC<SettlementValuationCardProps> = (
               aria-label="Delivery Claim (-)"
               type="number"
               step="0.01"
-              readOnly
-              disabled
-              className="bg-slate-100 border border-slate-300 rounded-md px-2 py-1 h-7 text-right font-mono font-bold text-xs text-[#991b1b] shadow-2xs cursor-not-allowed w-full"
+              className="bg-white border border-slate-300 focus:border-red-500 focus:ring-1 focus:ring-red-200 rounded-md px-2 py-1 h-7 text-right font-mono font-bold text-xs text-[#991b1b] shadow-2xs w-full"
               value={masterData.summary_delivery_claim !== undefined && masterData.summary_delivery_claim !== null ? masterData.summary_delivery_claim : (autoDeliveryPenalty || "")}
+              onChange={(e) => handleMasterChange("summary_delivery_claim", e.target.value === "" ? 0 : Number(e.target.value))}
             />
           </div>
 
