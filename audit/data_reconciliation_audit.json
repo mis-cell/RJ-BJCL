@@ -1,0 +1,743 @@
+[
+  {
+    "tableName": "agency_master",
+    "rowCount": 554,
+    "primaryKey": "id",
+    "dateColumns": [],
+    "hasDate": false,
+    "earliestDate": null,
+    "latestDate": null
+  },
+  {
+    "tableName": "amad_change_history",
+    "rowCount": 1731,
+    "primaryKey": "id",
+    "dateColumns": [
+      "timestamp"
+    ],
+    "hasDate": true,
+    "earliestDate": "2026-04-01",
+    "latestDate": "2026-10-31"
+  },
+  {
+    "tableName": "app_audit_logs",
+    "rowCount": 11383,
+    "primaryKey": "id",
+    "dateColumns": [
+      "timestamp",
+      "created_at"
+    ],
+    "hasDate": true,
+    "earliestDate": "2026-05-13",
+    "latestDate": "2026-11-10"
+  },
+  {
+    "tableName": "area_master",
+    "rowCount": 13,
+    "primaryKey": "id",
+    "dateColumns": [],
+    "hasDate": false,
+    "earliestDate": null,
+    "latestDate": null
+  },
+  {
+    "tableName": "batch_master",
+    "rowCount": 36,
+    "primaryKey": "code",
+    "dateColumns": [
+      "created_at"
+    ],
+    "hasDate": true,
+    "earliestDate": null,
+    "latestDate": null
+  },
+  {
+    "tableName": "broker_master",
+    "rowCount": 291,
+    "primaryKey": "id",
+    "dateColumns": [
+      "created_at"
+    ],
+    "hasDate": true,
+    "earliestDate": null,
+    "latestDate": null
+  },
+  {
+    "tableName": "clubbed_pomr",
+    "rowCount": 35,
+    "primaryKey": "id",
+    "dateColumns": [
+      "clubbed_at",
+      "created_at",
+      "unclubbed_at"
+    ],
+    "hasDate": true,
+    "earliestDate": "2026-10-08",
+    "latestDate": "2026-10-27"
+  },
+  {
+    "tableName": "customer_master",
+    "rowCount": 15,
+    "primaryKey": "id,contact_number",
+    "dateColumns": [
+      "created_at"
+    ],
+    "hasDate": true,
+    "earliestDate": null,
+    "latestDate": null
+  },
+  {
+    "tableName": "deduction_master",
+    "rowCount": 16,
+    "primaryKey": "id",
+    "dateColumns": [
+      "created_at"
+    ],
+    "hasDate": true,
+    "earliestDate": null,
+    "latestDate": null
+  },
+  {
+    "tableName": "department_master",
+    "rowCount": 14,
+    "primaryKey": "dept_code",
+    "dateColumns": [
+      "created_at"
+    ],
+    "hasDate": true,
+    "earliestDate": null,
+    "latestDate": null
+  },
+  {
+    "tableName": "final_arrival",
+    "rowCount": 997,
+    "primaryKey": "final_arrival_id",
+    "dateColumns": [
+      "temporary_arrival_date",
+      "final_arrival_date",
+      "date",
+      "po_date",
+      "challan_rr_date",
+      "consignment_note_date",
+      "di_date",
+      "invoice_date",
+      "way_bill_date",
+      "mr_date",
+      "unloading_date",
+      "created_at",
+      "lorry_date",
+      "part_date",
+      "arrival_date"
+    ],
+    "hasDate": true,
+    "earliestDate": "2026-04-01",
+    "latestDate": "2026-10-31"
+  },
+  {
+    "tableName": "financial_year_master",
+    "rowCount": 2,
+    "primaryKey": "year_code",
+    "dateColumns": [
+      "start_date",
+      "end_date"
+    ],
+    "hasDate": true,
+    "earliestDate": "2025-04-01",
+    "latestDate": "2027-03-31"
+  },
+  {
+    "tableName": "godown_audit",
+    "rowCount": 3,
+    "primaryKey": "id",
+    "dateColumns": [
+      "timestamp"
+    ],
+    "hasDate": true,
+    "earliestDate": null,
+    "latestDate": null
+  },
+  {
+    "tableName": "godown_master",
+    "rowCount": 29,
+    "primaryKey": "id",
+    "dateColumns": [],
+    "hasDate": false,
+    "earliestDate": null,
+    "latestDate": null
+  },
+  {
+    "tableName": "godown_wise_stock",
+    "rowCount": 55,
+    "primaryKey": "id",
+    "dateColumns": [
+      "stock_date",
+      "created_at"
+    ],
+    "hasDate": true,
+    "earliestDate": "2026-03-31",
+    "latestDate": "2026-07-18"
+  },
+  {
+    "tableName": "grade_master",
+    "rowCount": 174,
+    "primaryKey": "id",
+    "dateColumns": [],
+    "hasDate": false,
+    "earliestDate": null,
+    "latestDate": null
+  },
+  {
+    "tableName": "imap_emails",
+    "rowCount": 68,
+    "primaryKey": "id",
+    "dateColumns": [
+      "date",
+      "created_at"
+    ],
+    "hasDate": true,
+    "earliestDate": "2026-07-28",
+    "latestDate": "2026-10-10"
+  },
+  {
+    "tableName": "inspection_checklist_details",
+    "rowCount": 578,
+    "primaryKey": "id",
+    "dateColumns": [
+      "created_at"
+    ],
+    "hasDate": true,
+    "earliestDate": null,
+    "latestDate": null
+  },
+  {
+    "tableName": "inspection_details",
+    "rowCount": 574,
+    "primaryKey": "id",
+    "dateColumns": [
+      "created_at"
+    ],
+    "hasDate": true,
+    "earliestDate": null,
+    "latestDate": null
+  },
+  {
+    "tableName": "inspection_master",
+    "rowCount": 28,
+    "primaryKey": "mr_no",
+    "dateColumns": [
+      "mr_date",
+      "date",
+      "arrival_date",
+      "po_date",
+      "unloading_date",
+      "mill_po_date",
+      "created_at",
+      "updated_at",
+      "sent_settlement_date",
+      "mr_print_date",
+      "consignment_date"
+    ],
+    "hasDate": true,
+    "earliestDate": "2026-04-08",
+    "latestDate": "2026-05-15"
+  },
+  {
+    "tableName": "lorry_weighments",
+    "rowCount": 1113,
+    "primaryKey": "id",
+    "dateColumns": [
+      "created_at",
+      "updated_at"
+    ],
+    "hasDate": true,
+    "earliestDate": "2026-08-11",
+    "latestDate": "2026-11-04"
+  },
+  {
+    "tableName": "mail_logs",
+    "rowCount": 4,
+    "primaryKey": "id",
+    "dateColumns": [
+      "created_at"
+    ],
+    "hasDate": true,
+    "earliestDate": null,
+    "latestDate": null
+  },
+  {
+    "tableName": "marka_master",
+    "rowCount": 259,
+    "primaryKey": "id",
+    "dateColumns": [],
+    "hasDate": false,
+    "earliestDate": null,
+    "latestDate": null
+  },
+  {
+    "tableName": "material_inspection",
+    "rowCount": 997,
+    "primaryKey": "mr_no",
+    "dateColumns": [
+      "mr_date",
+      "date",
+      "arrival_date",
+      "po_date",
+      "unloading_date",
+      "mill_po_date",
+      "created_at",
+      "updated_at",
+      "sent_settlement_date",
+      "mr_print_date",
+      "consignment_date"
+    ],
+    "hasDate": true,
+    "earliestDate": "2026-04-01",
+    "latestDate": "2026-10-31"
+  },
+  {
+    "tableName": "material_inspection_deductions",
+    "rowCount": 494,
+    "primaryKey": "id",
+    "dateColumns": [
+      "created_at",
+      "mr_date",
+      "po_date",
+      "arrival_date",
+      "updated_at"
+    ],
+    "hasDate": true,
+    "earliestDate": "2026-08-01",
+    "latestDate": "2026-08-31"
+  },
+  {
+    "tableName": "material_inspection_details",
+    "rowCount": 470,
+    "primaryKey": "id",
+    "dateColumns": [
+      "created_at"
+    ],
+    "hasDate": true,
+    "earliestDate": null,
+    "latestDate": null
+  },
+  {
+    "tableName": "material_mismatch",
+    "rowCount": 3,
+    "primaryKey": "id",
+    "dateColumns": [
+      "created_at"
+    ],
+    "hasDate": true,
+    "earliestDate": "2026-09-04",
+    "latestDate": "2026-10-07"
+  },
+  {
+    "tableName": "mill_inspection_deduction",
+    "rowCount": 495,
+    "primaryKey": "id",
+    "dateColumns": [
+      "mr_date",
+      "po_date",
+      "arrival_date",
+      "created_at",
+      "updated_at"
+    ],
+    "hasDate": true,
+    "earliestDate": "2026-08-01",
+    "latestDate": "2026-09-11"
+  },
+  {
+    "tableName": "mill_inspection_detail",
+    "rowCount": 178,
+    "primaryKey": "id",
+    "dateColumns": [
+      "created_at"
+    ],
+    "hasDate": true,
+    "earliestDate": null,
+    "latestDate": null
+  },
+  {
+    "tableName": "mill_inspection_master",
+    "rowCount": 14,
+    "primaryKey": "mr_no",
+    "dateColumns": [
+      "mr_date",
+      "date",
+      "arrival_date",
+      "po_date",
+      "unloading_date",
+      "mill_po_date",
+      "created_at",
+      "updated_at",
+      "sent_settlement_date",
+      "mr_print_date",
+      "consignment_date"
+    ],
+    "hasDate": true,
+    "earliestDate": "2026-04-08",
+    "latestDate": "2026-05-15"
+  },
+  {
+    "tableName": "moisture_logic",
+    "rowCount": 6,
+    "primaryKey": "id",
+    "dateColumns": [
+      "created_at"
+    ],
+    "hasDate": true,
+    "earliestDate": null,
+    "latestDate": null
+  },
+  {
+    "tableName": "mr_settlement_detail",
+    "rowCount": 1839,
+    "primaryKey": "detail_id",
+    "dateColumns": [],
+    "hasDate": false,
+    "earliestDate": null,
+    "latestDate": null
+  },
+  {
+    "tableName": "mr_settlement_master",
+    "rowCount": 844,
+    "primaryKey": "settlement_id",
+    "dateColumns": [
+      "sett_date",
+      "po_date",
+      "arrival_date",
+      "payable_bill_date",
+      "created_at",
+      "last_printed_at"
+    ],
+    "hasDate": true,
+    "earliestDate": "2026-04-01",
+    "latestDate": "2026-10-30"
+  },
+  {
+    "tableName": "payment_details",
+    "rowCount": 1747,
+    "primaryKey": "detail_id",
+    "dateColumns": [
+      "bill_date",
+      "created_at"
+    ],
+    "hasDate": true,
+    "earliestDate": null,
+    "latestDate": null
+  },
+  {
+    "tableName": "payment_master",
+    "rowCount": 867,
+    "primaryKey": "payment_id",
+    "dateColumns": [
+      "payment_date",
+      "po_date",
+      "sett_date",
+      "arrival_date",
+      "payable_bill_date",
+      "created_at"
+    ],
+    "hasDate": true,
+    "earliestDate": "2026-04-08",
+    "latestDate": "2027-01-28"
+  },
+  {
+    "tableName": "purchase_detail_master",
+    "rowCount": 38,
+    "primaryKey": "item_id",
+    "dateColumns": [],
+    "hasDate": false,
+    "earliestDate": null,
+    "latestDate": null
+  },
+  {
+    "tableName": "purchase_master",
+    "rowCount": 19,
+    "primaryKey": "po_id",
+    "dateColumns": [
+      "po_date",
+      "delivery_from",
+      "delivery_to",
+      "contract_date",
+      "s_date",
+      "created_at"
+    ],
+    "hasDate": true,
+    "earliestDate": "2026-08-01",
+    "latestDate": "2026-11-10"
+  },
+  {
+    "tableName": "return_lorry",
+    "rowCount": 16,
+    "primaryKey": "id",
+    "dateColumns": [
+      "created_at"
+    ],
+    "hasDate": true,
+    "earliestDate": "2026-07-18",
+    "latestDate": "2026-11-10"
+  },
+  {
+    "tableName": "satta_base_rate_audit_logs",
+    "rowCount": 47,
+    "primaryKey": "id",
+    "dateColumns": [
+      "changed_date",
+      "created_at",
+      "approved_at"
+    ],
+    "hasDate": true,
+    "earliestDate": "2026-09-23",
+    "latestDate": "2026-11-03"
+  },
+  {
+    "tableName": "satta_base_rates",
+    "rowCount": 222,
+    "primaryKey": "id",
+    "dateColumns": [
+      "start_date",
+      "created_at",
+      "updated_at",
+      "approved_at"
+    ],
+    "hasDate": true,
+    "earliestDate": "2026-04-01",
+    "latestDate": "2026-11-03"
+  },
+  {
+    "tableName": "satta_calculated_rates",
+    "rowCount": 8881,
+    "primaryKey": "id",
+    "dateColumns": [
+      "start_date",
+      "created_at"
+    ],
+    "hasDate": true,
+    "earliestDate": "2026-04-01",
+    "latestDate": "2026-11-03"
+  },
+  {
+    "tableName": "satta_differential_audit_logs",
+    "rowCount": 10,
+    "primaryKey": "id",
+    "dateColumns": [
+      "changed_date",
+      "created_at"
+    ],
+    "hasDate": true,
+    "earliestDate": "2026-09-27",
+    "latestDate": "2026-11-02"
+  },
+  {
+    "tableName": "satta_differentials",
+    "rowCount": 125,
+    "primaryKey": "id",
+    "dateColumns": [
+      "created_at"
+    ],
+    "hasDate": true,
+    "earliestDate": null,
+    "latestDate": null
+  },
+  {
+    "tableName": "satta_mismatch",
+    "rowCount": 2,
+    "primaryKey": "id",
+    "dateColumns": [
+      "created_at",
+      "approved_at"
+    ],
+    "hasDate": true,
+    "earliestDate": "2026-10-07",
+    "latestDate": "2026-10-07"
+  },
+  {
+    "tableName": "sauda_approval_history",
+    "rowCount": 112,
+    "primaryKey": "id",
+    "dateColumns": [
+      "created_at"
+    ],
+    "hasDate": true,
+    "earliestDate": null,
+    "latestDate": null
+  },
+  {
+    "tableName": "sauda_check_point",
+    "rowCount": 814,
+    "primaryKey": "po_id",
+    "dateColumns": [
+      "po_date",
+      "delivery_from",
+      "delivery_to",
+      "contract_date",
+      "s_date",
+      "created_at"
+    ],
+    "hasDate": true,
+    "earliestDate": "2026-04-01",
+    "latestDate": "2026-11-21"
+  },
+  {
+    "tableName": "sauda_check_point_deductions",
+    "rowCount": 739,
+    "primaryKey": "id",
+    "dateColumns": [
+      "last_arrival_date",
+      "created_at",
+      "updated_at"
+    ],
+    "hasDate": true,
+    "earliestDate": "2026-04-01",
+    "latestDate": "2026-10-28"
+  },
+  {
+    "tableName": "sauda_check_point_details",
+    "rowCount": 2950,
+    "primaryKey": "item_id",
+    "dateColumns": [],
+    "hasDate": false,
+    "earliestDate": null,
+    "latestDate": null
+  },
+  {
+    "tableName": "sauda_master",
+    "rowCount": 13,
+    "primaryKey": "sauda_id",
+    "dateColumns": [
+      "date",
+      "shipment_date",
+      "b_date",
+      "created_at",
+      "rejected_at",
+      "approved_at",
+      "checked_at",
+      "submitted_at",
+      "last_updated_at"
+    ],
+    "hasDate": true,
+    "earliestDate": "2026-10-09",
+    "latestDate": "2026-11-25"
+  },
+  {
+    "tableName": "sauda_quality_details",
+    "rowCount": 60,
+    "primaryKey": "detail_id",
+    "dateColumns": [],
+    "hasDate": false,
+    "earliestDate": null,
+    "latestDate": null
+  },
+  {
+    "tableName": "settlement_print_history",
+    "rowCount": 94,
+    "primaryKey": "id",
+    "dateColumns": [
+      "printed_at"
+    ],
+    "hasDate": true,
+    "earliestDate": null,
+    "latestDate": null
+  },
+  {
+    "tableName": "sms_sauda",
+    "rowCount": 2,
+    "primaryKey": "id",
+    "dateColumns": [
+      "date",
+      "shipment_date",
+      "b_date",
+      "created_at",
+      "marked_at"
+    ],
+    "hasDate": true,
+    "earliestDate": "2026-07-07",
+    "latestDate": "2026-07-07"
+  },
+  {
+    "tableName": "supply_master",
+    "rowCount": 1381,
+    "primaryKey": "id",
+    "dateColumns": [
+      "created_at"
+    ],
+    "hasDate": true,
+    "earliestDate": null,
+    "latestDate": null
+  },
+  {
+    "tableName": "temporary_material_received",
+    "rowCount": 1385,
+    "primaryKey": "amad_id",
+    "dateColumns": [
+      "date",
+      "lorry_date",
+      "di_date",
+      "invoice_date",
+      "way_bill_date",
+      "created_at"
+    ],
+    "hasDate": true,
+    "earliestDate": "2026-04-01",
+    "latestDate": "2026-10-31"
+  },
+  {
+    "tableName": "tolerance_policy",
+    "rowCount": 78,
+    "primaryKey": "id",
+    "dateColumns": [
+      "created_at",
+      "updated_at"
+    ],
+    "hasDate": true,
+    "earliestDate": null,
+    "latestDate": null
+  },
+  {
+    "tableName": "tolerance_policy_master",
+    "rowCount": 79,
+    "primaryKey": "id",
+    "dateColumns": [
+      "created_at",
+      "updated_at"
+    ],
+    "hasDate": true,
+    "earliestDate": null,
+    "latestDate": null
+  },
+  {
+    "tableName": "unit_master",
+    "rowCount": 5,
+    "primaryKey": "id",
+    "dateColumns": [
+      "created_at"
+    ],
+    "hasDate": true,
+    "earliestDate": null,
+    "latestDate": null
+  },
+  {
+    "tableName": "user_activity_logs",
+    "rowCount": 42135,
+    "primaryKey": "log_id",
+    "dateColumns": [
+      "created_at"
+    ],
+    "hasDate": true,
+    "earliestDate": "2026-05-13",
+    "latestDate": "2026-11-10"
+  },
+  {
+    "tableName": "user_master",
+    "rowCount": 10,
+    "primaryKey": "user_id",
+    "dateColumns": [
+      "created_at",
+      "last_login"
+    ],
+    "hasDate": true,
+    "earliestDate": null,
+    "latestDate": null
+  }
+]

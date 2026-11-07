@@ -10,7 +10,8 @@ git pull origin main
 echo "📦 [2/5] Installing dependencies..."
 npm install
 
-echo "🔄 [3/5] Syncing pending 'temporary_material_received' records (1,398 rows)..."
+echo "🔄 [3/5] Checking and reconciling database tables..."
+npm run reconcile:database || true
 if [ -f "sync_pending_temporary_arrival.sh" ]; then
     bash sync_pending_temporary_arrival.sh || true
 fi
