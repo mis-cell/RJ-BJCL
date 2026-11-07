@@ -13,7 +13,8 @@
     "test:database": "tsx audit/database-test.ts",
     "test:performance": "tsx audit/performance-test.ts",
     "migrate:local": "tsx backend/migrate_to_local.ts",
-    "reconcile:database": "tsx scripts/reconcile_database.ts"
+    "reconcile:database": "tsx scripts/reconcile_database.ts",
+    "sync:supabase-to-local": "tsx scripts/replace_local_with_supabase.ts"
   },
   "dependencies": {
     "@google/genai": "^1.52.0",
