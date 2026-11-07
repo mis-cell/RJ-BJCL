@@ -1155,20 +1155,20 @@ export function useMaterialInspectionLogic(onLogEvent?: (event: string, details:
         arrival_no: safeRenderText(voucher.temporary_arrival_no || voucher.arrival_no || voucher.amad_no || prev.arrival_no, ""),
         arrival_date: safeRenderText(voucherArrivalDate, ""),
         unloading_date: safeRenderText(voucherUnloadingDate, ""),
-        consignment_date: safeRenderText(voucher.consignment_date || voucher.date || voucher.arrival_date || prev.consignment_date, ""),
-        mr_print_date: safeRenderText(voucher.mr_print_date || voucher.date || prev.mr_print_date, ""),
-        po_no: safeRenderText(selectedPoNo || prev.po_no, ""),
-        po_date: safeRenderText(voucher.mill_po_date || voucher.po_date || voucher.lorry_date || voucher.date || prev.po_date, ""),
+        consignment_date: safeRenderText(voucher.consignment_date || voucher.date || voucher.arrival_date || "", ""),
+        mr_print_date: safeRenderText(voucher.mr_print_date || voucher.date || "", ""),
+        po_no: safeRenderText(selectedPoNo, ""),
+        po_date: safeRenderText(voucher.mill_po_date || voucher.po_date || voucher.lorry_date || voucher.date || "", ""),
         broker_name: safeRenderText(
-          voucher.broker_name || voucher.broker || prev.broker_name || "",
+          voucher.broker_name || voucher.broker || "",
           ""
         ).toUpperCase(),
         supplier_name: safeRenderText(
-          voucher.supplier_name || voucher.supplier || prev.supplier_name || "",
+          voucher.supplier_name || voucher.supplier || "",
           ""
         ).toUpperCase(),
-        lorry_number: safeRenderText(voucher.lorry_number || voucher.lorry_no || voucher.vehicle_no || prev.lorry_number, ""),
-        remarks: safeRenderText(voucher.remarks || prev.remarks, ""),
+        lorry_number: safeRenderText(voucher.lorry_number || voucher.lorry_no || voucher.vehicle_no || "", ""),
+        remarks: safeRenderText(voucher.remarks || "", ""),
         arival_apmc_fees: Number(voucher.apmc_fees || 0),
       };
     });

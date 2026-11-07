@@ -877,23 +877,23 @@ export function useInspectionLogic() {
         clmMoist = calculateClaimMoisture(actMoist, arrDate, resolvedArea, moistureLogicRules);
       }
 
-      // 1. Update Header Form with full details from the selected arrival
+      // 1. Update Header Form with full details from the selected arrival (do not leak prev form PO/dates)
       setHeaderForm(prev => {
         const next: InspectionMasterRecord = {
           ...prev,
-          mr_no: arrNo || prev.mr_no,
+          mr_no: arrNo || "",
           arrival_no: arrNo,
           arrival_date: arrDate,
-          po_no: fa.po_no || prev.po_no,
+          po_no: fa.po_no || "",
           mr_date: arrDate,
-          po_date: sanitizeDate(fa.po_date || fa.date) || prev.po_date,
-          supplier_name: fa.supplier || fa.challan_supplier || fa.supplier_name || prev.supplier_name,
-          broker_name: fa.broker || fa.broker_name || prev.broker_name,
-          lorry_number: fa.lorry_number || fa.lorry_no || prev.lorry_number,
-          arrival_area: resolvedArea || prev.arrival_area,
-          arrival_area_name: resolvedArea || prev.arrival_area_name,
+          po_date: sanitizeDate(fa.po_date || fa.date) || "",
+          supplier_name: fa.supplier || fa.challan_supplier || fa.supplier_name || "",
+          broker_name: fa.broker || fa.broker_name || "",
+          lorry_number: fa.lorry_number || fa.lorry_no || "",
+          arrival_area: resolvedArea || "",
+          arrival_area_name: resolvedArea || "",
           unit_name: resolvedUnit,
-          unloading_date: sanitizeDate(fa.unloading_date || fa.arrival_date || fa.date) || prev.unloading_date,
+          unloading_date: sanitizeDate(fa.unloading_date || fa.arrival_date || fa.date) || "",
           actual_moisture: actMoist,
           claim_moisture: clmMoist,
           actual_dust: actDust,
@@ -901,9 +901,9 @@ export function useInspectionLogic() {
           actual_ncv: actNcv,
           claim_ncv: clmNcv,
           detention_days: detDays,
-          mr_spcl_print: fa.mr_spcl_print || prev.mr_spcl_print || "",
-          remarks: fa.remarks || prev.remarks || "",
-          arival_apmc_fees: Number(fa.apmc_fees ?? fa.arival_apmc_fees ?? prev.arival_apmc_fees ?? 0)
+          mr_spcl_print: fa.mr_spcl_print || "",
+          remarks: fa.remarks || "",
+          arival_apmc_fees: Number(fa.apmc_fees ?? fa.arival_apmc_fees ?? 0)
         };
         return next;
       });
