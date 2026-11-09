@@ -2489,8 +2489,8 @@ export function useSettlementWorkflow({ onClose, onLogEvent }: { onClose?: () =>
                   merged.wt_quantity = Math.round(arrWtKg / merged.quantity);
                   merged.wt_phota = merged.wt_quantity;
                 }
-                // Preserve original PO rate from fallbackCol when available
-                if (fallbackCol.rate_value && Number(fallbackCol.rate_value) > 0) {
+                // Preserve saved rate_value from dbMatch when available; only fall back to fallbackCol if missing/0
+                if ((!merged.rate_value || Number(merged.rate_value) === 0) && fallbackCol.rate_value && Number(fallbackCol.rate_value) > 0) {
                   merged.rate_value = fallbackCol.rate_value;
                 }
                 // Robust Premium resolution: dbMatch -> fallbackCol -> matchedPayDetails -> existingMaster.summary_premium_amount -> calculatedPremRatePerQtl
@@ -2538,9 +2538,15 @@ export function useSettlementWorkflow({ onClose, onLogEvent }: { onClose?: () =>
                 merged.deduction_rate = (dbMatch.deduction_rate !== undefined && Number(dbMatch.deduction_rate) > 0)
                   ? Number(dbMatch.deduction_rate)
                   : Number(fallbackCol.deduction_rate || 0);
-                merged.sett_rate = getEffectiveColSettRate(merged);
-                merged.quantity_qtl = Number((getColWtMt(merged) * 10).toFixed(2));
-                merged.amount = getColAmount(merged);
+                merged.sett_rate = (dbMatch.sett_rate !== undefined && Number(dbMatch.sett_rate) > 0)
+                  ? Number(dbMatch.sett_rate)
+                  : getEffectiveColSettRate(merged);
+                merged.quantity_qtl = (dbMatch.quantity_qtl !== undefined && Number(dbMatch.quantity_qtl) > 0)
+                  ? Number(dbMatch.quantity_qtl)
+                  : Number((getColWtMt(merged) * 10).toFixed(2));
+                merged.amount = (dbMatch.amount !== undefined && Number(dbMatch.amount) > 0)
+                  ? Number(dbMatch.amount)
+                  : getColAmount(merged);
                 return merged;
               }
               return fallbackCol;

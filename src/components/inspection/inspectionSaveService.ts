@@ -36,10 +36,18 @@ export async function saveInspectionRecordToDb(
     );
   }
 
-  const totalReceiptGrossMt = validDetails.reduce(
-    (sum, r) => sum + (Number(r.receipt_gross_wt) || Number(r.challan_gross_wt) || 0),
-    0
-  );
+  const totalReceiptGrossMt = Math.round(
+    validDetails.reduce(
+      (sum, r) => sum + (Number(r.challan_gross_wt) || Number(r.receipt_gross_wt) || 0),
+      0
+    ) * 1000
+  ) / 1000;
+  const totalFinalReceiptNetMt = Math.round(
+    validDetails.reduce(
+      (sum, r) => sum + (Number(r.final_receipt_wt) || Number(r.reduced_weight) || Number(r.challan_gross_wt) || Number(r.receipt_gross_wt) || 0),
+      0
+    ) * 1000
+  ) / 1000;
   const totalBalesCount = validDetails.reduce(
     (sum, r) => sum + (Number(r.quantity) || 0),
     0
@@ -78,6 +86,13 @@ export async function saveInspectionRecordToDb(
     broker_name: headerForm.broker_name || "",
     supplier_name: headerForm.supplier_name || "",
     lorry_number: headerForm.lorry_number || "",
+    challan_gross_wt: totalReceiptGrossMt,
+    receipt_gross_wt: totalReceiptGrossMt,
+    gross_weight: totalReceiptGrossMt,
+    final_receipt_wt: totalFinalReceiptNetMt,
+    total_final_receipt_wt: totalFinalReceiptNetMt,
+    reduced_weight: totalFinalReceiptNetMt,
+    total_packets: totalBalesCount,
     actual_moisture: savedHeaderActualMoisture,
     claim_moisture: savedHeaderClaimMoisture,
     actual_dust: Number(headerForm.actual_dust) || 0,

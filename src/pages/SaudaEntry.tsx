@@ -260,7 +260,7 @@ export default function SaudaEntry({
         }
         if (sattaDiffs) setDbDiffsList(sattaDiffs);
 
-        // Auto-generate next Order No. if creating new Sauda
+        // Auto-generate next Order No. if creating new Sauda and sauda_no has not been customized yet
         if (!initialData && allSaudas && allSaudas.length > 0) {
           const numbers = allSaudas.map((s: any) => {
             const str = String(s.sauda_no || '');
@@ -270,12 +270,16 @@ export default function SaudaEntry({
           });
           const maxNo = Math.max(...numbers, 152);
           const nextNoStr = String(maxNo + 1).padStart(4, '0');
-          const currentSession = formData.session || '2026-2027';
-          setFormData(prev => ({
-            ...prev,
-            sauda_no: `BJCL/${currentSession}/${nextNoStr}`,
-            session: currentSession
-          }));
+          setFormData(prev => {
+            const currentSession = prev.session || '2026-2027';
+            const isDefaultPlaceholder = !prev.sauda_no || prev.sauda_no === `BJCL/${currentSession}/0153`;
+            if (!isDefaultPlaceholder) return prev;
+            return {
+              ...prev,
+              sauda_no: `BJCL/${currentSession}/${nextNoStr}`,
+              session: currentSession
+            };
+          });
         }
       } catch (err) {
         console.error("Error loading master data:", err);

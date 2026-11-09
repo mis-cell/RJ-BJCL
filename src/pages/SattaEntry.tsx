@@ -313,7 +313,7 @@ export default function SattaEntry({ initialData, onSave, onCancel }: { initialD
           setDbDiffsList(differentialsResult.data || []);
         }
 
-        // Dynamic auto-increment for a new Satta entry
+        // Dynamic auto-increment for a new Satta entry (only if not yet customized by user)
         if (!initialData && allSattas && allSattas.length > 0) {
           let lastNum = 152;
           allSattas.forEach((s: any) => {
@@ -325,11 +325,15 @@ export default function SattaEntry({ initialData, onSave, onCancel }: { initialD
           });
           const nextNum = lastNum + 1;
           const formattedNum = String(nextNum).padStart(4, '0');
-          setFormData(prev => ({
-            ...prev,
-            satta_no: formattedNum,
-            session: `BJCL/2026-2027/${formattedNum}`
-          }));
+          setFormData(prev => {
+            const isDefaultPlaceholder = !prev.satta_no || prev.satta_no === '0153';
+            if (!isDefaultPlaceholder) return prev;
+            return {
+              ...prev,
+              satta_no: formattedNum,
+              session: `BJCL/2026-2027/${formattedNum}`
+            };
+          });
         }
       } catch(e) {
         console.error("Error loading Satta masters:", e);

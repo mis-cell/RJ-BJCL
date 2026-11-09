@@ -332,14 +332,38 @@ export const dbModule = {
       if (typeof maybeMaxRows === "number") maxRows = maybeMaxRows;
     }
 
+    const cloneRowsForCaller = (rows: any[]): any[] => {
+      if (!Array.isArray(rows)) return [];
+      return rows.map((row) => {
+        if (!row || typeof row !== "object") return row;
+        const copy: any = { ...row };
+        if (Array.isArray(copy.grid_details)) {
+          copy.grid_details = copy.grid_details.map((item: any) =>
+            item && typeof item === "object" ? { ...item } : item
+          );
+        }
+        if (Array.isArray(copy.details)) {
+          copy.details = copy.details.map((item: any) =>
+            item && typeof item === "object" ? { ...item } : item
+          );
+        }
+        if (Array.isArray(copy.items)) {
+          copy.items = copy.items.map((item: any) =>
+            item && typeof item === "object" ? { ...item } : item
+          );
+        }
+        return copy;
+      });
+    };
+
     const cacheKey = `all:${table}:${orderBy || "none"}:${ascending ?? true}:${maxRows}`;
     const cached = dataCache.get(cacheKey);
     if (cached && cached.expiry > Date.now()) {
-      return cached.data;
+      return cloneRowsForCaller(cached.data);
     }
 
     if (inFlightRequests.has(cacheKey)) {
-      return inFlightRequests.get(cacheKey)!;
+      return inFlightRequests.get(cacheKey)!.then((rows) => cloneRowsForCaller(rows));
     }
 
     const promise = (async () => {
@@ -378,12 +402,12 @@ export const dbModule = {
         }
 
         dataCache.set(cacheKey, {
-          data: allRows,
+          data: cloneRowsForCaller(allRows),
           expiry: Date.now() + 20000,
           table: table.toLowerCase(),
         });
 
-        return allRows;
+        return cloneRowsForCaller(allRows);
       } finally {
         inFlightRequests.delete(cacheKey);
       }

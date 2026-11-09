@@ -10,35 +10,42 @@
 
 BEGIN;
 
--- 1. Backfill top-level challan_gross_wt and final_receipt_wt on material_inspection from grid_details JSONB
-UPDATE material_inspection
+-- 1. Backfill top-level challan_gross_wt and final_receipt_wt on material_inspection from deduplicated grid_details JSONB
+--    Also repairs any row where final_receipt_wt > challan_gross_wt due to cumulative updates
+UPDATE material_inspection m
 SET
-  challan_gross_wt = COALESCE((
-    SELECT SUM(COALESCE(NULLIF(elem->>'challan_gross_wt', '')::numeric, 0))
-    FROM jsonb_array_elements(
-      CASE WHEN jsonb_typeof(grid_details::jsonb) = 'array' THEN grid_details::jsonb ELSE '[]'::jsonb END
+  challan_gross_wt = sub.sum_gross,
+  receipt_gross_wt = sub.sum_gross,
+  gross_weight = sub.sum_gross,
+  final_receipt_wt = sub.sum_net,
+  total_final_receipt_wt = sub.sum_net,
+  reduced_weight = sub.sum_net
+FROM (
+  SELECT
+    dedup.mr_no,
+    ROUND(COALESCE(SUM(dedup.g_wt), 0), 3) AS sum_gross,
+    ROUND(COALESCE(SUM(dedup.n_wt), 0), 3) AS sum_net
+  FROM (
+    SELECT DISTINCT ON (i.mr_no, COALESCE(elem->>'srl_no', elem->>'arrival_grade', elem::text))
+      i.mr_no,
+      COALESCE(NULLIF(regexp_replace(COALESCE(elem->>'challan_gross_wt', elem->>'receipt_gross_wt', '0'), '[^0-9.-]', '', 'g'), '')::numeric, 0) AS g_wt,
+      COALESCE(NULLIF(regexp_replace(COALESCE(elem->>'final_receipt_wt', elem->>'reduced_weight', '0'), '[^0-9.-]', '', 'g'), '')::numeric, 0) AS n_wt
+    FROM material_inspection i,
+    LATERAL jsonb_array_elements(
+      CASE WHEN jsonb_typeof(i.grid_details::jsonb) = 'array' THEN i.grid_details::jsonb ELSE '[]'::jsonb END
     ) AS elem
-  ), challan_gross_wt, 0),
-  receipt_gross_wt = COALESCE((
-    SELECT SUM(COALESCE(NULLIF(elem->>'challan_gross_wt', '')::numeric, 0))
-    FROM jsonb_array_elements(
-      CASE WHEN jsonb_typeof(grid_details::jsonb) = 'array' THEN grid_details::jsonb ELSE '[]'::jsonb END
-    ) AS elem
-  ), receipt_gross_wt, 0),
-  final_receipt_wt = COALESCE((
-    SELECT SUM(COALESCE(NULLIF(elem->>'final_receipt_wt', '')::numeric, NULLIF(elem->>'reduced_weight', '')::numeric, 0))
-    FROM jsonb_array_elements(
-      CASE WHEN jsonb_typeof(grid_details::jsonb) = 'array' THEN grid_details::jsonb ELSE '[]'::jsonb END
-    ) AS elem
-  ), final_receipt_wt, 0),
-  total_final_receipt_wt = COALESCE((
-    SELECT SUM(COALESCE(NULLIF(elem->>'final_receipt_wt', '')::numeric, NULLIF(elem->>'reduced_weight', '')::numeric, 0))
-    FROM jsonb_array_elements(
-      CASE WHEN jsonb_typeof(grid_details::jsonb) = 'array' THEN grid_details::jsonb ELSE '[]'::jsonb END
-    ) AS elem
-  ), total_final_receipt_wt, 0)
-WHERE grid_details IS NOT NULL
-  AND (COALESCE(challan_gross_wt, 0) = 0 OR COALESCE(final_receipt_wt, 0) = 0);
+    WHERE i.grid_details IS NOT NULL
+      AND (
+        COALESCE(i.challan_gross_wt, 0) <= 0
+        OR COALESCE(i.final_receipt_wt, 0) <= 0
+        OR COALESCE(i.final_receipt_wt, 0) > COALESCE(i.challan_gross_wt, 0) + 0.001
+      )
+  ) dedup
+  GROUP BY dedup.mr_no
+) sub
+WHERE m.mr_no = sub.mr_no
+  AND (sub.sum_gross > 0 OR sub.sum_net > 0);
+
 
 -- Ensure exact weights for MR00999, MR01037, MR01042
 UPDATE material_inspection

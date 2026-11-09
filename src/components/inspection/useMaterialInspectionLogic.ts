@@ -499,13 +499,13 @@ export function useMaterialInspectionLogic(onLogEvent?: (event: string, details:
           setUnitList(prev => Array.from(new Set([...fetchedUnits, ...prev])));
         }
         if (mL && mL.length > 0) {
-          setMoistureLogicRules(mL);
+          setMoistureLogicRules(prev => JSON.stringify(prev) === JSON.stringify(mL) ? prev : mL);
         }
 
         if (dData && Array.isArray(dData)) {
-          setDeductionMasterList(dData);
+          setDeductionMasterList(prev => JSON.stringify(prev) === JSON.stringify(dData) ? prev : dData);
         } else {
-          setDeductionMasterList([]);
+          setDeductionMasterList(prev => prev.length === 0 ? prev : []);
         }
       } else {
         const [b, s, g, ar, ag, m, av, dedList] = await Promise.all([
@@ -705,7 +705,7 @@ export function useMaterialInspectionLogic(onLogEvent?: (event: string, details:
 
         if (tempArrival && tempArrival.temporary_arrival_no) {
           setMasterData((prev) => {
-            if (prev.arrival_no !== tempArrival.temporary_arrival_no) {
+            if (!prev.arrival_no && !prev.mr_no && prev.arrival_no !== tempArrival.temporary_arrival_no) {
               return { ...prev, arrival_no: tempArrival.temporary_arrival_no };
             }
             return prev;
@@ -720,7 +720,7 @@ export function useMaterialInspectionLogic(onLogEvent?: (event: string, details:
 
           if (finalArrival && finalArrival.temporary_arrival_no) {
             setMasterData((prev) => {
-              if (prev.arrival_no !== finalArrival.temporary_arrival_no) {
+              if (!prev.arrival_no && !prev.mr_no && prev.arrival_no !== finalArrival.temporary_arrival_no) {
                 return { ...prev, arrival_no: finalArrival.temporary_arrival_no };
               }
               return prev;
@@ -1006,6 +1006,11 @@ export function useMaterialInspectionLogic(onLogEvent?: (event: string, details:
         supplier_name: safeRenderText(insp.supplier_name || (insp as any).supplier || "", "").toUpperCase(),
         lorry_number: safeRenderText(insp.lorry_number || (voucher as any)?.lorry_number || (voucher as any)?.lorry_no || (voucher as any)?.vehicle_no, ""),
       };
+      setOverriddenFields({
+        claim_moisture: insp.claim_moisture !== undefined && insp.claim_moisture !== null,
+        claim_dust: insp.claim_dust !== undefined && insp.claim_dust !== null,
+        claim_ncv: insp.claim_ncv !== undefined && insp.claim_ncv !== null,
+      });
       setMasterData(mappedInsp);
 
       const dedStr = (insp as any).deduction_type || "";

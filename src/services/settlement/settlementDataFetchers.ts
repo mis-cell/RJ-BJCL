@@ -408,10 +408,19 @@ export const fetchSaudaCheckpointDeduction = async (cleanPoNo: string) => {
     const reconcileAndNormalizeRecord = async (record: any) => {
       if (!record) return null;
       const updated = { ...record };
+
+      const savedRecMt = Number(updated.total_received_mt || 0);
+      const savedContractMt = Number(updated.contract_weight_mt || 0);
+      const isLockedRecord = String(updated.status || '').toLowerCase() === 'approved';
+      // Preserve locked/approved records that already have valid saved weights
+      if (isLockedRecord && savedRecMt > 0 && (savedContractMt <= 0 || savedRecMt <= savedContractMt * 3)) {
+        return updated;
+      }
+
       let changed = false;
 
-      // Reconcile against live arrivals/inspections if record appears stale (e.g. saved when fewer lorries had arrived)
-      if (supabase && Number(updated.contract_weight_mt) > 0) {
+      // Reconcile against live arrivals/inspections only when record has missing or corrupted weights
+      if (supabase && Number(updated.contract_weight_mt) > 0 && (savedRecMt <= 0 || savedRecMt > savedContractMt * 3)) {
         try {
           const [miRes, tmrRes, faRes] = await Promise.all([
             supabase.from('material_inspection').select('mr_no, arrival_no, final_arrival_no, date, mr_date, inspection_date, created_at, receipt_gross_wt, challan_gross_wt, gross_weight, total_final_receipt_wt, final_receipt_wt, weight_reduced, reduced_weight, electronic_net_weight, final_weight_mt, weight_qtl, weight, grid_details, details').ilike('po_no', `%${rawPoNo}%`).then(r => r.data || [], () => []),
@@ -419,24 +428,38 @@ export const fetchSaudaCheckpointDeduction = async (cleanPoNo: string) => {
             supabase.from('final_arrival').select('final_arrival_no, mr_no, arrival_no, date, arrival_date, created_at, weight_qtl, electronic_net_weight, challan_material_weight, weight').ilike('po_no', `%${rawPoNo}%`).then(r => r.data || [], () => [])
           ]);
 
-          const uniqueMrMap = new Map<string, any>();
-          (miRes || []).forEach((insp: any) => {
-            const num = String(insp.mr_no || insp.arrival_no || insp.final_arrival_no || '').trim();
-            if (num) uniqueMrMap.set(num.toUpperCase(), { mrNo: num, source: insp, date: insp.mr_date || insp.inspection_date || insp.date || insp.created_at || '' });
-          });
-          (tmrRes || []).forEach((ar: any) => {
-            const num = String(ar.temporary_arrival_no || ar.amad_no || ar.mr_no || ar.arrival_no || '').trim();
-            if (num && !uniqueMrMap.has(num.toUpperCase())) uniqueMrMap.set(num.toUpperCase(), { mrNo: num, source: ar, date: ar.arrival_date || ar.date || ar.created_at || '' });
-          });
-          (faRes || []).forEach((ar: any) => {
-            const num = String(ar.final_arrival_no || ar.mr_no || ar.arrival_no || '').trim();
-            if (num && !uniqueMrMap.has(num.toUpperCase())) uniqueMrMap.set(num.toUpperCase(), { mrNo: num, source: ar, date: ar.arrival_date || ar.date || ar.created_at || '' });
-          });
-
           const extractMrSeq = (mr: string): number => {
             const m = String(mr || '').trim().match(/(\d+)$/);
             return m ? parseInt(m[1], 10) : 0;
           };
+          const canonicalMrKey = (mr: string): string => {
+            const seq = extractMrSeq(mr);
+            return seq > 0 ? `MR_${seq}` : String(mr || '').trim().toUpperCase();
+          };
+
+          const uniqueMrMap = new Map<string, any>();
+          (miRes || []).forEach((insp: any) => {
+            const num = String(insp.mr_no || insp.arrival_no || insp.final_arrival_no || '').trim();
+            if (num) {
+              const key = canonicalMrKey(num);
+              const existing = uniqueMrMap.get(key);
+              if (!existing || (!existing.source?.grid_details && insp.grid_details)) {
+                uniqueMrMap.set(key, { mrNo: num, source: insp, date: insp.arrival_date || insp.mr_date || insp.inspection_date || insp.date || insp.created_at || '' });
+              }
+            }
+          });
+          (tmrRes || []).forEach((ar: any) => {
+            const num = String(ar.temporary_arrival_no || ar.amad_no || ar.mr_no || ar.arrival_no || '').trim();
+            if (num && !uniqueMrMap.has(canonicalMrKey(num))) {
+              uniqueMrMap.set(canonicalMrKey(num), { mrNo: num, source: ar, date: ar.arrival_date || ar.date || ar.created_at || '' });
+            }
+          });
+          (faRes || []).forEach((ar: any) => {
+            const num = String(ar.final_arrival_no || ar.mr_no || ar.arrival_no || '').trim();
+            if (num && !uniqueMrMap.has(canonicalMrKey(num))) {
+              uniqueMrMap.set(canonicalMrKey(num), { mrNo: num, source: ar, date: ar.arrival_date || ar.date || ar.created_at || '' });
+            }
+          });
 
           const mrEntries = Array.from(uniqueMrMap.values());
           // Sort by MR sequence to identify earlier lorries vs last lorry reliably
@@ -457,6 +480,7 @@ export const fetchSaudaCheckpointDeduction = async (cleanPoNo: string) => {
             let liveClaimSumMt = 0;
             mrEntries.forEach((entry, idx) => {
               const src = entry.source;
+              const mrKey = canonicalMrKey(entry.mrNo);
               const isLast = idx === mrEntries.length - 1;
               let grossMt = 0;
               let netMt = 0;
@@ -477,13 +501,24 @@ export const fetchSaudaCheckpointDeduction = async (cleanPoNo: string) => {
               if (Array.isArray(gridItems) && gridItems.length > 0) {
                 let sumG = 0;
                 let sumN = 0;
-                gridItems.forEach((it: any) => {
+                const seenSrl = new Set<string>();
+                gridItems.forEach((it: any, itIdx: number) => {
+                  if (!it || typeof it !== 'object') return;
+                  const itMr = String(it.mr_no || '').trim();
+                  if (itMr && canonicalMrKey(itMr) !== mrKey) return;
                   let g = Number(it.challan_gross_wt ?? it.receipt_gross_wt ?? it.gross_weight ?? 0);
+                  let n = Number(it.final_receipt_wt ?? it.reduced_weight ?? it.netto_pnto ?? 0);
+                  if (g <= 0 && n <= 0) return;
+                  const srl = it.srl_no !== undefined && it.srl_no !== null && String(it.srl_no).trim() !== ''
+                    ? `SRL_${String(it.srl_no).trim()}`
+                    : `ROW_${itIdx}_${g}_${n}`;
+                  if (seenSrl.has(srl)) return;
+                  seenSrl.add(srl);
+
                   if (g >= 500) g = g / 1000;
                   else if (g > 50 && g < 500) g = g / 10;
                   sumG += g;
 
-                  let n = Number(it.final_receipt_wt ?? it.reduced_weight ?? it.netto_pnto ?? 0);
                   if (n >= 500) n = n / 1000;
                   else if (n > 50 && n < 500) n = n / 10;
                   sumN += n;
@@ -508,8 +543,11 @@ export const fetchSaudaCheckpointDeduction = async (cleanPoNo: string) => {
                   }
                   if (n >= 500) n = n / 1000;
                   else if (n > 50 && n < 500) n = n / 10;
-                  netMt = n;
+                  netMt = (grossMt > 0 && n > grossMt + 0.001) ? grossMt : n;
                 }
+              }
+              if (grossMt > 0 && netMt > grossMt + 0.001) {
+                netMt = grossMt;
               }
               if (netMt <= 0 && grossMt <= 0) {
                 const baseTotal = faTotalMt > 0 ? faTotalMt : Number(updated.contract_weight_mt);
@@ -644,21 +682,6 @@ export const fetchSaudaCheckpointDeduction = async (cleanPoNo: string) => {
           localStorage.setItem(`sauda_settlement_${cleanAlphaPo}`, JSON.stringify(updated));
           localStorage.setItem(`sauda_settlement_${rawPoNo}`, JSON.stringify(updated));
         } catch (_e) {}
-        if (supabase && updated.id) {
-          dbModule.update('sauda_check_point_deductions', 'id', updated.id, {
-            total_received_mt: updated.total_received_mt,
-            variation_type: updated.variation_type,
-            variation_mt: updated.variation_mt,
-            rate_difference: updated.rate_difference,
-            applicable_rate: updated.applicable_rate,
-            deduction_qty_mt: updated.deduction_qty_mt,
-            deduction_qty_qtl: updated.deduction_qty_qtl,
-            deduction_amount: updated.deduction_amount,
-            arrival_numbers: updated.arrival_numbers,
-            remarks: updated.remarks,
-            updated_at: new Date().toISOString()
-          }).catch(() => {});
-        }
       }
 
       return updated;

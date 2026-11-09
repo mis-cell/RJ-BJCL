@@ -456,28 +456,42 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
       return false;
     });
 
+    const extractMrSeq = (mrStr: string): number => {
+      const matches = String(mrStr || '').match(/\d+/g);
+      if (!matches || matches.length === 0) return 0;
+      return parseInt(matches[matches.length - 1], 10) || 0;
+    };
+
+    const canonicalMrKey = (mrStr: string): string => {
+      const seq = extractMrSeq(mrStr);
+      if (seq > 0) return `MR_${seq}`;
+      return String(mrStr || '').trim().toUpperCase();
+    };
+
     // Extract all unique MR numbers strictly from Mill Inspection Section using field "mr_no"
+    // Each linked MR must be counted exactly once.
     const uniqueMrMap = new Map<string, { mrNo: string; date: string; rawDate: string; source: any }>();
 
     matchingInsps.forEach((insp: any) => {
       const num = String(insp.mr_no || '').trim();
       if (num && num.toUpperCase() !== 'NO' && num.toUpperCase() !== 'N/A' && num !== '-') {
         const rawD = normalizeToYMD(insp.arrival_date || insp.mr_date || insp.inspection_date || insp.date || insp.created_at || '');
-        const key = num.toUpperCase();
+        const key = canonicalMrKey(num);
         const existing = uniqueMrMap.get(key);
-        if (!existing || (!existing.rawDate && rawD)) {
+        const hasGrid = Boolean(insp.grid_details || insp.details);
+        const existingHasGrid = Boolean(existing?.source?.grid_details || existing?.source?.details);
+        const preferNew =
+          !existing ||
+          (!existingHasGrid && hasGrid) ||
+          (!existing.rawDate && Boolean(rawD)) ||
+          (num.length > existing.mrNo.length && hasGrid === existingHasGrid);
+        if (preferNew) {
           uniqueMrMap.set(key, { mrNo: num, date: formatDisplayDate(rawD), rawDate: rawD, source: insp });
         }
       }
     });
 
     const mrEntries = Array.from(uniqueMrMap.values());
-
-    const extractMrSeq = (mrStr: string): number => {
-      const matches = String(mrStr || '').match(/\d+/g);
-      if (!matches || matches.length === 0) return 0;
-      return parseInt(matches[matches.length - 1], 10) || 0;
-    };
 
     // Sort MR entries by MR sequence to determine first, second, and last lorry reliably
     mrEntries.sort((a, b) => {
@@ -514,7 +528,7 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
       return n; // already MT (e.g., 12.920)
     };
 
-    // Build MR breakdown rows
+    // Build MR breakdown rows freshly from source rows each time (never accumulate onto previous state)
     const rows: any[] = [];
     let sumClaimMt = 0;
     let sumGrossMt = 0;
@@ -522,7 +536,7 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
 
     // Process each MR in sequence order
     mrEntries.forEach((mrEntry, mrIdx) => {
-      const mrKey = mrEntry.mrNo.toUpperCase();
+      const mrKey = canonicalMrKey(mrEntry.mrNo);
       const isLastLorry = mrIdx === mrEntries.length - 1;
       const src = mrEntry.source;
 
@@ -549,13 +563,32 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
         }
       }
 
-      // 2. Also check material_inspection_details rows if present
+      // 2. Also check material_inspection_details rows strictly matching this MR
       const matchingDetails = (liveInspectionDetails || []).filter((d: any) => {
-        const dMr = String(d.mr_no || '').trim().toUpperCase();
-        return dMr === mrKey;
+        const dMr = String(d.mr_no || '').trim();
+        return dMr && canonicalMrKey(dMr) === mrKey;
       });
 
-      const detailItems = embeddedGrid.length > 0 ? embeddedGrid : matchingDetails;
+      const rawDetailItems = embeddedGrid.length > 0 ? embeddedGrid : matchingDetails;
+
+      // Filter out any cross-MR detail rows and deduplicate by srl_no / signature so each MR item is counted once
+      const seenDetailKeys = new Set<string>();
+      const detailItems: any[] = [];
+      rawDetailItems.forEach((d: any, idx: number) => {
+        if (!d || typeof d !== 'object') return;
+        const itemMr = String(d.mr_no || '').trim();
+        if (itemMr && canonicalMrKey(itemMr) !== mrKey) return;
+        const gRaw = Number(d.challan_gross_wt ?? d.receipt_gross_wt ?? d.gross_weight_batch ?? d.gross_weight ?? 0);
+        const nRaw = Number(d.final_receipt_wt ?? d.reduced_weight ?? d.netto_pnto ?? 0);
+        if (gRaw <= 0 && nRaw <= 0) return;
+        const srl = d.srl_no !== undefined && d.srl_no !== null && String(d.srl_no).trim() !== ''
+          ? `SRL_${String(d.srl_no).trim()}`
+          : `ROW_${String(d.arrival_grade || d.receipt_grade_name || d.challan_grade_name || idx).trim()}_${gRaw}_${nRaw}`;
+        if (!seenDetailKeys.has(srl)) {
+          seenDetailKeys.add(srl);
+          detailItems.push(d);
+        }
+      });
 
       let mrGrossMt = 0;
       let mrNetMt = 0;
@@ -564,10 +597,12 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
       let mrMarka = '39';
       let mrCrop = '2026-27';
 
-      // Read top-level challan_gross_wt and final_receipt_wt from material_inspection first
+      // Read top-level challan_gross_wt (Gross) and final_receipt_wt (Net) from material_inspection
+      let topGross = 0;
+      let topNet = 0;
       if (src) {
-        const topGross = toMtFromRawWt(src.challan_gross_wt || src.receipt_gross_wt || src.gross_weight);
-        const topNet = toMtFromRawWt(src.final_receipt_wt || src.total_final_receipt_wt || src.reduced_weight || src.weight_reduced);
+        topGross = toMtFromRawWt(src.challan_gross_wt ?? src.receipt_gross_wt ?? src.gross_weight);
+        topNet = toMtFromRawWt(src.final_receipt_wt ?? src.total_final_receipt_wt ?? src.reduced_weight ?? src.weight_reduced);
         if (topGross > 0) mrGrossMt = topGross;
         if (topNet > 0) mrNetMt = topNet;
         mrBags = Number(src.total_packets || src.quantity || src.total_quantity || src.packets || src.bags || 0);
@@ -576,7 +611,8 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
         mrCrop = src.crop_year || src.financial_year || '2026-27';
       }
 
-      // If top-level challan_gross_wt or final_receipt_wt is 0, sum from material_inspection grid_details / detail items
+      // Compute deduplicated per-MR detail sums and use them if top-level weights are missing or corrupted
+      // (e.g., if topNet > topGross due to historical cumulative updates across MRs)
       if (detailItems.length > 0) {
         let sumDetailGrossMt = 0;
         let sumDetailNetMt = 0;
@@ -604,17 +640,33 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
           if (d.crop_year) mrCrop = String(d.crop_year);
         });
 
-        if (mrGrossMt <= 0 && sumDetailGrossMt > 0) {
-          mrGrossMt = Math.round(sumDetailGrossMt * 1000) / 1000;
+        const roundedDetailGross = Math.round(sumDetailGrossMt * 1000) / 1000;
+        const roundedDetailNet = Math.round(sumDetailNetMt * 1000) / 1000;
+
+        if (
+          roundedDetailGross > 0 &&
+          (mrGrossMt <= 0 || Math.abs(mrGrossMt - roundedDetailGross) > 0.05)
+        ) {
+          mrGrossMt = roundedDetailGross;
         }
-        if (mrNetMt <= 0 && sumDetailNetMt > 0) {
-          mrNetMt = Math.round(sumDetailNetMt * 1000) / 1000;
+        if (
+          roundedDetailNet > 0 &&
+          (mrNetMt <= 0 ||
+            (mrGrossMt > 0 && mrNetMt > mrGrossMt + 0.001) ||
+            Math.abs(mrNetMt - roundedDetailNet) > 0.05)
+        ) {
+          mrNetMt = roundedDetailNet;
         }
         if (mrBags <= 0 && sumDetailBags > 0) {
           mrBags = sumDetailBags;
         }
         if (gradesSet.length > 0) mrGrade = gradesSet[0];
         if (markasSet.length > 0) mrMarka = markasSet[0];
+      }
+
+      // Guard: Net weight of a single MR can never exceed its Gross weight
+      if (mrGrossMt > 0 && mrNetMt > mrGrossMt + 0.001) {
+        mrNetMt = mrGrossMt;
       }
 
       if (mrNetMt <= 0 && src) {
@@ -902,11 +954,11 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
     return linkedMrNosList.length > 0 ? linkedMrNosList.join(', ') : (lastMrNo || 'MR-001');
   }, [linkedMrNosList, lastMrNo]);
 
-  // Keep local cache & database record in sync with live MR arrivals and Excess/Short rate rule
+  // Keep local cache in sync when viewing a settled record without rewriting locked database records on render
   useEffect(() => {
     if (!isSettled || contractMt <= 0 || isSaving) return;
 
-    const nowIso = new Date().toISOString();
+    const nowIso = settledAt || new Date().toISOString();
     const defaultRemark = isExcessApplicableForSauda
       ? `Applicable for Sauda – No Deduction: Last MR Rate (₹${lastMrDateSattaRate}) >= Sauda Rate (₹${saudaDateSattaRate})`
       : isGrossExcess
@@ -954,18 +1006,6 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
         localStorage.setItem(`sauda_settlement_${cleanSaudaKey}`, JSON.stringify(cacheObj));
       }
     } catch (_e) {}
-
-    if (supabase && existingRecordId) {
-      dbModule.update('sauda_check_point_deductions', 'id', existingRecordId, payload).catch(() => {});
-      const masterSettleUpdate = {
-        excess_short_deduction: totalCalculatedAmount,
-        excess_short_status: isWithin3PctExemption ? 'within_bounds' : 'settled',
-        final_payable_amount: totalFinalPayable,
-        is_settled: true
-      };
-      dbModule.update('purchase_master', 'po_no', poNo, masterSettleUpdate).catch(() => {});
-      dbModule.update('sauda_check_point', 'po_no', poNo, masterSettleUpdate).catch(() => {});
-    }
   }, [
     contractMt,
     totalFinalReceiptClaimMt,

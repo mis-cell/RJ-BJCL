@@ -788,461 +788,11 @@ const TABLE_COMPOSITE_KEYS: Record<string, string[]> = {
   satta_calculated_rates: ['start_date', 'area', 'grade']
 };
 
-// Automatic startup maintenance: ensure all missing columns, BIGINT PK sequences, deduplication, and unique indexes exist
+// Database is fixed: never run automatic DDL or DML modifications on startup or query execution
 let integrityInitialized = false;
 async function ensureDatabaseIntegrity() {
   if (integrityInitialized) return;
   integrityInitialized = true;
-  try {
-    // 0. Ensure missing columns across all tables (from migrations & empty-table schema exports)
-    await pool.query(`
-      -- satta_quality_details (was exported with only id & created_at)
-      ALTER TABLE IF EXISTS "satta_quality_details" ADD COLUMN IF NOT EXISTS "satta_id" UUID;
-      ALTER TABLE IF EXISTS "satta_quality_details" ADD COLUMN IF NOT EXISTS "satta_no" TEXT;
-      ALTER TABLE IF EXISTS "satta_quality_details" ADD COLUMN IF NOT EXISTS "financial_year" TEXT;
-      ALTER TABLE IF EXISTS "satta_quality_details" ADD COLUMN IF NOT EXISTS "quality" TEXT;
-      ALTER TABLE IF EXISTS "satta_quality_details" ADD COLUMN IF NOT EXISTS "quality_code" TEXT;
-      ALTER TABLE IF EXISTS "satta_quality_details" ADD COLUMN IF NOT EXISTS "quality_name" TEXT;
-      ALTER TABLE IF EXISTS "satta_quality_details" ADD COLUMN IF NOT EXISTS "qty" NUMERIC DEFAULT 0;
-      ALTER TABLE IF EXISTS "satta_quality_details" ADD COLUMN IF NOT EXISTS "agency" TEXT;
-      ALTER TABLE IF EXISTS "satta_quality_details" ADD COLUMN IF NOT EXISTS "marka" TEXT;
-      ALTER TABLE IF EXISTS "satta_quality_details" ADD COLUMN IF NOT EXISTS "rs" NUMERIC DEFAULT 0;
-      ALTER TABLE IF EXISTS "satta_quality_details" ADD COLUMN IF NOT EXISTS "base_rate" NUMERIC DEFAULT 0;
-      ALTER TABLE IF EXISTS "satta_quality_details" ADD COLUMN IF NOT EXISTS "premium" NUMERIC DEFAULT 0;
-      ALTER TABLE IF EXISTS "satta_quality_details" ADD COLUMN IF NOT EXISTS "remarks" TEXT;
-
-      -- mill_inspection_print_logs (was exported with only id & created_at)
-      ALTER TABLE IF EXISTS "mill_inspection_print_logs" ADD COLUMN IF NOT EXISTS "mr_no" TEXT;
-      ALTER TABLE IF EXISTS "mill_inspection_print_logs" ADD COLUMN IF NOT EXISTS "po_no" TEXT;
-      ALTER TABLE IF EXISTS "mill_inspection_print_logs" ADD COLUMN IF NOT EXISTS "printed_by" TEXT;
-      ALTER TABLE IF EXISTS "mill_inspection_print_logs" ADD COLUMN IF NOT EXISTS "printed_by_id" TEXT;
-      ALTER TABLE IF EXISTS "mill_inspection_print_logs" ADD COLUMN IF NOT EXISTS "printed_by_name" TEXT;
-      ALTER TABLE IF EXISTS "mill_inspection_print_logs" ADD COLUMN IF NOT EXISTS "printed_at" TIMESTAMPTZ DEFAULT NOW();
-      ALTER TABLE IF EXISTS "mill_inspection_print_logs" ADD COLUMN IF NOT EXISTS "print_type" TEXT;
-      ALTER TABLE IF EXISTS "mill_inspection_print_logs" ADD COLUMN IF NOT EXISTS "print_count" INTEGER DEFAULT 1;
-      ALTER TABLE IF EXISTS "mill_inspection_print_logs" ADD COLUMN IF NOT EXISTS "remarks" TEXT;
-      ALTER TABLE IF EXISTS "mill_inspection_print_logs" ADD COLUMN IF NOT EXISTS "details" JSONB;
-
-      -- sauda_master, purchase_master, sauda_check_point extra workflow & dispute columns
-      ALTER TABLE IF EXISTS "sauda_master" ADD COLUMN IF NOT EXISTS "mismatch_cleared" BOOLEAN DEFAULT FALSE;
-      ALTER TABLE IF EXISTS "sauda_master" ADD COLUMN IF NOT EXISTS "satta_dispute_approved" BOOLEAN DEFAULT FALSE;
-      ALTER TABLE IF EXISTS "sauda_master" ADD COLUMN IF NOT EXISTS "mismatch_remarks" TEXT;
-      ALTER TABLE IF EXISTS "sauda_master" ADD COLUMN IF NOT EXISTS "satta_remarks" TEXT;
-      ALTER TABLE IF EXISTS "sauda_master" ADD COLUMN IF NOT EXISTS "approval_level" TEXT;
-      ALTER TABLE IF EXISTS "sauda_master" ADD COLUMN IF NOT EXISTS "open_remarks" JSONB;
-
-      ALTER TABLE IF EXISTS "purchase_master" ADD COLUMN IF NOT EXISTS "mismatch_cleared" BOOLEAN DEFAULT FALSE;
-      ALTER TABLE IF EXISTS "purchase_master" ADD COLUMN IF NOT EXISTS "satta_dispute_approved" BOOLEAN DEFAULT FALSE;
-      ALTER TABLE IF EXISTS "purchase_master" ADD COLUMN IF NOT EXISTS "mismatch_remarks" TEXT;
-      ALTER TABLE IF EXISTS "purchase_master" ADD COLUMN IF NOT EXISTS "satta_remarks" TEXT;
-      ALTER TABLE IF EXISTS "purchase_master" ADD COLUMN IF NOT EXISTS "approved_by" TEXT;
-      ALTER TABLE IF EXISTS "purchase_master" ADD COLUMN IF NOT EXISTS "approved_at" TIMESTAMPTZ;
-      ALTER TABLE IF EXISTS "purchase_master" ADD COLUMN IF NOT EXISTS "approval_level" TEXT;
-      ALTER TABLE IF EXISTS "purchase_master" ADD COLUMN IF NOT EXISTS "is_closed" BOOLEAN DEFAULT FALSE;
-      ALTER TABLE IF EXISTS "purchase_master" ADD COLUMN IF NOT EXISTS "is_reopened" BOOLEAN DEFAULT FALSE;
-      ALTER TABLE IF EXISTS "purchase_master" ADD COLUMN IF NOT EXISTS "close_remarks" JSONB;
-
-      ALTER TABLE IF EXISTS "sauda_check_point" ADD COLUMN IF NOT EXISTS "mismatch_cleared" BOOLEAN DEFAULT FALSE;
-      ALTER TABLE IF EXISTS "sauda_check_point" ADD COLUMN IF NOT EXISTS "satta_dispute_approved" BOOLEAN DEFAULT FALSE;
-      ALTER TABLE IF EXISTS "sauda_check_point" ADD COLUMN IF NOT EXISTS "mismatch_remarks" TEXT;
-      ALTER TABLE IF EXISTS "sauda_check_point" ADD COLUMN IF NOT EXISTS "satta_remarks" TEXT;
-      ALTER TABLE IF EXISTS "sauda_check_point" ADD COLUMN IF NOT EXISTS "approved_by" TEXT;
-      ALTER TABLE IF EXISTS "sauda_check_point" ADD COLUMN IF NOT EXISTS "approved_at" TIMESTAMPTZ;
-      ALTER TABLE IF EXISTS "sauda_check_point" ADD COLUMN IF NOT EXISTS "approval_level" TEXT;
-      ALTER TABLE IF EXISTS "sauda_check_point" ADD COLUMN IF NOT EXISTS "sauda_no" TEXT;
-      ALTER TABLE IF EXISTS "sauda_check_point" ADD COLUMN IF NOT EXISTS "broker_code" TEXT;
-      ALTER TABLE IF EXISTS "sauda_check_point" ADD COLUMN IF NOT EXISTS "supplier_code" TEXT;
-      ALTER TABLE IF EXISTS "sauda_check_point" ADD COLUMN IF NOT EXISTS "challan_supplier_code" TEXT;
-      ALTER TABLE IF EXISTS "sauda_check_point" ADD COLUMN IF NOT EXISTS "area_code" TEXT;
-      ALTER TABLE IF EXISTS "sauda_check_point" ADD COLUMN IF NOT EXISTS "agency" TEXT;
-      ALTER TABLE IF EXISTS "sauda_check_point" ADD COLUMN IF NOT EXISTS "grade" TEXT;
-      ALTER TABLE IF EXISTS "sauda_check_point" ADD COLUMN IF NOT EXISTS "quality" TEXT;
-      ALTER TABLE IF EXISTS "sauda_check_point" ADD COLUMN IF NOT EXISTS "marka" TEXT;
-      ALTER TABLE IF EXISTS "sauda_check_point" ADD COLUMN IF NOT EXISTS "is_closed" BOOLEAN DEFAULT FALSE;
-      ALTER TABLE IF EXISTS "sauda_check_point" ADD COLUMN IF NOT EXISTS "is_reopened" BOOLEAN DEFAULT FALSE;
-      ALTER TABLE IF EXISTS "sauda_check_point" ADD COLUMN IF NOT EXISTS "close_remarks" JSONB;
-
-      -- payment_master, final_arrival, inspection & mismatch extra columns
-      ALTER TABLE IF EXISTS "payment_master" ADD COLUMN IF NOT EXISTS "summary_delivery_claim" NUMERIC DEFAULT 0;
-      ALTER TABLE IF EXISTS "payment_master" ADD COLUMN IF NOT EXISTS "summary_deduction_amount" NUMERIC DEFAULT 0;
-      ALTER TABLE IF EXISTS "payment_master" ADD COLUMN IF NOT EXISTS "val_ex_short" NUMERIC DEFAULT 0;
-
-      ALTER TABLE IF EXISTS "final_arrival" ADD COLUMN IF NOT EXISTS "deductions" JSONB;
-      ALTER TABLE IF EXISTS "final_arrival" ADD COLUMN IF NOT EXISTS "deduction_rows" JSONB;
-      ALTER TABLE IF EXISTS "final_arrival" ADD COLUMN IF NOT EXISTS "deduction_amount" NUMERIC DEFAULT 0;
-
-      ALTER TABLE IF EXISTS "mill_inspection_master" ADD COLUMN IF NOT EXISTS "deduction_rows" JSONB;
-      ALTER TABLE IF EXISTS "mill_inspection_master" ADD COLUMN IF NOT EXISTS "deductions_json" TEXT;
-      ALTER TABLE IF EXISTS "inspection_master" ADD COLUMN IF NOT EXISTS "deduction_rows" JSONB;
-      ALTER TABLE IF EXISTS "inspection_master" ADD COLUMN IF NOT EXISTS "deductions_json" TEXT;
-
-      ALTER TABLE IF EXISTS "material_inspection_details" ADD COLUMN IF NOT EXISTS "moisture_deduction_kg" NUMERIC DEFAULT 0;
-      ALTER TABLE IF EXISTS "material_inspection_details" ADD COLUMN IF NOT EXISTS "dust_deduction_kg" NUMERIC DEFAULT 0;
-      ALTER TABLE IF EXISTS "material_inspection_details" ADD COLUMN IF NOT EXISTS "ncv_deduction_kg" NUMERIC DEFAULT 0;
-      ALTER TABLE IF EXISTS "material_inspection_details" ADD COLUMN IF NOT EXISTS "po_no" TEXT;
-      ALTER TABLE IF EXISTS "material_inspection_details" ADD COLUMN IF NOT EXISTS "lorry_moisture_avg" NUMERIC DEFAULT 0;
-      ALTER TABLE IF EXISTS "material_inspection_details" ADD COLUMN IF NOT EXISTS "insp_moisture_min" NUMERIC DEFAULT 0;
-      ALTER TABLE IF EXISTS "material_inspection_details" ADD COLUMN IF NOT EXISTS "insp_moisture_max" NUMERIC DEFAULT 0;
-      ALTER TABLE IF EXISTS "material_inspection_details" ADD COLUMN IF NOT EXISTS "insp_moisture_avg" NUMERIC DEFAULT 0;
-      ALTER TABLE IF EXISTS "material_inspection_details" ADD COLUMN IF NOT EXISTS "qty_in_mt" NUMERIC DEFAULT 0;
-
-      ALTER TABLE IF EXISTS "mill_inspection_detail" ADD COLUMN IF NOT EXISTS "moisture_deduction_kg" NUMERIC DEFAULT 0;
-      ALTER TABLE IF EXISTS "mill_inspection_detail" ADD COLUMN IF NOT EXISTS "dust_deduction_kg" NUMERIC DEFAULT 0;
-      ALTER TABLE IF EXISTS "mill_inspection_detail" ADD COLUMN IF NOT EXISTS "ncv_deduction_kg" NUMERIC DEFAULT 0;
-      ALTER TABLE IF EXISTS "mill_inspection_detail" ADD COLUMN IF NOT EXISTS "po_no" TEXT;
-      ALTER TABLE IF EXISTS "mill_inspection_detail" ADD COLUMN IF NOT EXISTS "lorry_moisture_avg" NUMERIC DEFAULT 0;
-      ALTER TABLE IF EXISTS "mill_inspection_detail" ADD COLUMN IF NOT EXISTS "insp_moisture_min" NUMERIC DEFAULT 0;
-      ALTER TABLE IF EXISTS "mill_inspection_detail" ADD COLUMN IF NOT EXISTS "insp_moisture_max" NUMERIC DEFAULT 0;
-      ALTER TABLE IF EXISTS "mill_inspection_detail" ADD COLUMN IF NOT EXISTS "insp_moisture_avg" NUMERIC DEFAULT 0;
-      ALTER TABLE IF EXISTS "mill_inspection_detail" ADD COLUMN IF NOT EXISTS "qty_in_mt" NUMERIC DEFAULT 0;
-
-      ALTER TABLE IF EXISTS "inspection_details" ADD COLUMN IF NOT EXISTS "moisture_deduction_kg" NUMERIC DEFAULT 0;
-      ALTER TABLE IF EXISTS "inspection_details" ADD COLUMN IF NOT EXISTS "dust_deduction_kg" NUMERIC DEFAULT 0;
-      ALTER TABLE IF EXISTS "inspection_details" ADD COLUMN IF NOT EXISTS "ncv_deduction_kg" NUMERIC DEFAULT 0;
-      ALTER TABLE IF EXISTS "inspection_checklist_details" ADD COLUMN IF NOT EXISTS "moisture_deduction_kg" NUMERIC DEFAULT 0;
-      ALTER TABLE IF EXISTS "inspection_checklist_details" ADD COLUMN IF NOT EXISTS "dust_deduction_kg" NUMERIC DEFAULT 0;
-      ALTER TABLE IF EXISTS "inspection_checklist_details" ADD COLUMN IF NOT EXISTS "ncv_deduction_kg" NUMERIC DEFAULT 0;
-
-      ALTER TABLE IF EXISTS "final_arrival" ADD COLUMN IF NOT EXISTS "payment_status" TEXT DEFAULT 'Pending';
-      ALTER TABLE IF EXISTS "material_inspection" ADD COLUMN IF NOT EXISTS "payment_status" TEXT DEFAULT 'Pending';
-      ALTER TABLE IF EXISTS "mill_inspection_master" ADD COLUMN IF NOT EXISTS "payment_status" TEXT DEFAULT 'Pending';
-      ALTER TABLE IF EXISTS "temporary_material_received" ADD COLUMN IF NOT EXISTS "payment_status" TEXT DEFAULT 'Pending';
-      ALTER TABLE IF EXISTS "purchase_master" ADD COLUMN IF NOT EXISTS "payment_status" TEXT DEFAULT 'Pending';
-
-      ALTER TABLE IF EXISTS "temporary_material_received" ALTER COLUMN "date" SET DEFAULT CURRENT_DATE;
-      ALTER TABLE IF EXISTS "temporary_material_received" ALTER COLUMN "date" DROP NOT NULL;
-      DROP INDEX IF EXISTS idx_unique_temp_arrival_no;
-      ALTER TABLE IF EXISTS "issue_master" ALTER COLUMN "date" SET DEFAULT CURRENT_DATE;
-      ALTER TABLE IF EXISTS "issue_master" ALTER COLUMN "date" DROP NOT NULL;
-      ALTER TABLE IF EXISTS "issue_master" ALTER COLUMN "amad_no" SET DEFAULT '';
-      ALTER TABLE IF EXISTS "issue_master" ALTER COLUMN "amad_no" DROP NOT NULL;
-
-      ALTER TABLE IF EXISTS "material_mismatch" ADD COLUMN IF NOT EXISTS "mismatch_id" TEXT;
-      ALTER TABLE IF EXISTS "material_mismatch" ADD COLUMN IF NOT EXISTS "supplier" TEXT;
-      ALTER TABLE IF EXISTS "material_mismatch" ADD COLUMN IF NOT EXISTS "broker" TEXT;
-      ALTER TABLE IF EXISTS "material_mismatch" ADD COLUMN IF NOT EXISTS "agency" TEXT;
-      ALTER TABLE IF EXISTS "material_mismatch" ADD COLUMN IF NOT EXISTS "ptf_mode" TEXT;
-      ALTER TABLE IF EXISTS "material_mismatch" ADD COLUMN IF NOT EXISTS "challan_supplier" TEXT;
-      ALTER TABLE IF EXISTS "material_mismatch" ADD COLUMN IF NOT EXISTS "rate_per_mt" TEXT;
-      ALTER TABLE IF EXISTS "material_mismatch" ADD COLUMN IF NOT EXISTS "lorry_number" TEXT;
-      ALTER TABLE IF EXISTS "material_mismatch" ADD COLUMN IF NOT EXISTS "issue_description" TEXT;
-      ALTER TABLE IF EXISTS "material_mismatch" ADD COLUMN IF NOT EXISTS "difference" TEXT;
-      ALTER TABLE IF EXISTS "material_mismatch" ADD COLUMN IF NOT EXISTS "mismatched_fields" TEXT;
-      ALTER TABLE IF EXISTS "material_mismatch" ADD COLUMN IF NOT EXISTS "severity" TEXT;
-      ALTER TABLE IF EXISTS "material_mismatch" ADD COLUMN IF NOT EXISTS "approved_by" TEXT;
-      ALTER TABLE IF EXISTS "material_mismatch" ADD COLUMN IF NOT EXISTS "approved_at" TIMESTAMPTZ;
-
-      ALTER TABLE IF EXISTS "sauda_check_point_deductions" ADD COLUMN IF NOT EXISTS "is_locked" BOOLEAN DEFAULT TRUE;
-      ALTER TABLE IF EXISTS "sauda_check_point_deductions" ADD COLUMN IF NOT EXISTS "is_final" BOOLEAN DEFAULT TRUE;
-      ALTER TABLE IF EXISTS "sauda_check_point_deductions" ADD COLUMN IF NOT EXISTS "settled_at" TIMESTAMPTZ DEFAULT NOW();
-      ALTER TABLE IF EXISTS "sauda_check_point_deductions" ADD COLUMN IF NOT EXISTS "settled_by" TEXT;
-
-      ALTER TABLE IF EXISTS "m_r_settlement" ADD COLUMN IF NOT EXISTS "mr_no" TEXT;
-      ALTER TABLE IF EXISTS "m_r_settlement" ADD COLUMN IF NOT EXISTS "settled_weight" NUMERIC DEFAULT 0;
-      ALTER TABLE IF EXISTS "m_r_settlement" ADD COLUMN IF NOT EXISTS "gross_amount" NUMERIC DEFAULT 0;
-      ALTER TABLE IF EXISTS "m_r_settlement" ADD COLUMN IF NOT EXISTS "net_payable" NUMERIC DEFAULT 0;
-      ALTER TABLE IF EXISTS "m_r_settlement" ADD COLUMN IF NOT EXISTS "status" TEXT;
-      ALTER TABLE IF EXISTS "m_r_settlement" ALTER COLUMN "po_no" SET DEFAULT '';
-      ALTER TABLE IF EXISTS "m_r_settlement" ALTER COLUMN "po_no" DROP NOT NULL;
-    `).catch(() => {});
-
-    // 1. Ensure BIGINT id columns have auto-incrementing sequences so detail inserts never fail
-    const bigintTables: Array<{ table: string; pk: string }> = [
-      { table: 'material_inspection_details', pk: 'id' },
-      { table: 'material_inspection_deductions', pk: 'id' },
-      { table: 'mill_inspection_detail', pk: 'id' },
-      { table: 'mill_inspection_print_logs', pk: 'id' },
-      { table: 'inspection_details', pk: 'id' },
-      { table: 'inspection_checklist_details', pk: 'id' },
-      { table: 'satta_quality_details', pk: 'id' },
-      { table: 'agency_master', pk: 'id' },
-      { table: 'area_master', pk: 'id' },
-      { table: 'broker_master', pk: 'id' },
-      { table: 'godown_master', pk: 'id' },
-      { table: 'grade_master', pk: 'id' },
-      { table: 'marka_master', pk: 'id' },
-      { table: 'supply_master', pk: 'id' },
-      { table: 'user_activity_logs', pk: 'log_id' }
-    ];
-
-    for (const { table, pk } of bigintTables) {
-      const seqName = `${table}_${pk}_auto_seq`;
-      await pool.query(`
-        DO $$
-        DECLARE
-          max_val BIGINT;
-        BEGIN
-          IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = '${table}' AND column_name = '${pk}') THEN
-            EXECUTE format('CREATE SEQUENCE IF NOT EXISTS %I', '${seqName}');
-            EXECUTE format('SELECT COALESCE(MAX(%I), 0) + 1 FROM %I', '${pk}', '${table}') INTO max_val;
-            PERFORM setval('${seqName}', GREATEST(max_val, 1), false);
-            EXECUTE format('ALTER TABLE %I ALTER COLUMN %I SET DEFAULT nextval(%L)', '${table}', '${pk}', '${seqName}');
-          END IF;
-        EXCEPTION WHEN OTHERS THEN
-          NULL;
-        END $$;
-      `).catch(() => {});
-    }
-
-    // 2. Clean up any duplicate rows on master tables (keeping the latest row by ctid)
-    // Note: temporary_material_received is keyed by primary key (amad_id) because MR00400 and MR00408 have 2 legitimate distinct arrivals in Supabase (1,398 total rows)
-    const dedupTargets: Array<{ table: string; keyExpr: string }> = [
-      { table: 'sauda_check_point', keyExpr: `TRIM(UPPER(po_no))` },
-      { table: 'purchase_master', keyExpr: `TRIM(UPPER(po_no))` },
-      { table: 'final_arrival', keyExpr: `TRIM(UPPER(COALESCE(NULLIF(final_arrival_no, ''), mr_no)))` },
-      { table: 'mr_settlement_master', keyExpr: `TRIM(UPPER(mr_no))` },
-      { table: 'payment_master', keyExpr: `TRIM(UPPER(voucher_no))` },
-      { table: 'sauda_master', keyExpr: `TRIM(UPPER(sauda_no))` },
-      { table: 'satta_master', keyExpr: `TRIM(UPPER(satta_no))` },
-      { table: 'lorry_weighments', keyExpr: `TRIM(UPPER(gate_pass))` },
-      { table: 'satta_differentials', keyExpr: `TRIM(UPPER(area)) || '||' || TRIM(UPPER(grade))` }
-    ];
-
-    for (const { table, keyExpr } of dedupTargets) {
-      await pool.query(`
-        DELETE FROM "${table}" a
-        USING "${table}" b
-        WHERE a.ctid < b.ctid
-          AND (${keyExpr.replace(/\b([a-z_]+)\b/g, (m) => ['TRIM', 'UPPER', 'COALESCE', 'NULLIF'].includes(m) ? m : `a.${m}`)}) =
-              (${keyExpr.replace(/\b([a-z_]+)\b/g, (m) => ['TRIM', 'UPPER', 'COALESCE', 'NULLIF'].includes(m) ? m : `b.${m}`)})
-          AND (${keyExpr.replace(/\b([a-z_]+)\b/g, (m) => ['TRIM', 'UPPER', 'COALESCE', 'NULLIF'].includes(m) ? m : `a.${m}`)}) IS NOT NULL
-          AND (${keyExpr.replace(/\b([a-z_]+)\b/g, (m) => ['TRIM', 'UPPER', 'COALESCE', 'NULLIF'].includes(m) ? m : `a.${m}`)}) <> '';
-      `).catch(() => {});
-    }
-
-    // 2b. Create unique indexes on natural business keys so raw SQL ON CONFLICT (voucher_no / po_no / sauda_no / etc.) works natively
-    const uniqueIndexStatements = [
-      `CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_payment_master_voucher_no ON "payment_master" ("voucher_no") WHERE "voucher_no" IS NOT NULL`,
-      `CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_sauda_master_sauda_no ON "sauda_master" ("sauda_no") WHERE "sauda_no" IS NOT NULL`,
-      `CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_satta_master_satta_no ON "satta_master" ("satta_no") WHERE "satta_no" IS NOT NULL`,
-      `CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_sauda_check_point_po_no ON "sauda_check_point" ("po_no") WHERE "po_no" IS NOT NULL`,
-      `CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_purchase_master_po_no ON "purchase_master" ("po_no") WHERE "po_no" IS NOT NULL`,
-      `CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_final_arrival_no ON "final_arrival" ("final_arrival_no") WHERE "final_arrival_no" IS NOT NULL`,
-      `CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_mr_settlement_mr_no ON "mr_settlement_master" ("mr_no") WHERE "mr_no" IS NOT NULL`,
-      `CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_m_r_settlement_mr_no ON "m_r_settlement" ("mr_no") WHERE "mr_no" IS NOT NULL`,
-      `CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_lorry_weighments_gate_pass ON "lorry_weighments" ("gate_pass") WHERE "gate_pass" IS NOT NULL`,
-      `CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_user_master_username ON "user_master" ("username") WHERE "username" IS NOT NULL`,
-      `CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_unit_master_unit_name ON "unit_master" ("unit_name") WHERE "unit_name" IS NOT NULL`,
-      `CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_marka_master_marka_name ON "marka_master" ("marka_name") WHERE "marka_name" IS NOT NULL`,
-      `CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_area_master_area_name ON "area_master" ("area_name") WHERE "area_name" IS NOT NULL`
-    ];
-    for (const stmt of uniqueIndexStatements) {
-      await pool.query(stmt).catch(() => {});
-    }
-
-    // 3. Ensure lorry_weighments columns & defaults for Android Gate/Weighbridge App compatibility
-    await pool.query(`
-      ALTER TABLE IF EXISTS "lorry_weighments" ALTER COLUMN "id" SET DEFAULT gen_random_uuid();
-      ALTER TABLE IF EXISTS "lorry_weighments" ALTER COLUMN "chalan_no" SET DEFAULT '';
-      ALTER TABLE IF EXISTS "lorry_weighments" ALTER COLUMN "chalan_no" DROP NOT NULL;
-      ALTER TABLE IF EXISTS "lorry_weighments" ALTER COLUMN "in_time" SET DEFAULT '';
-      ALTER TABLE IF EXISTS "lorry_weighments" ALTER COLUMN "in_time" DROP NOT NULL;
-      ALTER TABLE IF EXISTS "lorry_weighments" ALTER COLUMN "party_name" SET DEFAULT '';
-      ALTER TABLE IF EXISTS "lorry_weighments" ALTER COLUMN "party_name" DROP NOT NULL;
-      ALTER TABLE IF EXISTS "lorry_weighments" ALTER COLUMN "description" SET DEFAULT '';
-      ALTER TABLE IF EXISTS "lorry_weighments" ALTER COLUMN "description" DROP NOT NULL;
-      ALTER TABLE IF EXISTS "lorry_weighments" ALTER COLUMN "entry_date" SET DEFAULT '';
-      ALTER TABLE IF EXISTS "lorry_weighments" ALTER COLUMN "entry_date" DROP NOT NULL;
-      ALTER TABLE IF EXISTS "lorry_weighments" ALTER COLUMN "lorry_no" SET DEFAULT '';
-      ALTER TABLE IF EXISTS "lorry_weighments" ALTER COLUMN "lorry_no" DROP NOT NULL;
-      ALTER TABLE IF EXISTS "lorry_weighments" ADD COLUMN IF NOT EXISTS "driver_number" TEXT;
-      ALTER TABLE IF EXISTS "lorry_weighments" ADD COLUMN IF NOT EXISTS "driver_name" TEXT;
-      ALTER TABLE IF EXISTS "lorry_weighments" ADD COLUMN IF NOT EXISTS "department" TEXT DEFAULT 'Jute';
-      ALTER TABLE IF EXISTS "lorry_weighments" ADD COLUMN IF NOT EXISTS "mokam" VARCHAR(100);
-      ALTER TABLE IF EXISTS "lorry_weighments" ADD COLUMN IF NOT EXISTS "marka" VARCHAR(100);
-      ALTER TABLE IF EXISTS "lorry_weighments" ADD COLUMN IF NOT EXISTS "grade" TEXT;
-      ALTER TABLE IF EXISTS "lorry_weighments" ADD COLUMN IF NOT EXISTS "grade_details" JSONB;
-      ALTER TABLE IF EXISTS "lorry_weighments" ADD COLUMN IF NOT EXISTS "electric_gross_weight" NUMERIC(12, 2) DEFAULT 0.0;
-      ALTER TABLE IF EXISTS "lorry_weighments" ADD COLUMN IF NOT EXISTS "electric_tare_weight" NUMERIC(12, 2) DEFAULT 0.0;
-      ALTER TABLE IF EXISTS "lorry_weighments" ADD COLUMN IF NOT EXISTS "unload_status" VARCHAR(50) DEFAULT 'Pending';
-    `).catch(() => {});
-
-    // Clear column caches after schema additions so fresh metadata is loaded
-    tableColumnsCache.clear();
-    tableColumnTypesCache.clear();
-
-    // 4. Child Detail Table Deduplication (prevent duplicate rows from inflating weight/bags)
-    const childDedupQueries = [
-      `DELETE FROM "sauda_check_point_details" a USING "sauda_check_point_details" b
-       WHERE a.ctid < b.ctid
-         AND TRIM(UPPER(COALESCE(a.po_no, ''))) = TRIM(UPPER(COALESCE(b.po_no, '')))
-         AND COALESCE(a.srl_no, 0) = COALESCE(b.srl_no, 0)
-         AND TRIM(UPPER(COALESCE(a.item_grade, ''))) = TRIM(UPPER(COALESCE(b.item_grade, '')))
-         AND TRIM(UPPER(COALESCE(a.po_no, ''))) <> '';`,
-      `DELETE FROM "material_inspection_details" a USING "material_inspection_details" b
-       WHERE a.ctid < b.ctid
-         AND TRIM(UPPER(COALESCE(a.mr_no, ''))) = TRIM(UPPER(COALESCE(b.mr_no, '')))
-         AND COALESCE(a.srl_no, 0) = COALESCE(b.srl_no, 0)
-         AND TRIM(UPPER(COALESCE(a.mr_no, ''))) <> '';`,
-      `DELETE FROM "mill_inspection_detail" a USING "mill_inspection_detail" b
-       WHERE a.ctid < b.ctid
-         AND TRIM(UPPER(COALESCE(a.mr_no, ''))) = TRIM(UPPER(COALESCE(b.mr_no, '')))
-         AND COALESCE(a.srl_no, 0) = COALESCE(b.srl_no, 0)
-         AND TRIM(UPPER(COALESCE(a.mr_no, ''))) <> '';`,
-      `DELETE FROM "material_inspection" a USING "material_inspection" b
-       WHERE a.ctid < b.ctid
-         AND TRIM(UPPER(COALESCE(a.mr_no, ''))) = TRIM(UPPER(COALESCE(b.mr_no, '')))
-         AND TRIM(UPPER(COALESCE(a.mr_no, ''))) <> '';`,
-      `DELETE FROM "mill_inspection_master" a USING "mill_inspection_master" b
-       WHERE a.ctid < b.ctid
-         AND TRIM(UPPER(COALESCE(a.mr_no, ''))) = TRIM(UPPER(COALESCE(b.mr_no, '')))
-         AND TRIM(UPPER(COALESCE(a.mr_no, ''))) <> '';`,
-      `DELETE FROM "mr_settlement_detail" a USING "mr_settlement_detail" b
-       WHERE a.ctid < b.ctid
-         AND TRIM(UPPER(COALESCE(a.mr_no, ''))) = TRIM(UPPER(COALESCE(b.mr_no, '')))
-         AND COALESCE(a.col_index, 0) = COALESCE(b.col_index, 0)
-         AND TRIM(UPPER(COALESCE(a.mr_no, ''))) <> '';`
-    ];
-
-    for (const q of childDedupQueries) {
-      await pool.query(q).catch(() => {});
-    }
-
-    // 5. Auto-seed mr_settlement_master, mr_settlement_detail, and core tables from complete_local_data.sql.gz if empty in local PostgreSQL
-    const gzPath = path.resolve(process.cwd(), 'complete_local_data.sql.gz');
-    if (fs.existsSync(gzPath)) {
-      const tablesToEnsureSeeded = [
-        'mr_settlement_master',
-        'mr_settlement_detail',
-        'payment_master',
-        'payment_details',
-        'sauda_check_point_deductions',
-        'satta_base_rates',
-        'satta_differentials',
-        'material_inspection',
-        'sauda_check_point',
-        'sauda_check_point_details'
-      ];
-      let sqlTextCache: string | null = null;
-      for (const tbl of tablesToEnsureSeeded) {
-        try {
-          const cntRes = await pool.query(`SELECT COUNT(*)::int AS cnt FROM "${tbl}"`);
-          const cnt = cntRes.rows?.[0]?.cnt ?? 0;
-          if (cnt === 0) {
-            if (!sqlTextCache) {
-              sqlTextCache = zlib.gunzipSync(fs.readFileSync(gzPath)).toString('utf8');
-            }
-            const marker = `-- Table: "${tbl}"`;
-            const startIdx = sqlTextCache.indexOf(marker);
-            if (startIdx !== -1) {
-              const nextTableIdx = sqlTextCache.indexOf('-- Table: "', startIdx + marker.length);
-              const section = nextTableIdx !== -1 ? sqlTextCache.slice(startIdx, nextTableIdx) : sqlTextCache.slice(startIdx);
-              const rawChunks = section
-                .split(`INSERT INTO "${tbl}"`)
-                .map(s => s.trim())
-                .filter(s => s && !s.startsWith('--'));
-              for (const chunk of rawChunks) {
-                await pool.query(`INSERT INTO "${tbl}" ${chunk}`).catch(() => {});
-              }
-            }
-          }
-        } catch (_) {}
-      }
-    }
-
-    // 6. Provide compatibility updatable views for mr_settelment_master and mr_settelment_details (preserving any existing rows first)
-    await pool.query(`
-      DO $$
-      BEGIN
-        IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'mr_settelment_master' AND table_type = 'BASE TABLE') THEN
-          BEGIN
-            INSERT INTO "mr_settlement_master" SELECT * FROM "mr_settelment_master" ON CONFLICT DO NOTHING;
-          EXCEPTION WHEN OTHERS THEN NULL;
-          END;
-          DROP TABLE IF EXISTS "mr_settelment_master" CASCADE;
-        END IF;
-        CREATE OR REPLACE VIEW "mr_settelment_master" AS SELECT * FROM "mr_settlement_master";
-
-        IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'mr_settelment_details' AND table_type = 'BASE TABLE') THEN
-          BEGIN
-            INSERT INTO "mr_settlement_detail" SELECT * FROM "mr_settelment_details" ON CONFLICT DO NOTHING;
-          EXCEPTION WHEN OTHERS THEN NULL;
-          END;
-          DROP TABLE IF EXISTS "mr_settelment_details" CASCADE;
-        END IF;
-        CREATE OR REPLACE VIEW "mr_settelment_details" AS SELECT * FROM "mr_settlement_detail";
-        CREATE OR REPLACE VIEW "mr_settlement_details" AS SELECT * FROM "mr_settlement_detail";
-      EXCEPTION WHEN OTHERS THEN NULL;
-      END $$;
-    `).catch(() => {});
-
-    // 7. Backfill top-level challan_gross_wt and final_receipt_wt on material_inspection from grid_details JSONB array
-    // and ensure PO BJCL/2026-2027/0532 has accurate contract & excess settlement values
-    await pool.query(`
-      UPDATE "material_inspection" m
-      SET
-        "challan_gross_wt" = sub.sum_gross,
-        "receipt_gross_wt" = sub.sum_gross,
-        "gross_weight" = sub.sum_gross,
-        "final_receipt_wt" = sub.sum_net,
-        "total_final_receipt_wt" = sub.sum_net,
-        "reduced_weight" = sub.sum_net
-      FROM (
-        SELECT
-          i.mr_no,
-          ROUND(COALESCE(SUM(NULLIF(regexp_replace(COALESCE(elem->>'challan_gross_wt', elem->>'receipt_gross_wt', '0'), '[^0-9.-]', '', 'g'), '')::numeric), 0), 3) AS sum_gross,
-          ROUND(COALESCE(SUM(NULLIF(regexp_replace(COALESCE(elem->>'final_receipt_wt', elem->>'reduced_weight', '0'), '[^0-9.-]', '', 'g'), '')::numeric), 0), 3) AS sum_net
-        FROM "material_inspection" i,
-        LATERAL jsonb_array_elements(
-          CASE
-            WHEN jsonb_typeof(i.grid_details) = 'array' THEN i.grid_details
-            WHEN jsonb_typeof(i.details) = 'array' THEN i.details
-            ELSE '[]'::jsonb
-          END
-        ) AS elem
-        WHERE COALESCE(i.challan_gross_wt, 0) <= 0 OR COALESCE(i.final_receipt_wt, 0) <= 0
-        GROUP BY i.mr_no
-      ) sub
-      WHERE m.mr_no = sub.mr_no
-        AND (sub.sum_gross > 0 OR sub.sum_net > 0);
-
-      UPDATE "material_inspection"
-      SET "challan_gross_wt" = 12.920, "receipt_gross_wt" = 12.920, "gross_weight" = 12.920,
-          "final_receipt_wt" = 12.662, "total_final_receipt_wt" = 12.662, "reduced_weight" = 12.662
-      WHERE TRIM(UPPER("mr_no")) IN ('MR00999', 'MR0999');
-
-      UPDATE "material_inspection"
-      SET "challan_gross_wt" = 13.870, "receipt_gross_wt" = 13.870, "gross_weight" = 13.870,
-          "final_receipt_wt" = 13.593, "total_final_receipt_wt" = 13.593, "reduced_weight" = 13.593
-      WHERE TRIM(UPPER("mr_no")) = 'MR01037';
-
-      UPDATE "material_inspection"
-      SET "challan_gross_wt" = 11.880, "receipt_gross_wt" = 11.880, "gross_weight" = 11.880,
-          "final_receipt_wt" = 11.761, "total_final_receipt_wt" = 11.761, "reduced_weight" = 11.761
-      WHERE TRIM(UPPER("mr_no")) = 'MR01042';
-
-      UPDATE "sauda_check_point"
-      SET "total_contract_mt" = 34.500,
-          "contract_weight_mt" = 34.500,
-          "excess_short_deduction" = 2181000,
-          "excess_short_status" = 'settled',
-          "is_settled" = TRUE
-      WHERE TRIM(UPPER("po_no")) = 'BJCL/2026-2027/0532';
-
-      UPDATE "sauda_check_point_deductions"
-      SET "contract_weight_mt" = 34.500,
-          "tolerance_pct" = 0,
-          "tolerance_mt" = 0,
-          "min_acceptable_mt" = 34.500,
-          "max_acceptable_mt" = 34.500,
-          "total_received_mt" = 38.135,
-          "variation_type" = 'excess',
-          "variation_mt" = -3.635,
-          "sauda_rate" = 12900,
-          "satta_rate" = 12300,
-          "last_arrival_date" = '2026-09-16',
-          "last_mr_no" = 'MR01042',
-          "applicable_rate" = 600,
-          "rate_basis" = 'rate_difference',
-          "rate_difference" = 600,
-          "deduction_qty_mt" = 3.635,
-          "deduction_qty_qtl" = 36.35,
-          "deduction_amount" = 2181000,
-          "arrival_numbers" = 'MR00999, MR01037, MR01042',
-          "remarks" = 'Excess Weight Deduction: 3,635 kg × ₹600 = ₹2,181,000.'
-      WHERE TRIM(UPPER("po_no")) = 'BJCL/2026-2027/0532';
-    `).catch(() => {});
-  } catch (_) {}
 }
 
 /**
@@ -1950,7 +1500,20 @@ export async function executeUpdate(payload: QueryPayload) {
     setClauses.push(`"${sanitizeIdent(k)}" = $${params.length}`);
   }
 
+  const hasRequestedFilters =
+    (Array.isArray(payload.filters) && payload.filters.length > 0) ||
+    (Array.isArray(payload.orFilters) && payload.orFilters.length > 0);
   const whereSql = buildWhereClause(payload, params, validCols, colTypes);
+
+  // Safety guard: never execute an unfiltered UPDATE across the whole table if the caller specified filters
+  // (e.g., on a column that does not exist on this table)
+  if (!whereSql) {
+    if (hasRequestedFilters) {
+      return { data: [], error: null };
+    }
+    return { data: [], error: { message: `Refusing unfiltered UPDATE on ${table}` } };
+  }
+
   const updateSql = `UPDATE "${table}" SET ${setClauses.join(', ')} ${whereSql} RETURNING *`;
 
   try {
@@ -1959,8 +1522,8 @@ export async function executeUpdate(payload: QueryPayload) {
       return { data: result.rows, error: null };
     }
 
-    // Fallback: if exact filter matched 0 rows (e.g., due to case/whitespace or wrong PK column name in Admin Desk),
-    // try matching via case-insensitive trimmed filter or via the row's unique keys!
+    // Fallback: if exact single-column equality filter matched 0 rows due to case/whitespace,
+    // try matching via case-insensitive trimmed filter on that same column ONLY.
     if (Array.isArray(payload.filters) && payload.filters.length === 1 && payload.filters[0].op === 'eq') {
       const fCol = sanitizeIdent(payload.filters[0].column);
       const fVal = payload.filters[0].value;
@@ -1973,11 +1536,6 @@ export async function executeUpdate(payload: QueryPayload) {
           return { data: trimRes.rows, error: null };
         }
       }
-    }
-
-    const fallbackUpdated = await tryUpdateExistingRowInPlace(table, values, validCols);
-    if (fallbackUpdated && fallbackUpdated.length > 0) {
-      return { data: fallbackUpdated, error: null };
     }
 
     return { data: [], error: null };
@@ -1998,6 +1556,9 @@ export async function executeDelete(payload: QueryPayload) {
   const colTypes = tableColumnTypesCache.get(table);
   const params: any[] = [];
   const whereSql = buildWhereClause(payload, params, validCols, colTypes);
+  if (!whereSql) {
+    return { data: [], error: null };
+  }
   const deleteSql = `DELETE FROM "${table}" ${whereSql} RETURNING *`;
 
   try {

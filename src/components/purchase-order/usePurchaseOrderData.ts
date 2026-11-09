@@ -589,10 +589,19 @@ export function usePurchaseOrderData({
             const m = String(mr || '').trim().match(/(\d+)$/);
             return m ? parseInt(m[1], 10) : 0;
           };
+          const canonicalKey = (mr: string): string => {
+            const seq = extractSeq(mr);
+            return seq > 0 ? `MR_${seq}` : String(mr || '').trim().toUpperCase();
+          };
           const uniqueInspByMr = new Map<string, any>();
           matchingMatReceipts.forEach((insp: any) => {
-            const mrKey = String(insp.mr_no || insp.arrival_no || '').trim().toUpperCase();
-            if (mrKey && !uniqueInspByMr.has(mrKey)) {
+            const rawMr = String(insp.mr_no || insp.arrival_no || '').trim();
+            if (!rawMr) return;
+            const mrKey = canonicalKey(rawMr);
+            const existing = uniqueInspByMr.get(mrKey);
+            const hasGrid = Boolean(insp.grid_details || insp.details);
+            const existingHasGrid = Boolean(existing?.grid_details || existing?.details);
+            if (!existing || (!existingHasGrid && hasGrid)) {
               uniqueInspByMr.set(mrKey, insp);
             }
           });
@@ -600,7 +609,7 @@ export function usePurchaseOrderData({
             const seqA = extractSeq(a.mr_no || a.arrival_no || '');
             const seqB = extractSeq(b.mr_no || b.arrival_no || '');
             if (seqA > 0 && seqB > 0 && seqA !== seqB) return seqA - seqB;
-            return String(a.mr_date || a.date || '').localeCompare(String(b.mr_date || b.date || ''));
+            return String(a.arrival_date || a.mr_date || a.date || '').localeCompare(String(b.arrival_date || b.mr_date || b.date || ''));
           });
 
           if (sortedInsps.length > 0) {
@@ -608,6 +617,7 @@ export function usePurchaseOrderData({
             let inspSumMt = 0;
             sortedInsps.forEach((insp: any, idx: number) => {
               const isLast = idx === sortedInsps.length - 1;
+              const mrKey = canonicalKey(insp.mr_no || insp.arrival_no || '');
               let gMt = 0;
               let nMt = 0;
               let gItems: any[] = [];
@@ -618,36 +628,48 @@ export function usePurchaseOrderData({
                 try { gItems = typeof insp.details === 'string' ? JSON.parse(insp.details) : insp.details; } catch (_e) {}
               }
               if (Array.isArray(gItems) && gItems.length > 0) {
-                gItems.forEach((it: any) => {
+                const seenSrl = new Set<string>();
+                gItems.forEach((it: any, itIdx: number) => {
+                  if (!it || typeof it !== 'object') return;
+                  const itMr = String(it.mr_no || '').trim();
+                  if (itMr && canonicalKey(itMr) !== mrKey) return;
                   let g = Number(it.challan_gross_wt ?? it.receipt_gross_wt ?? it.gross_weight ?? 0);
+                  let n = Number(it.final_receipt_wt ?? it.reduced_weight ?? it.netto_pnto ?? 0);
+                  if (g <= 0 && n <= 0) return;
+                  const srl = it.srl_no !== undefined && it.srl_no !== null && String(it.srl_no).trim() !== ''
+                    ? `SRL_${String(it.srl_no).trim()}`
+                    : `ROW_${itIdx}_${g}_${n}`;
+                  if (seenSrl.has(srl)) return;
+                  seenSrl.add(srl);
+
                   if (g >= 500) g = g / 1000;
                   else if (g > 50 && g < 500) g = g / 10;
                   gMt += g;
 
-                  let n = Number(it.final_receipt_wt ?? it.reduced_weight ?? it.netto_pnto ?? 0);
                   if (n >= 500) n = n / 1000;
                   else if (n > 50 && n < 500) n = n / 10;
                   nMt += n;
                 });
               }
-              if (gMt <= 0) {
-                let g = Number(insp.challan_gross_wt || insp.receipt_gross_wt || insp.gross_weight || 0);
-                if (g >= 500) g = g / 1000;
-                else if (g > 50 && g < 500) g = g / 10;
-                gMt = g;
+              let topG = Number(insp.challan_gross_wt || insp.receipt_gross_wt || insp.gross_weight || 0);
+              if (topG >= 500) topG = topG / 1000;
+              else if (topG > 50 && topG < 500) topG = topG / 10;
+
+              let topN = Number(insp.final_receipt_wt || insp.total_final_receipt_wt || insp.reduced_weight || 0);
+              if (topN >= 500) topN = topN / 1000;
+              else if (topN > 50 && topN < 500) topN = topN / 10;
+
+              if (gMt <= 0 && topG > 0) gMt = topG;
+              if (nMt <= 0 && topN > 0) {
+                nMt = (gMt > 0 && topN > gMt + 0.001) ? gMt : topN;
               }
-              if (nMt <= 0) {
-                let n = Number(insp.final_receipt_wt || insp.total_final_receipt_wt || insp.reduced_weight || 0);
-                if (n >= 500) n = n / 1000;
-                else if (n > 50 && n < 500) n = n / 10;
-                nMt = n;
-              }
+              if (gMt > 0 && nMt > gMt + 0.001) nMt = gMt;
               if (gMt <= 0) gMt = nMt;
               if (nMt <= 0) nMt = gMt;
               inspSumMt += (isMulti && isLast) ? gMt : nMt;
               if (isLast) {
                 lastInspMrNo = String(insp.mr_no || insp.arrival_no || '').trim();
-                lastInspMrDate = String(insp.mr_date || insp.date || insp.arrival_date || '').trim();
+                lastInspMrDate = String(insp.arrival_date || insp.mr_date || insp.date || '').trim();
               }
             });
             if (inspSumMt > 0) {
@@ -769,7 +791,13 @@ export function usePurchaseOrderData({
                               dedMap[targetPoClean] ||
                               (saudaNoStr ? (dedMap[saudaNoStr.toUpperCase()] || dedMap[targetSaudaClean]) : null);
 
-          dedMap[poNoStr.toUpperCase()] = existingDed ? { ...existingDed, ...dedPayload } : dedPayload;
+          const isExistingLocked = existingDed &&
+                                   String(existingDed.status || '').toLowerCase() === 'approved' &&
+                                   Number(existingDed.total_received_mt || 0) > 0;
+
+          dedMap[poNoStr.toUpperCase()] = existingDed
+            ? (isExistingLocked ? { ...dedPayload, ...existingDed } : { ...existingDed, ...dedPayload })
+            : dedPayload;
           dedMap[targetPoClean] = dedMap[poNoStr.toUpperCase()];
         }
 

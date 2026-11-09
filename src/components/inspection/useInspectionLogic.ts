@@ -205,13 +205,16 @@ export function useInspectionLogic() {
 
         if (existingIdx >= 0) {
           const cur = nextRows[existingIdx];
-          nextRows[existingIdx] = {
-            ...cur,
-            deduction_type: matched.ruleName,
-            deduction_rate: matched.rate,
-            deduction_qty: matched.qty,
-            deduction_amount: matched.amount
-          };
+          const hasSavedCustomAmount = Number(cur.deduction_amount) > 0 && Number(cur.deduction_rate) > 0;
+          if (!hasSavedCustomAmount) {
+            nextRows[existingIdx] = {
+              ...cur,
+              deduction_type: matched.ruleName,
+              deduction_rate: matched.rate,
+              deduction_qty: matched.qty,
+              deduction_amount: matched.amount
+            };
+          }
         } else {
           const isFirstRowEmpty =
             nextRows.length === 1 &&
@@ -437,15 +440,15 @@ export function useInspectionLogic() {
             });
           }
           if (dMasterRes && dMasterRes.data && Array.isArray(dMasterRes.data)) {
-            setDeductionMasterList(dMasterRes.data);
+            setDeductionMasterList(prev => JSON.stringify(prev) === JSON.stringify(dMasterRes.data) ? prev : dMasterRes.data);
           } else {
             const fallbackDeds = await dbModule.fetchAll('deduction_master').catch(() => []);
             if (Array.isArray(fallbackDeds)) {
-              setDeductionMasterList(fallbackDeds);
+              setDeductionMasterList(prev => JSON.stringify(prev) === JSON.stringify(fallbackDeds) ? prev : fallbackDeds);
             }
           }
           if (moistRes && moistRes.data && Array.isArray(moistRes.data) && moistRes.data.length > 0) {
-            setMoistureLogicRules(moistRes.data);
+            setMoistureLogicRules(prev => JSON.stringify(prev) === JSON.stringify(moistRes.data) ? prev : moistRes.data);
           }
 
           const dedData = (dedPrimaryRes && dedPrimaryRes.data && dedPrimaryRes.data.length > 0)
@@ -689,7 +692,7 @@ export function useInspectionLogic() {
         const [pdmRes, scpRes, midRes, pmRes, gradesRes, agenciesRes, markasRes, scpHeaderRes] = await Promise.all([
           supabase.from('purchase_detail_master').select('*').or(`po_no.eq.${poClean},po_no.ilike.${poUpper}`),
           supabase.from('sauda_check_point_details').select('*').or(`po_no.eq.${poClean},po_no.ilike.${poUpper}`),
-          supabase.from('material_inspection_details').select('*').or(`mr_no.eq.${poClean},mr_no.ilike.${poUpper},po_no.eq.${poClean}`),
+          supabase.from('material_inspection_details').select('*').or(`mr_no.eq.${poClean},mr_no.ilike.${poUpper}`),
           supabase.from('purchase_master').select('*').or(`po_no.eq.${poClean},po_no.ilike.${poUpper}`),
           supabase.from('grade_master').select('*'),
           supabase.from('agency_master').select('*'),
@@ -1501,9 +1504,17 @@ export function useInspectionLogic() {
               expanded: false
             };
             const computedWeights = computeDetailRowWeights(row);
-            Object.assign(row, computedWeights);
+            const savedFinalWt = Number(d.final_receipt_wt || 0);
+            const savedReducedWt = Number(d.reduced_weight || 0);
+            const savedGrossWt = Number(row.challan_gross_wt || row.receipt_gross_wt || 0);
+            row.reduced_weight = (savedReducedWt > 0 && (savedGrossWt <= 0 || savedReducedWt <= savedGrossWt + 0.001))
+              ? savedReducedWt
+              : computedWeights.reduced_weight;
+            row.final_receipt_wt = (savedFinalWt > 0 && (savedGrossWt <= 0 || savedFinalWt <= savedGrossWt + 0.001))
+              ? savedFinalWt
+              : computedWeights.final_receipt_wt;
             row.qty_in_mt = calculateQtyInMt(row);
-            row.amount = calculateRowAmount(row);
+            row.amount = (Number(d.amount) > 0) ? Number(d.amount) : calculateRowAmount(row);
             return row;
           });
           setDetailRows(mappedRows);

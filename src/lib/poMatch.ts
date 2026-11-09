@@ -296,12 +296,12 @@ export function compareSaudaTempArrival(
 
   const mismatches: FieldMismatch[] = [];
 
-  // Parse grid_details from arrival if present
+  // Parse grid_details from arrival into a fresh array (NEVER mutate arrival.grid_details in-place!)
   let arrivalGridRows: any[] = [];
   if (arrival.grid_details) {
     try {
-      arrivalGridRows = typeof arrival.grid_details === 'string' ? JSON.parse(arrival.grid_details) : arrival.grid_details;
-      if (!Array.isArray(arrivalGridRows)) arrivalGridRows = [];
+      const parsed = typeof arrival.grid_details === 'string' ? JSON.parse(arrival.grid_details) : arrival.grid_details;
+      arrivalGridRows = Array.isArray(parsed) ? [...parsed] : [];
     } catch (_e) {
       arrivalGridRows = [];
     }
@@ -309,7 +309,7 @@ export function compareSaudaTempArrival(
 
   if (Array.isArray(arrivalLorryReceipts)) {
     arrivalLorryReceipts.forEach(item => {
-      if (item && item.grid_details) {
+      if (item && item !== arrival && item.grid_details) {
         try {
           const g = typeof item.grid_details === 'string' ? JSON.parse(item.grid_details) : item.grid_details;
           if (Array.isArray(g)) arrivalGridRows.push(...g);
