@@ -14,6 +14,7 @@ import {
   UserCheck,
   DollarSign,
   Clock,
+  Scale,
   RefreshCcw,
   Download,
   Printer
@@ -55,7 +56,8 @@ export type ReportNavSection =
   | 'outstanding_po'
   | 'mr_advance_eligible'
   | 'mr_apmc_details'
-  | 'mr_delivery_claim';
+  | 'mr_delivery_claim'
+  | 'short_excess_deduction';
 
 interface ReportsProps {
   onClose?: () => void;
@@ -338,6 +340,7 @@ export default function Reports({ onClose }: ReportsProps) {
                 { id: 'mr_advance_eligible' as const, label: '11. MR Eligible for Advance', icon: UserCheck, badge: 'Advance' },
                 { id: 'mr_apmc_details' as const, label: '12. MR Wise APMC Details', icon: DollarSign, badge: 'APMC' },
                 { id: 'mr_delivery_claim' as const, label: '13. MR Wise Delivery Claim', icon: Clock, badge: 'Claim' },
+                { id: 'short_excess_deduction' as const, label: '14. Short and Excess Deduction', icon: Scale, badge: 'Deduction' },
               ].map(tab => {
                 const Icon = tab.icon;
                 const isActive = activeSection === tab.id;
@@ -419,11 +422,12 @@ export default function Reports({ onClose }: ReportsProps) {
               <ContributionView dataset={dataset} onDrillDown={handleOpenDrillDown} />
             )}
 
-            {/* 10-13. Main Report Sections (Outstanding PO, MR Advance Eligible, MR APMC Details, MR Delivery Claim) */}
+            {/* 10-14. Main Report Sections (Outstanding PO, MR Advance Eligible, MR APMC Details, MR Delivery Claim, Short & Excess Deduction) */}
             {(activeSection === 'outstanding_po' ||
               activeSection === 'mr_advance_eligible' ||
               activeSection === 'mr_apmc_details' ||
-              activeSection === 'mr_delivery_claim') && (
+              activeSection === 'mr_delivery_claim' ||
+              activeSection === 'short_excess_deduction') && (
               <NewCustomReportsView initialTab={activeSection} filters={filters} />
             )}
 

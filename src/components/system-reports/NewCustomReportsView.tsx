@@ -6,6 +6,11 @@ import {
   Briefcase,
   UserCheck,
   Clock,
+  Scale,
+  Lock,
+  Eye,
+  ChevronDown,
+  ChevronUp,
   RefreshCcw,
   CheckCircle2,
   ShieldCheck
@@ -13,8 +18,15 @@ import {
 import { supabase } from '../../lib/supabase';
 import { exportToCSV } from '../../utils/exportHelpers';
 import { ReportFilterCriteria } from '../../services/systemReportEngine';
+import { calculateWeightTolerance } from '../../lib/weightTolerance';
+import { ExcessShortSettlementModal } from '../ExcessShortSettlementModal';
 
-export type NewReportTab = 'outstanding_po' | 'mr_advance_eligible' | 'mr_apmc_details' | 'mr_delivery_claim';
+export type NewReportTab =
+  | 'outstanding_po'
+  | 'mr_advance_eligible'
+  | 'mr_apmc_details'
+  | 'mr_delivery_claim'
+  | 'short_excess_deduction';
 
 interface NewCustomReportsViewProps {
   initialTab?: NewReportTab;
@@ -41,6 +53,12 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
   // Report 4: MR Delivery Claim State
   const [deliveryClaimList, setDeliveryClaimList] = useState<any[]>([]);
 
+  // Report 5 (Tab 14): Short and Excess Deduction State (From Sauda Check Point -> Extra & Short Weight & Rate Settlement)
+  const [shortExcessList, setShortExcessList] = useState<any[]>([]);
+  const [shortExcessFilter, setShortExcessFilter] = useState<'all_deductions' | 'excess' | 'short' | 'all_records'>('all_deductions');
+  const [expandedShortExcessPo, setExpandedShortExcessPo] = useState<string | null>(null);
+  const [selectedSettlementPo, setSelectedSettlementPo] = useState<any | null>(null);
+
   useEffect(() => {
     if (initialTab) {
       setActiveSubReport(initialTab);
@@ -63,7 +81,9 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
           millInspRes,
           millInspDetailRes,
           matMismatchRes,
-          sattaMismatchRes
+          sattaMismatchRes,
+          scpDedRes,
+          sattaBaseRatesRes
         ] = await Promise.all([
           supabase.from('purchase_master').select('*').order('created_at', { ascending: false }),
           supabase.from('final_arrival').select('*').order('date', { ascending: false }),
@@ -75,7 +95,9 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
           supabase.from('mill_inspection_master').select('*').order('created_at', { ascending: false }).then(r => r, () => ({ data: [] })),
           supabase.from('mill_inspection_detail').select('*').then(r => r, () => ({ data: [] })),
           supabase.from('material_mismatch').select('*').then(r => r, () => ({ data: [] })),
-          supabase.from('satta_mismatch').select('*').then(r => r, () => ({ data: [] }))
+          supabase.from('satta_mismatch').select('*').then(r => r, () => ({ data: [] })),
+          supabase.from('sauda_check_point_deductions').select('*').order('updated_at', { ascending: false }).then(r => r, () => ({ data: [] })),
+          supabase.from('satta_base_rates').select('*').order('effective_date', { ascending: false }).then(r => r, () => ({ data: [] }))
         ]);
 
         const rawPos = poRes.data || [];
@@ -88,6 +110,8 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
         const rawMillInspDetails = (millInspDetailRes as any)?.data || [];
         const rawMatMismatches = (matMismatchRes as any)?.data || [];
         const rawSattaMismatches = (sattaMismatchRes as any)?.data || [];
+        const rawScpDeductions = (scpDedRes as any)?.data || [];
+        const rawSattaBaseRates = (sattaBaseRatesRes as any)?.data || [];
 
         const cleanPoKey = (s: any) =>
           String(s || '')
@@ -796,6 +820,379 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
         });
 
         setDeliveryClaimList(deliveryClaimRecords);
+
+        // =========================================================================
+        // 5. Process 14. Short and Excess Deduction (From Sauda Check Point -> Extra & Short Weight & Rate Settlement)
+        // =========================================================================
+        const getTd5RateForDate = (dateStr?: string): number => {
+          if (!dateStr) return 0;
+          const cleanDate = String(dateStr).split('T')[0];
+          const exact = rawSattaBaseRates.find((r: any) => String(r.effective_date || r.date || '').split('T')[0] === cleanDate);
+          if (exact && Number(exact.td5_base_rate || exact.base_rate || exact.rate || 0) > 0) {
+            return Number(exact.td5_base_rate || exact.base_rate || exact.rate);
+          }
+          const sortedBefore = rawSattaBaseRates
+            .filter((r: any) => String(r.effective_date || r.date || '').split('T')[0] <= cleanDate)
+            .sort((a: any, b: any) => String(b.effective_date || b.date || '').localeCompare(String(a.effective_date || a.date || '')));
+          if (sortedBefore.length > 0) {
+            return Number(sortedBefore[0].td5_base_rate || sortedBefore[0].base_rate || sortedBefore[0].rate || 0);
+          }
+          return 0;
+        };
+
+        const extractMrSeq = (mr: any): number => {
+          const m = String(mr || '').trim().match(/(\d+)$/);
+          return m ? parseInt(m[1], 10) : 0;
+        };
+
+        const canonicalMrKey = (mr: any): string => {
+          const seq = extractMrSeq(mr);
+          return seq > 0 ? `MR_${seq}` : String(mr || '').trim().toUpperCase();
+        };
+
+        // Index sauda_check_point and purchase_master by PO key
+        const scpByPoKey = new Map<string, any>();
+        [...rawPos, ...rawCheckpoints].forEach((cp: any) => {
+          const k = cleanPoKey(cp.po_no || cp.contract_po_no || cp.po_number);
+          if (!k) return;
+          const existing = scpByPoKey.get(k) || {};
+          scpByPoKey.set(k, { ...existing, ...cp });
+        });
+
+        // Index saved sauda_check_point_deductions by PO key
+        const savedDedByPoKey = new Map<string, any>();
+        rawScpDeductions.forEach((d: any) => {
+          const k = cleanPoKey(d.po_no || d.sauda_no);
+          if (!k) return;
+          if (!savedDedByPoKey.has(k)) {
+            savedDedByPoKey.set(k, d);
+          }
+        });
+
+        // Collect all candidate PO keys from saved deductions and checkpoints
+        const allShortExcessPoKeys = new Set<string>([
+          ...Array.from(savedDedByPoKey.keys()),
+          ...Array.from(scpByPoKey.keys())
+        ]);
+
+        const shortExcessRecords: any[] = [];
+
+        allShortExcessPoKeys.forEach((poKey) => {
+          const cp = scpByPoKey.get(poKey);
+          const savedDed = savedDedByPoKey.get(poKey);
+          if (!cp && !savedDed) return;
+
+          const poNo = String(savedDed?.po_no || cp?.po_no || cp?.contract_po_no || poKey).trim();
+          const poSuffix = poKey.split('/').pop()?.trim() || '';
+
+          const saudaDate = String(
+            cp?.s_date || cp?.po_date || cp?.date || cp?.contract_date || savedDed?.created_at || ''
+          ).split('T')[0];
+
+          const supplier = String(
+            savedDed?.supplier || cp?.supplier || cp?.supplier_name || cp?.supp_name || 'UNKNOWN SUPPLIER'
+          ).toUpperCase().trim();
+
+          const broker = String(
+            savedDed?.broker || cp?.broker || cp?.broker_name || 'DIRECT'
+          ).toUpperCase().trim();
+
+          const area = String(cp?.area || cp?.location || '').toUpperCase().trim();
+          const agency = String(cp?.agency || '').toUpperCase().trim();
+          const unit = String(cp?.purchase_unit_name || cp?.unit_type || cp?.unit || 'BALES').toUpperCase().trim();
+
+          const contractMt = Number(
+            savedDed?.contract_weight_mt ||
+            cp?.total_contract_mt ||
+            cp?.contract_weight_mt ||
+            cp?.total_wt_in_ton ||
+            cp?.weight_mt ||
+            cp?.contract_mt ||
+            (Number(cp?.weight_qtl) > 0 ? Number(cp.weight_qtl) / 10 : 0) ||
+            0
+          );
+
+          if (contractMt <= 0 && !savedDed) return;
+
+          // Match Mill Inspections for this PO
+          const matchedInsps = rawMatInsp.filter((insp: any) => {
+            const iPo = cleanPoKey(insp.po_no || insp.mill_po_no || insp.contract_po_no || insp.sauda_no);
+            if (!iPo) return false;
+            if (iPo === poKey) return true;
+            if (poSuffix.length >= 3 && iPo.endsWith(poSuffix)) return true;
+            return false;
+          });
+
+          const uniqueByMr = new Map<string, any>();
+          matchedInsps.forEach((insp: any) => {
+            const rawMr = String(insp.mr_no || insp.arrival_no || '').trim();
+            if (!rawMr) return;
+            const mKey = canonicalMrKey(rawMr);
+            const existing = uniqueByMr.get(mKey);
+            const hasGrid = Boolean(insp.grid_details || insp.details);
+            const existingHasGrid = Boolean(existing?.grid_details || existing?.details);
+            if (!existing || (!existingHasGrid && hasGrid)) {
+              uniqueByMr.set(mKey, insp);
+            }
+          });
+
+          const sortedInsps = Array.from(uniqueByMr.values()).sort((a: any, b: any) => {
+            const seqA = extractMrSeq(a.mr_no || a.arrival_no || '');
+            const seqB = extractMrSeq(b.mr_no || b.arrival_no || '');
+            if (seqA > 0 && seqB > 0 && seqA !== seqB) return seqA - seqB;
+            return String(a.arrival_date || a.mr_date || a.date || '').localeCompare(
+              String(b.arrival_date || b.mr_date || b.date || '')
+            );
+          });
+
+          const saudaRate =
+            Number(savedDed?.sauda_rate) ||
+            Number(cp?.b_rate) ||
+            Number(cp?.rate_qntl) ||
+            Number(cp?.rate) ||
+            getTd5RateForDate(saudaDate) ||
+            12900;
+
+          const mrBreakdown: any[] = [];
+          let computedTotalClaimMt = 0;
+          let lastMrNo = String(savedDed?.last_mr_no || '').trim();
+          let lastMrDate = String(savedDed?.last_arrival_date || '').split('T')[0];
+
+          if (sortedInsps.length > 0) {
+            const isMulti = sortedInsps.length > 1;
+            sortedInsps.forEach((insp: any, idx: number) => {
+              const isLast = idx === sortedInsps.length - 1;
+              const mrNoStr = toMillInspectionMrNo(insp.mr_no || insp.arrival_no || '');
+              const mKey = canonicalMrKey(mrNoStr);
+              const mrDateStr = String(insp.arrival_date || insp.mr_date || insp.date || '').split('T')[0];
+
+              let gMt = 0;
+              let nMt = 0;
+              let bags = 0;
+              let gradeStr = String(insp.grade || insp.selected_grade || cp?.grade || 'TD6').trim();
+              let markaStr = String(insp.marka || 'NO MARK').trim();
+              let cropYearStr = String(insp.crop_year || '2026-27').trim();
+
+              let gItems: any[] = [];
+              if (insp.grid_details) {
+                try {
+                  gItems = typeof insp.grid_details === 'string' ? JSON.parse(insp.grid_details) : insp.grid_details;
+                } catch (_) {}
+              }
+              if ((!gItems || !gItems.length) && insp.details) {
+                try {
+                  gItems = typeof insp.details === 'string' ? JSON.parse(insp.details) : insp.details;
+                } catch (_) {}
+              }
+
+              if (Array.isArray(gItems) && gItems.length > 0) {
+                const seenSrl = new Set<string>();
+                gItems.forEach((it: any, itIdx: number) => {
+                  if (!it || typeof it !== 'object') return;
+                  const itMr = String(it.mr_no || '').trim();
+                  if (itMr && canonicalMrKey(itMr) !== mKey) return;
+                  let g = Number(it.challan_gross_wt ?? it.receipt_gross_wt ?? it.gross_weight ?? 0);
+                  let n = Number(it.final_receipt_wt ?? it.reduced_weight ?? it.netto_pnto ?? 0);
+                  if (g <= 0 && n <= 0) return;
+                  const srl =
+                    it.srl_no !== undefined && it.srl_no !== null && String(it.srl_no).trim() !== ''
+                      ? `SRL_${String(it.srl_no).trim()}`
+                      : `ROW_${itIdx}_${g}_${n}`;
+                  if (seenSrl.has(srl)) return;
+                  seenSrl.add(srl);
+
+                  if (g >= 500) g = g / 1000;
+                  else if (g > 50 && g < 500) g = g / 10;
+                  gMt += g;
+
+                  if (n >= 500) n = n / 1000;
+                  else if (n > 50 && n < 500) n = n / 10;
+                  nMt += n;
+
+                  bags += Number(it.quantity ?? it.packets ?? it.bags ?? 0) || 0;
+                  if (it.grade || it.quality) gradeStr = String(it.grade || it.quality).trim();
+                  if (it.marka) markaStr = String(it.marka).trim();
+                  if (it.crop_year) cropYearStr = String(it.crop_year).trim();
+                });
+              }
+
+              let topG = Number(insp.challan_gross_wt || insp.receipt_gross_wt || insp.gross_weight || 0);
+              if (topG >= 500) topG = topG / 1000;
+              else if (topG > 50 && topG < 500) topG = topG / 10;
+
+              let topN = Number(insp.final_receipt_wt || insp.total_final_receipt_wt || insp.reduced_weight || 0);
+              if (topN >= 500) topN = topN / 1000;
+              else if (topN > 50 && topN < 500) topN = topN / 10;
+
+              if (gMt <= 0 && topG > 0) gMt = topG;
+              if (nMt <= 0 && topN > 0) {
+                nMt = gMt > 0 && topN > gMt + 0.001 ? gMt : topN;
+              }
+              if (gMt > 0 && nMt > gMt + 0.001) nMt = gMt;
+              if (gMt <= 0) gMt = nMt;
+              if (nMt <= 0) nMt = gMt;
+              if (bags <= 0) bags = Number(insp.quantity || insp.total_quantity || insp.bags || 0) || 0;
+
+              const finalClaimMt = isMulti && isLast ? gMt : nMt;
+              computedTotalClaimMt += finalClaimMt;
+
+              if (isLast) {
+                lastMrNo = mrNoStr;
+                lastMrDate = mrDateStr;
+              }
+
+              const mrRate = getTd5RateForDate(mrDateStr) || Number(savedDed?.satta_rate) || saudaRate;
+              const mrRateDiff = Math.abs(saudaRate - mrRate);
+
+              mrBreakdown.push({
+                mrNo: mrNoStr,
+                mrDate: mrDateStr,
+                grade: gradeStr,
+                marka: markaStr,
+                cropYear: cropYearStr,
+                bags,
+                grossMt: Number(gMt.toFixed(3)),
+                grossKg: Math.round(gMt * 1000),
+                netMt: Number(nMt.toFixed(3)),
+                netKg: Math.round(nMt * 1000),
+                finalClaimMt: Number(finalClaimMt.toFixed(3)),
+                finalClaimKg: Math.round(finalClaimMt * 1000),
+                finalClaimQtl: Number((finalClaimMt * 10).toFixed(2)),
+                claimBasis: isMulti && isLast ? 'Gross (Last Lorry)' : 'Net',
+                saudaSattaRate: saudaRate,
+                mrSattaRate: mrRate,
+                rateDiff: mrRateDiff
+              });
+            });
+          }
+
+          const totalReceivedMt =
+            computedTotalClaimMt > 0
+              ? Number(computedTotalClaimMt.toFixed(3))
+              : Number(savedDed?.total_received_mt || cp?.received_weight_mt || 0);
+
+          if (totalReceivedMt <= 0 && !savedDed) return;
+
+          const tol = calculateWeightTolerance(contractMt, totalReceivedMt, unit);
+          let variationType = String(savedDed?.variation_type || '').toLowerCase();
+          if (!variationType || variationType === 'pending_arrival') {
+            if (tol.isOverDelivery) variationType = 'excess';
+            else if (tol.isUnderDelivery) variationType = 'short';
+            else variationType = 'within_tolerance';
+          }
+
+          const lastMrRate =
+            Number(savedDed?.satta_rate) ||
+            (lastMrDate ? getTd5RateForDate(lastMrDate) : 0) ||
+            (mrBreakdown.length > 0 ? mrBreakdown[mrBreakdown.length - 1].mrSattaRate : saudaRate);
+
+          const rateDiff =
+            Number(savedDed?.applicable_rate) ||
+            Number(savedDed?.rate_difference) ||
+            (variationType === 'excess'
+              ? Math.max(0, saudaRate - lastMrRate)
+              : variationType === 'short'
+              ? Math.max(0, lastMrRate - saudaRate)
+              : Math.abs(saudaRate - lastMrRate));
+
+          let deductionQtyMt = Number(savedDed?.deduction_qty_mt || 0);
+          if (deductionQtyMt <= 0) {
+            if (variationType === 'excess') {
+              deductionQtyMt = Math.max(0, Number((totalReceivedMt - contractMt).toFixed(3)));
+            } else if (variationType === 'short') {
+              deductionQtyMt = Math.max(0, Number((tol.shortUnderToleranceMt || 0).toFixed(3)));
+            }
+          }
+          const deductionQtyKg = Math.round(deductionQtyMt * 1000);
+          const deductionQtyQtl = Number((deductionQtyMt * 10).toFixed(2));
+
+          // Always ensure Quintal * Rate calculation (e.g. 36.35 Qtl * 600 = 21,810.00)
+          const expectedQtlDeduction = Math.round(deductionQtyQtl * rateDiff * 100) / 100;
+          let rawDedAmt = Number(savedDed?.deduction_amount ?? cp?.excess_short_deduction ?? 0);
+          if (expectedQtlDeduction > 0 && (rawDedAmt <= 0 || Math.abs(rawDedAmt - expectedQtlDeduction * 100) < 5)) {
+            rawDedAmt = expectedQtlDeduction;
+          }
+
+          const linkedMrsStr =
+            mrBreakdown.length > 0
+              ? mrBreakdown.map(m => m.mrNo).join(', ')
+              : String(savedDed?.arrival_numbers || lastMrNo || '-');
+
+          const saudaMaterialValue = Math.round(contractMt * 10 * saudaRate);
+          const totalFinalPayable = Math.max(0, saudaMaterialValue - rawDedAmt);
+
+          const isLocked = Boolean(
+            savedDed &&
+              (String(savedDed.status || '').toLowerCase() === 'approved' ||
+                String(savedDed.status || '').toLowerCase() === 'settled' ||
+                String(savedDed.status || '').toLowerCase() === 'locked')
+          ) || Boolean(cp?.is_settled || String(cp?.excess_short_status || '').toLowerCase() === 'settled');
+
+          // Include if it has a saved deduction record OR has excess/short variation
+          if (savedDed || variationType === 'excess' || variationType === 'short' || rawDedAmt > 0) {
+            shortExcessRecords.push({
+              poNo,
+              saudaDate,
+              supplier,
+              broker,
+              area,
+              agency,
+              unit,
+              linkedMrs: linkedMrsStr,
+              mrCount: mrBreakdown.length || linkedMrsStr.split(',').filter(Boolean).length,
+              lastMrNo: lastMrNo || (mrBreakdown.length > 0 ? mrBreakdown[mrBreakdown.length - 1].mrNo : '-'),
+              lastMrDate: lastMrDate || (mrBreakdown.length > 0 ? mrBreakdown[mrBreakdown.length - 1].mrDate : '-'),
+              contractMt: Number(contractMt.toFixed(3)),
+              contractQtl: Number((contractMt * 10).toFixed(2)),
+              contractKg: Math.round(contractMt * 1000),
+              totalReceivedMt: Number(totalReceivedMt.toFixed(3)),
+              totalReceivedQtl: Number((totalReceivedMt * 10).toFixed(2)),
+              totalReceivedKg: Math.round(totalReceivedMt * 1000),
+              variationType,
+              policyLabel:
+                variationType === 'excess'
+                  ? 'No 3% Tolerance on Excess'
+                  : variationType === 'short'
+                  ? '3% Short Weight Exemption'
+                  : 'Within 3% Tolerance',
+              deductionQtyMt,
+              deductionQtyQtl,
+              deductionQtyKg,
+              saudaRate,
+              lastMrRate,
+              rateDiff,
+              rateBasis: String(savedDed?.rate_basis || 'rate_difference'),
+              deductionAmount: rawDedAmt,
+              saudaMaterialValue,
+              totalFinalPayable,
+              formulaText: `${deductionQtyQtl.toFixed(2)} Qtl × ₹${rateDiff.toLocaleString('en-IN')}/Qtl = ₹${rawDedAmt.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+              status: isLocked ? 'SAVED & LOCKED' : 'CALCULATED',
+              isLocked,
+              approvedBy: String(savedDed?.approved_by || 'Operator (ADMIN)'),
+              mrBreakdown,
+              rawPoObject: {
+                ...(cp || {}),
+                po_no: poNo,
+                supplier,
+                broker,
+                total_contract_mt: contractMt,
+                contract_weight_mt: contractMt,
+                received_weight_mt: totalReceivedMt,
+                excess_short_deduction: rawDedAmt,
+                excess_short_status: isLocked ? 'settled' : 'pending',
+                is_settled: isLocked
+              }
+            });
+          }
+        });
+
+        // Sort with highest deduction / settled first
+        shortExcessRecords.sort((a, b) => {
+          if (b.deductionAmount !== a.deductionAmount) return b.deductionAmount - a.deductionAmount;
+          return String(b.saudaDate || '').localeCompare(String(a.saudaDate || ''));
+        });
+
+        setShortExcessList(shortExcessRecords);
       }
     } catch (err) {
       console.error('Failed to load custom reports data:', err);
@@ -865,6 +1262,26 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
     });
   }, [deliveryClaimList, searchQuery, filters]);
 
+  // Filter 14. Short and Excess Deduction List
+  const filteredShortExcessList = useMemo(() => {
+    return shortExcessList.filter(item => {
+      if (shortExcessFilter === 'all_deductions' && !(item.deductionAmount > 0 || item.isLocked)) return false;
+      if (shortExcessFilter === 'excess' && item.variationType !== 'excess') return false;
+      if (shortExcessFilter === 'short' && item.variationType !== 'short') return false;
+      return matchesFilters(
+        item.lastMrDate || item.saudaDate,
+        item.supplier,
+        item.broker,
+        item.area,
+        item.agency,
+        item.poNo,
+        item.linkedMrs,
+        filters,
+        searchQuery
+      );
+    });
+  }, [shortExcessList, shortExcessFilter, searchQuery, filters]);
+
   // Average Detention / Delay Days for Delivery Claim Report
   const avgDetentionDays = useMemo(() => {
     if (filteredDeliveryClaimList.length === 0) return '0';
@@ -897,6 +1314,64 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
       const headers = ['Mill Inspection No', 'PO No', 'PO Date', 'Delivery Due Date', 'Supplier', 'Broker', 'Weight (Qtl)', 'Penalty Rate (Rs/Qtl/Day)', 'Detention/Delay Days', 'Delivery Claim Amount (Rs)', 'Remarks'];
       const rows = filteredDeliveryClaimList.map(r => [r.mrNo, r.poNo, r.poDate, r.deliveryToDate || '-', r.supplier, r.broker, (r.weightQtl || 0).toFixed(2), r.penaltyRate || 0, r.detentionDays, r.claimAmt.toFixed(2), r.remarks]);
       exportToCSV('MR_Wise_Delivery_Claim_Report.csv', headers, rows);
+    } else if (activeSubReport === 'short_excess_deduction') {
+      const headers = [
+        'PO No',
+        'Sauda Date',
+        'Supplier',
+        'Broker',
+        'Linked MRs',
+        'Last MR No',
+        'Last MR Date',
+        'Contract Qty (kg)',
+        'Contract Qty (MT)',
+        'Contract Qty (Qtl)',
+        'Final Receipt Claim (kg)',
+        'Final Receipt Claim (MT)',
+        'Final Receipt Claim (Qtl)',
+        'Variation Type',
+        'Policy',
+        'Deductible Weight (kg)',
+        'Deductible Weight (MT)',
+        'Deductible Weight (Qtl)',
+        'Sauda Date Satta Rate (Rs/Qtl)',
+        'Last MR Satta Rate (Rs/Qtl)',
+        'Rate Difference (Rs/Qtl)',
+        'Calculation Formula',
+        'Total Deduction Amount (Rs)',
+        'Sauda Material Value (Rs)',
+        'Total Final Payable (Rs)',
+        'Status'
+      ];
+      const rows = filteredShortExcessList.map(r => [
+        r.poNo,
+        r.saudaDate || '-',
+        r.supplier,
+        r.broker,
+        r.linkedMrs,
+        r.lastMrNo,
+        r.lastMrDate || '-',
+        r.contractKg,
+        r.contractMt.toFixed(3),
+        r.contractQtl.toFixed(2),
+        r.totalReceivedKg,
+        r.totalReceivedMt.toFixed(3),
+        r.totalReceivedQtl.toFixed(2),
+        r.variationType.toUpperCase(),
+        r.policyLabel,
+        r.deductionQtyKg,
+        r.deductionQtyMt.toFixed(3),
+        r.deductionQtyQtl.toFixed(2),
+        r.saudaRate,
+        r.lastMrRate,
+        r.rateDiff,
+        r.formulaText,
+        r.deductionAmount.toFixed(2),
+        r.saudaMaterialValue.toFixed(2),
+        r.totalFinalPayable.toFixed(2),
+        r.status
+      ]);
+      exportToCSV('Short_And_Excess_Deduction_Report.csv', headers, rows);
     }
   };
 
@@ -916,6 +1391,48 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
         </div>
 
         <div className="flex flex-wrap items-center gap-2 w-full md:w-auto justify-end">
+          {activeSubReport === 'short_excess_deduction' && (
+            <div className="flex items-center gap-1.5 bg-slate-100 p-1 rounded-xl border border-slate-200 text-xs font-bold">
+              <span className="text-slate-500 pl-1 text-[11px]">Filter:</span>
+              <button
+                type="button"
+                onClick={() => setShortExcessFilter('all_deductions')}
+                className={`px-2.5 py-1 rounded-lg transition cursor-pointer text-xs ${
+                  shortExcessFilter === 'all_deductions' ? 'bg-[#D94B5A] text-white shadow' : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                Settled / Deducted
+              </button>
+              <button
+                type="button"
+                onClick={() => setShortExcessFilter('excess')}
+                className={`px-2.5 py-1 rounded-lg transition cursor-pointer text-xs ${
+                  shortExcessFilter === 'excess' ? 'bg-purple-700 text-white shadow' : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                Excess Weight Only
+              </button>
+              <button
+                type="button"
+                onClick={() => setShortExcessFilter('short')}
+                className={`px-2.5 py-1 rounded-lg transition cursor-pointer text-xs ${
+                  shortExcessFilter === 'short' ? 'bg-amber-600 text-white shadow' : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                Short Weight Only
+              </button>
+              <button
+                type="button"
+                onClick={() => setShortExcessFilter('all_records')}
+                className={`px-2.5 py-1 rounded-lg transition cursor-pointer text-xs ${
+                  shortExcessFilter === 'all_records' ? 'bg-slate-800 text-white shadow' : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                All P.Os
+              </button>
+            </div>
+          )}
+
           {activeSubReport === 'outstanding_po' && (
             <div className="flex items-center gap-1.5 bg-slate-100 p-1 rounded-xl border border-slate-200 text-xs font-bold">
               <span className="text-slate-500 pl-1 text-[11px]">View By:</span>
@@ -1410,7 +1927,351 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
               </div>
             </div>
           )}
+
+          {/* 5. (TAB 14) SHORT AND EXCESS DEDUCTION REPORT (SAUDA CHECK POINT -> EXTRA & SHORT WEIGHT & RATE SETTLEMENT) */}
+          {activeSubReport === 'short_excess_deduction' && (
+            <div className="space-y-4">
+              {/* Summary KPI Cards */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                <div className="bg-gradient-to-br from-slate-900 to-slate-800 text-white p-3.5 rounded-2xl border border-slate-700 shadow-md space-y-1">
+                  <span className="text-[10px] uppercase font-bold text-slate-400">Total Settled / Deducted P.Os</span>
+                  <div className="text-xl font-black text-white">{filteredShortExcessList.length} P.Os</div>
+                  <span className="text-[10px] text-slate-300">
+                    Excess: {filteredShortExcessList.filter(r => r.variationType === 'excess').length} • Short: {filteredShortExcessList.filter(r => r.variationType === 'short').length}
+                  </span>
+                </div>
+
+                <div className="bg-gradient-to-br from-purple-700 to-purple-900 text-white p-3.5 rounded-2xl shadow-md space-y-1">
+                  <span className="text-[10px] uppercase font-bold text-purple-200">Total Deductible Weight</span>
+                  <div className="text-xl font-black text-white">
+                    {filteredShortExcessList.reduce((a, c) => a + c.deductionQtyQtl, 0).toFixed(2)} Qtl
+                  </div>
+                  <span className="text-[10px] text-purple-200">
+                    {filteredShortExcessList.reduce((a, c) => a + c.deductionQtyKg, 0).toLocaleString('en-IN')} kg ({filteredShortExcessList.reduce((a, c) => a + c.deductionQtyMt, 0).toFixed(3)} MT)
+                  </span>
+                </div>
+
+                <div className="bg-gradient-to-br from-amber-600 to-amber-700 text-white p-3.5 rounded-2xl shadow-md space-y-1">
+                  <span className="text-[10px] uppercase font-bold text-amber-100">Total Final Receipt Claim</span>
+                  <div className="text-xl font-black text-white">
+                    {filteredShortExcessList.reduce((a, c) => a + c.totalReceivedQtl, 0).toFixed(2)} Qtl
+                  </div>
+                  <span className="text-[10px] text-amber-100">
+                    Against {filteredShortExcessList.reduce((a, c) => a + c.contractQtl, 0).toFixed(2)} Qtl Sauda Contract
+                  </span>
+                </div>
+
+                <div className="bg-gradient-to-br from-rose-700 to-rose-800 text-white p-3.5 rounded-2xl shadow-md space-y-1">
+                  <span className="text-[10px] uppercase font-bold text-rose-200">Total Short &amp; Excess Deduction</span>
+                  <div className="text-xl font-black text-white">
+                    ₹{filteredShortExcessList.reduce((a, c) => a + c.deductionAmount, 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </div>
+                  <span className="text-[10px] text-rose-200">
+                    Formula: Deductible Quintal (Qtl) × Rate Diff / Qtl
+                  </span>
+                </div>
+              </div>
+
+              {/* Main Table */}
+              <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+                <div className="p-3 bg-slate-900 text-white border-b border-slate-800 flex flex-wrap items-center justify-between gap-2">
+                  <h3 className="text-xs font-black uppercase tracking-wider flex items-center gap-2">
+                    <Scale className="w-4 h-4 text-amber-400" />
+                    <span>14. SHORT AND EXCESS DEDUCTION REPORT (SAUDA CHECK POINT — EXTRA &amp; SHORT WEIGHT &amp; RATE SETTLEMENT)</span>
+                  </h3>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] bg-amber-400 text-slate-950 font-black px-2 py-0.5 rounded-md uppercase">
+                      sauda_check_point_deductions
+                    </span>
+                    <span className="text-[10px] bg-rose-600 text-white font-bold px-2 py-0.5 rounded-md">
+                      Policy: No 3% Tolerance on Excess • Quintal × Rate/Qtl
+                    </span>
+                  </div>
+                </div>
+
+                <div className="overflow-x-auto">
+                  <table className="w-full text-[11px] text-left border-collapse">
+                    <thead>
+                      <tr className="bg-slate-800 text-white font-bold uppercase text-[10px]">
+                        <th className="p-2.5">P.O No &amp; Sauda Date</th>
+                        <th className="p-2.5">Supplier &amp; Broker</th>
+                        <th className="p-2.5">Linked MRs &amp; Last MR</th>
+                        <th className="p-2.5 text-right">Sauda Contract Qty</th>
+                        <th className="p-2.5 text-right">Total Final Receipt Claim</th>
+                        <th className="p-2.5 text-center">Variation &amp; Policy</th>
+                        <th className="p-2.5 text-right">Final Deductible Wt</th>
+                        <th className="p-2.5 text-right">Satta Rates (Sauda vs Last MR)</th>
+                        <th className="p-2.5 text-right text-amber-300">Total Deduction (₹)</th>
+                        <th className="p-2.5 text-center">Status &amp; Trail</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-200">
+                      {filteredShortExcessList.length === 0 ? (
+                        <tr>
+                          <td colSpan={10} className="p-8 text-center text-slate-500 font-bold">
+                            No Short or Excess Weight Deduction records found matching the selected filters.
+                          </td>
+                        </tr>
+                      ) : (
+                        filteredShortExcessList.map((row, idx) => {
+                          const isExpanded = expandedShortExcessPo === row.poNo;
+                          return (
+                            <React.Fragment key={row.poNo || idx}>
+                              <tr className="hover:bg-slate-50 transition">
+                                <td className="p-2.5 font-mono">
+                                  <div className="font-black text-[#D94B5A]">{row.poNo}</div>
+                                  <div className="text-[10px] text-slate-500">Sauda: {row.saudaDate || '-'}</div>
+                                </td>
+                                <td className="p-2.5">
+                                  <div className="font-bold text-slate-900">{row.supplier}</div>
+                                  <div className="text-[10px] text-slate-500">Broker: {row.broker}</div>
+                                </td>
+                                <td className="p-2.5 font-mono">
+                                  <div className="font-bold text-slate-800 text-[10.5px]">{row.linkedMrs}</div>
+                                  <div className="text-[9.5px] text-indigo-700 font-bold">
+                                    Last MR: {row.lastMrNo} ({row.lastMrDate || '-'})
+                                  </div>
+                                </td>
+                                <td className="p-2.5 text-right font-mono">
+                                  <div className="font-bold text-slate-900">{row.contractKg.toLocaleString('en-IN')} kg</div>
+                                  <div className="text-[9.5px] text-slate-500">
+                                    ({row.contractMt.toFixed(2)} MT / {row.contractQtl.toFixed(2)} Qtl)
+                                  </div>
+                                </td>
+                                <td className="p-2.5 text-right font-mono">
+                                  <div className="font-bold text-slate-900">{row.totalReceivedKg.toLocaleString('en-IN')} kg</div>
+                                  <div className="text-[9.5px] text-slate-500">
+                                    ({row.totalReceivedMt.toFixed(3)} MT / {row.totalReceivedQtl.toFixed(2)} Qtl)
+                                  </div>
+                                </td>
+                                <td className="p-2.5 text-center">
+                                  {row.variationType === 'excess' ? (
+                                    <span className="inline-block px-2 py-0.5 text-[9.5px] font-black rounded-full bg-purple-100 text-purple-800 uppercase">
+                                      EXCESS WEIGHT
+                                    </span>
+                                  ) : row.variationType === 'short' ? (
+                                    <span className="inline-block px-2 py-0.5 text-[9.5px] font-black rounded-full bg-amber-100 text-amber-800 uppercase">
+                                      SHORT WEIGHT
+                                    </span>
+                                  ) : (
+                                    <span className="inline-block px-2 py-0.5 text-[9.5px] font-black rounded-full bg-emerald-100 text-emerald-800 uppercase">
+                                      WITHIN TOLERANCE
+                                    </span>
+                                  )}
+                                  <div className="text-[9px] text-slate-500 mt-0.5">{row.policyLabel}</div>
+                                </td>
+                                <td className="p-2.5 text-right font-mono">
+                                  <div className="font-black text-purple-800">{row.deductionQtyKg.toLocaleString('en-IN')} kg</div>
+                                  <div className="text-[9.5px] font-bold text-purple-600">
+                                    ({row.deductionQtyMt.toFixed(3)} MT / {row.deductionQtyQtl.toFixed(2)} Qtl)
+                                  </div>
+                                </td>
+                                <td className="p-2.5 text-right font-mono text-[10px]">
+                                  <div>Sauda: <span className="font-bold">₹{row.saudaRate.toLocaleString('en-IN')}/Qtl</span></div>
+                                  <div>Last MR: <span className="font-bold">₹{row.lastMrRate.toLocaleString('en-IN')}/Qtl</span></div>
+                                  <div className="text-amber-700 font-black">Diff: ₹{row.rateDiff.toLocaleString('en-IN')}/Qtl</div>
+                                </td>
+                                <td className="p-2.5 text-right font-mono">
+                                  <div className="text-xs font-black text-rose-600">
+                                    ₹{row.deductionAmount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                  </div>
+                                  <div className="text-[9.5px] font-bold text-amber-800 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded inline-block mt-0.5">
+                                    {row.deductionQtyQtl.toFixed(2)} Qtl × ₹{row.rateDiff}/Qtl
+                                  </div>
+                                </td>
+                                <td className="p-2.5 text-center space-y-1">
+                                  <div>
+                                    {row.isLocked ? (
+                                      <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[9px] font-black rounded-full bg-emerald-100 text-emerald-800">
+                                        <Lock className="w-2.5 h-2.5" />
+                                        SAVED &amp; LOCKED
+                                      </span>
+                                    ) : (
+                                      <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[9px] font-bold rounded-full bg-slate-100 text-slate-700">
+                                        CALCULATED
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="flex items-center justify-center gap-1">
+                                    {row.mrBreakdown && row.mrBreakdown.length > 0 && (
+                                      <button
+                                        type="button"
+                                        onClick={() => setExpandedShortExcessPo(isExpanded ? null : row.poNo)}
+                                        className="px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-[9.5px] font-bold inline-flex items-center gap-1 cursor-pointer transition"
+                                        title="Toggle Multi-MR Breakdown"
+                                      >
+                                        {isExpanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                                        <span>MRs ({row.mrBreakdown.length})</span>
+                                      </button>
+                                    )}
+                                    <button
+                                      type="button"
+                                      onClick={() => setSelectedSettlementPo(row.rawPoObject)}
+                                      className="px-2 py-1 bg-[#D94B5A] hover:bg-[#c03948] text-white rounded-lg text-[9.5px] font-bold inline-flex items-center gap-1 cursor-pointer shadow-xs transition"
+                                      title="Open Extra & Short Weight & Rate Settlement Trail"
+                                    >
+                                      <Eye className="w-3 h-3" />
+                                      <span>Settlement</span>
+                                    </button>
+                                  </div>
+                                </td>
+                              </tr>
+
+                              {/* Expandable Grade-Wise Multi-MR Breakdown (Matching Screenshot 2 & 3) */}
+                              {isExpanded && row.mrBreakdown && row.mrBreakdown.length > 0 && (
+                                <tr className="bg-slate-50/90">
+                                  <td colSpan={10} className="p-3 border-t border-b border-slate-200">
+                                    <div className="bg-white rounded-xl border border-slate-200 p-3 shadow-xs space-y-2">
+                                      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-2">
+                                        <div className="text-[11px] font-black uppercase text-slate-800">
+                                          MILL INSPECTION FINAL RECEIPT CLAIM (GRADE-WISE MULTI-MR BREAKDOWN) — PO: {row.poNo}
+                                        </div>
+                                        <div className="text-[10.5px] font-mono font-bold text-slate-700">
+                                          Sauda Material Value: ₹{row.saudaMaterialValue.toLocaleString('en-IN')} • Deduction: ₹{row.deductionAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 })} • Final Payable: <span className="text-emerald-700 font-black">₹{row.totalFinalPayable.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+                                        </div>
+                                      </div>
+
+                                      <table className="w-full text-[10.5px] text-left border-collapse">
+                                        <thead>
+                                          <tr className="bg-rose-50 text-slate-700 font-black uppercase text-[9.5px] border-b border-rose-100">
+                                            <th className="p-2">MR NO</th>
+                                            <th className="p-2">MR DATE</th>
+                                            <th className="p-2">GRADE</th>
+                                            <th className="p-2">MARKA</th>
+                                            <th className="p-2">CROP YEAR</th>
+                                            <th className="p-2 text-right">BAGS</th>
+                                            <th className="p-2 text-right">GROSS WEIGHT</th>
+                                            <th className="p-2 text-right">NET WEIGHT</th>
+                                            <th className="p-2 text-right bg-amber-50/60">FINAL CLAIM</th>
+                                            <th className="p-2 text-right">FINAL CLAIM (QTL)</th>
+                                            <th className="p-2 text-right">SAUDA SATTA RATE</th>
+                                            <th className="p-2 text-right">MR SATTA RATE</th>
+                                            <th className="p-2 text-right">RATE DIFF</th>
+                                          </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-slate-100 font-mono">
+                                          {row.mrBreakdown.map((m: any, mIdx: number) => (
+                                            <tr key={mIdx} className="hover:bg-slate-50">
+                                              <td className="p-2 font-black text-slate-900">{m.mrNo}</td>
+                                              <td className="p-2 text-slate-700">{m.mrDate || '-'}</td>
+                                              <td className="p-2 font-bold">{m.grade}</td>
+                                              <td className="p-2 text-slate-600">{m.marka}</td>
+                                              <td className="p-2 text-slate-600">{m.cropYear}</td>
+                                              <td className="p-2 text-right font-bold">{m.bags}</td>
+                                              <td className="p-2 text-right">
+                                                <div className="font-bold">{m.grossKg.toLocaleString('en-IN')} kg</div>
+                                                <div className="text-[9px] text-slate-400">({m.grossMt.toFixed(3)} MT)</div>
+                                              </td>
+                                              <td className="p-2 text-right">
+                                                <div className="font-bold">{m.netKg.toLocaleString('en-IN')} kg</div>
+                                                <div className="text-[9px] text-slate-400">({m.netMt.toFixed(3)} MT)</div>
+                                              </td>
+                                              <td className="p-2 text-right bg-amber-50/40">
+                                                <div className="font-black text-slate-900">{m.finalClaimKg.toLocaleString('en-IN')} kg</div>
+                                                <div className="text-[9px] text-slate-500">({m.finalClaimMt.toFixed(3)} MT)</div>
+                                                <span className={`inline-block px-1.5 py-0.2 text-[8.5px] font-bold rounded mt-0.5 ${
+                                                  m.claimBasis.includes('Gross')
+                                                    ? 'bg-amber-200 text-amber-900'
+                                                    : 'bg-blue-100 text-blue-800'
+                                                }`}>
+                                                  {m.claimBasis}
+                                                </span>
+                                              </td>
+                                              <td className="p-2 text-right font-black text-slate-900">{m.finalClaimQtl.toFixed(2)} Qtl</td>
+                                              <td className="p-2 text-right">₹{m.saudaSattaRate.toLocaleString('en-IN')} / Qtl</td>
+                                              <td className="p-2 text-right">₹{m.mrSattaRate.toLocaleString('en-IN')} / Qtl</td>
+                                              <td className="p-2 text-right font-bold">₹{m.rateDiff.toLocaleString('en-IN')}</td>
+                                            </tr>
+                                          ))}
+                                        </tbody>
+                                        <tfoot className="bg-slate-100 font-mono font-black text-[10.5px] border-t border-slate-300">
+                                          <tr>
+                                            <td colSpan={5} className="p-2 text-right uppercase">TOTAL SUMMED FINAL RECEIPT CLAIM:</td>
+                                            <td className="p-2 text-right">
+                                              {row.mrBreakdown.reduce((acc: number, cur: any) => acc + (cur.bags || 0), 0)}
+                                            </td>
+                                            <td className="p-2 text-right">
+                                              {row.mrBreakdown.reduce((acc: number, cur: any) => acc + (cur.grossKg || 0), 0).toLocaleString('en-IN')} kg
+                                            </td>
+                                            <td className="p-2 text-right">
+                                              {row.mrBreakdown.reduce((acc: number, cur: any) => acc + (cur.netKg || 0), 0).toLocaleString('en-IN')} kg
+                                            </td>
+                                            <td className="p-2 text-right bg-amber-100/70 text-indigo-900">
+                                              {row.totalReceivedKg.toLocaleString('en-IN')} kg ({row.totalReceivedMt.toFixed(3)} MT)
+                                            </td>
+                                            <td className="p-2 text-right">{row.totalReceivedQtl.toFixed(2)} Qtl</td>
+                                            <td colSpan={3} className="p-2 text-right italic text-slate-600">
+                                              {row.formulaText}
+                                            </td>
+                                          </tr>
+                                        </tfoot>
+                                      </table>
+                                    </div>
+                                  </td>
+                                </tr>
+                              )}
+                            </React.Fragment>
+                          );
+                        })
+                      )}
+                    </tbody>
+                    {filteredShortExcessList.length > 0 && (
+                      <tfoot className="bg-slate-900 text-white font-bold text-[11px] font-mono">
+                        <tr>
+                          <td colSpan={3} className="p-2.5 uppercase font-sans">
+                            GRAND TOTAL ({filteredShortExcessList.length} P.Os)
+                          </td>
+                          <td className="p-2.5 text-right">
+                            {filteredShortExcessList.reduce((a, c) => a + c.contractKg, 0).toLocaleString('en-IN')} kg
+                            <div className="text-[9.5px] text-slate-400">
+                              ({filteredShortExcessList.reduce((a, c) => a + c.contractQtl, 0).toFixed(2)} Qtl)
+                            </div>
+                          </td>
+                          <td className="p-2.5 text-right">
+                            {filteredShortExcessList.reduce((a, c) => a + c.totalReceivedKg, 0).toLocaleString('en-IN')} kg
+                            <div className="text-[9.5px] text-slate-400">
+                              ({filteredShortExcessList.reduce((a, c) => a + c.totalReceivedQtl, 0).toFixed(2)} Qtl)
+                            </div>
+                          </td>
+                          <td className="p-2.5 text-center text-slate-300 text-[10px] font-sans">
+                            Excess &amp; Short
+                          </td>
+                          <td className="p-2.5 text-right text-purple-300">
+                            {filteredShortExcessList.reduce((a, c) => a + c.deductionQtyKg, 0).toLocaleString('en-IN')} kg
+                            <div className="text-[9.5px]">
+                              ({filteredShortExcessList.reduce((a, c) => a + c.deductionQtyQtl, 0).toFixed(2)} Qtl)
+                            </div>
+                          </td>
+                          <td className="p-2.5 text-right text-slate-400 text-[10px] font-sans">
+                            Quintal × Rate/Qtl
+                          </td>
+                          <td className="p-2.5 text-right text-amber-300 text-xs font-black">
+                            ₹{filteredShortExcessList.reduce((a, c) => a + c.deductionAmount, 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </td>
+                          <td className="p-2.5 text-center text-emerald-300 text-[10px] font-sans">
+                            Verified
+                          </td>
+                        </tr>
+                      </tfoot>
+                    )}
+                  </table>
+                </div>
+              </div>
+            </div>
+          )}
         </>
+      )}
+
+      {/* Interactive Extra & Short Weight & Rate Settlement Modal */}
+      {selectedSettlementPo && (
+        <ExcessShortSettlementModal
+          po={selectedSettlementPo}
+          onClose={() => setSelectedSettlementPo(null)}
+          onSaveSuccess={() => {
+            setSelectedSettlementPo(null);
+            loadReportsData();
+          }}
+        />
       )}
     </div>
   );
