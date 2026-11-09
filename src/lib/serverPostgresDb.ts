@@ -237,8 +237,11 @@ function getLocalSnapshotStore(): Map<string, any[]> {
     }
 
     // Reconcile PO BJCL/2026-2027/0532 contract weight (34.50 MT) and Excess Settlement (38.135 MT received, 36.35 Qtl * 600 = 21,810)
+    // Also convert any 5 Rs delivery_penalty or qty_penalty to 0 in sauda_check_point
     const scpRows = localSnapshotStore.get('sauda_check_point') || [];
     for (const r of scpRows) {
+      if (Number(r.delivery_penalty) === 5) r.delivery_penalty = 0;
+      if (Number(r.qty_penalty) === 5) r.qty_penalty = 0;
       if (String(r.po_no || '').trim() === 'BJCL/2026-2027/0532') {
         r.total_contract_mt = 34.5;
         r.contract_weight_mt = 34.5;
@@ -841,6 +844,28 @@ async function ensureDatabaseIntegrity() {
     }
   } catch (_) {
     // If local PostgreSQL is not reachable in preview mode, keep file for target server deployment
+  }
+
+  const penaltyOncePath = path.resolve(process.cwd(), 'scripts/sauda_penalty_5_to_0_once.json');
+  if (fs.existsSync(penaltyOncePath)) {
+    try {
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        await client.query(`UPDATE "sauda_check_point" SET "delivery_penalty" = 0 WHERE "delivery_penalty" = 5`);
+        await client.query(`UPDATE "sauda_check_point" SET "qty_penalty" = 0 WHERE "qty_penalty" = 5`);
+        await client.query('COMMIT');
+        fs.unlinkSync(penaltyOncePath);
+        console.log('[sauda_check_point] One-time penalty update (5 -> 0 for delivery_penalty & qty_penalty) complete and marker deleted.');
+      } catch (txErr) {
+        await client.query('ROLLBACK').catch(() => {});
+        throw txErr;
+      } finally {
+        client.release();
+      }
+    } catch (_) {
+      // Keep marker file if local PostgreSQL is not reachable in preview mode
+    }
   }
 }
 

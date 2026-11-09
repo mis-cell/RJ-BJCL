@@ -973,7 +973,7 @@ export function usePurchaseOrderFormLogic({
         total_contract_mt: poHeader.total_contract_mt?.toString() || '0.000',
         marka_type: poHeader.marka_type || 'Normal',
         marka_penalty: poHeader.marka_penalty?.toString() || '0',
-        qty_penalty: poHeader.qty_penalty?.toString() || '5',
+        qty_penalty: poHeader.qty_penalty !== undefined && poHeader.qty_penalty !== null ? String(poHeader.qty_penalty) : '0',
         delivery_from: resolvedDeliveryFrom,
         delivery_to: resolvedDeliveryTo,
         grace_days: resolvedGraceDays,
