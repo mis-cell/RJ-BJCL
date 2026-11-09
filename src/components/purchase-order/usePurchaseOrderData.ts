@@ -719,17 +719,16 @@ export function usePurchaseOrderData({
             } else if (tol.isOverDelivery) {
               variationType = 'excess';
               effectiveRateDiff = excessRateDiff;
-              // 3% tolerance policy is NOT applied for excess
+              // 3% tolerance policy is NOT applied for excess; deduction is Excess in Qtl × Rate Diff/Qtl
               const excessMt = Math.max(0, Math.round((totalReceivedMt - contractWeight) * 1000) / 1000);
               const excessQtl = Math.round(excessMt * 10 * 100) / 100;
-              const excessKg = Math.round(excessMt * 1000);
-              const rawPenalty = excessRateDiff * excessKg;
+              const rawPenalty = excessRateDiff * excessQtl;
               penaltyAmount = isNaN(rawPenalty) || rawPenalty < 0 ? 0 : Math.round(rawPenalty * 100) / 100;
               deductionQtyMt = Number(excessMt.toFixed(3));
               deductionQtyQtl = Number(excessQtl.toFixed(2));
               wtStatusRemarks = penaltyAmount > 0
-                ? `+${excessKg.toLocaleString()} kg (${excessMt.toFixed(3)} MT) Excess | Penalty: ₹${penaltyAmount.toLocaleString()}`
-                : `+${excessKg.toLocaleString()} kg (${excessMt.toFixed(3)} MT) Excess | Applicable for Sauda (₹0 Deduction)`;
+                ? `+${excessMt.toFixed(3)} MT (${excessQtl.toFixed(2)} Qtl) Excess | Penalty: ₹${penaltyAmount.toLocaleString()}`
+                : `+${excessMt.toFixed(3)} MT (${excessQtl.toFixed(2)} Qtl) Excess | Applicable for Sauda (₹0 Deduction)`;
             } else if (tol.isUnderDelivery) {
               variationType = 'short';
               effectiveRateDiff = shortRateDiff;

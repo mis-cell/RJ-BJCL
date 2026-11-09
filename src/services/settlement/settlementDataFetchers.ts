@@ -665,13 +665,13 @@ export const fetchSaudaCheckpointDeduction = async (cleanPoNo: string) => {
           }
         } else {
           const exDiff = sRate - mRate;
-          const excessKg = Math.round(Number(updated.deduction_qty_mt || 0) * 1000);
-          const expectedAmt = Math.round(excessKg * exDiff * 100) / 100;
+          const excessQtl = Number(updated.deduction_qty_qtl || Math.round(Number(updated.deduction_qty_mt || 0) * 10 * 100) / 100);
+          const expectedAmt = Math.round(excessQtl * exDiff * 100) / 100;
           if (Number(updated.deduction_amount) !== expectedAmt || Number(updated.rate_difference) !== exDiff) {
             updated.rate_difference = exDiff;
             updated.applicable_rate = exDiff;
             updated.deduction_amount = expectedAmt;
-            updated.remarks = `Excess Weight Deduction: Excess ${excessKg.toLocaleString()} kg (${Number(updated.deduction_qty_mt || 0).toFixed(3)} MT) × ₹${exDiff} = ₹${expectedAmt.toLocaleString()}.`;
+            updated.remarks = `Excess Weight Deduction: Deductible ${excessQtl.toFixed(2)} Qtl at ₹${exDiff}/Qtl = ₹${expectedAmt.toLocaleString(undefined, { minimumFractionDigits: 2 })}.`;
             changed = true;
           }
         }

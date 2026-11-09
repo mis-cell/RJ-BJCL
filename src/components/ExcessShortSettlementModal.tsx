@@ -925,23 +925,21 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
         }
         return isGrossShort
           ? `Rate Difference (Final MR Date − Sauda Date) (₹${applicableRate.toLocaleString()}/Qtl)`
-          : `Rate Difference (Sauda Date − Last MR Date) (₹${applicableRate.toLocaleString()})`;
+          : `Rate Difference (Sauda Date − Last MR Date) (₹${applicableRate.toLocaleString()}/Qtl)`;
     }
   }, [selectedRateMode, applicableRate, isGrossShort, isShortRateLowerOrEqual, isExcessApplicableForSauda]);
 
   // Deduction formula:
-  // - For Excess: Excess in kg × applicableRate (e.g. 3,635 kg × 600 = 2,181,000)
-  // - For Shortage: Chargeable shortage in Qtl × applicableRate (existing logic preserved)
+  // Final Deductible Excess / Chargeable Shortage in Quintal (Qtl) × applicableRate (/Qtl)
+  // e.g. 36.35 Qtl × ₹600/Qtl = ₹21,810.00
   const totalCalculatedAmount = useMemo(() => {
     if (isWithin3PctExemption || finalDeductibleQtyQtl <= 0) return 0;
     if (isGrossShort && selectedRateMode === 'rate_difference' && isShortRateLowerOrEqual) return 0;
     if (isGrossExcess && isExcessApplicableForSauda && selectedRateMode === 'rate_difference') return 0;
     const rate = isNaN(applicableRate) || applicableRate < 0 ? 0 : applicableRate;
-    const calc = isGrossExcess
-      ? Math.round(finalDeductibleExcessKg * rate * 100) / 100
-      : Math.round(finalDeductibleQtyQtl * rate * 100) / 100;
+    const calc = Math.round(finalDeductibleQtyQtl * rate * 100) / 100;
     return isNaN(calc) || calc < 0 ? 0 : calc;
-  }, [isWithin3PctExemption, finalDeductibleQtyQtl, finalDeductibleExcessKg, isGrossShort, isShortRateLowerOrEqual, isGrossExcess, isExcessApplicableForSauda, selectedRateMode, applicableRate]);
+  }, [isWithin3PctExemption, finalDeductibleQtyQtl, isGrossShort, isShortRateLowerOrEqual, isGrossExcess, isExcessApplicableForSauda, selectedRateMode, applicableRate]);
 
   // Total Final Payable
   const totalFinalPayable = useMemo(() => {
@@ -961,9 +959,7 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
     const nowIso = settledAt || new Date().toISOString();
     const defaultRemark = isExcessApplicableForSauda
       ? `Applicable for Sauda – No Deduction: Last MR Rate (₹${lastMrDateSattaRate}) >= Sauda Rate (₹${saudaDateSattaRate})`
-      : isGrossExcess
-        ? `${policyStatusText}: Excess ${finalDeductibleQtyKg.toLocaleString()} kg (${finalDeductibleQtyMt.toFixed(3)} MT) × ₹${applicableRate} = ₹${totalCalculatedAmount.toLocaleString()}.`
-        : `${policyStatusText}: Deductible ${finalDeductibleQtyQtl.toFixed(2)} Qtl at ₹${applicableRate}/Qtl = ₹${totalCalculatedAmount}.`;
+      : `${policyStatusText}: Deductible ${finalDeductibleQtyQtl.toFixed(2)} Qtl at ₹${applicableRate}/Qtl = ₹${totalCalculatedAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}.`;
 
     const payload: Record<string, any> = {
       po_no: poNo,
@@ -1065,9 +1061,7 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
       deduction_qty_qtl: Number(finalDeductibleQtyQtl.toFixed(2)),
       deduction_amount: Number(totalCalculatedAmount),
       status: 'approved',
-      remarks: remarks || (isGrossExcess
-        ? `${policyStatusText}: Excess ${finalDeductibleQtyKg.toLocaleString()} kg (${finalDeductibleQtyMt.toFixed(3)} MT) × ₹${applicableRate} = ₹${totalCalculatedAmount.toLocaleString()}.`
-        : `${policyStatusText}: Deductible ${finalDeductibleQtyQtl.toFixed(2)} Qtl at ₹${applicableRate}/Qtl = ₹${totalCalculatedAmount}.`),
+      remarks: remarks || `${policyStatusText}: Deductible ${finalDeductibleQtyQtl.toFixed(2)} Qtl at ₹${applicableRate}/Qtl = ₹${totalCalculatedAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}.`,
       arrival_numbers: arrivalNumbersString,
       grade_breakdown: JSON.stringify(gradeWiseInspectionRows),
       approved_by: settledBy || 'Operator',
@@ -1232,9 +1226,7 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
             {policyStatusText.toUpperCase()} (CALCULATION FORMULA)
           </span>
           <span className="text-sm font-mono block my-1">
-            {isGrossExcess
-              ? `${finalDeductibleQtyKg.toLocaleString()} kg × ₹${applicableRate.toLocaleString()} = `
-              : `${finalDeductibleQtyQtl.toFixed(2)} Quintal × ₹${applicableRate.toLocaleString()}/Quintal = `}
+            {finalDeductibleQtyQtl.toFixed(2)} Quintal × ₹{applicableRate.toLocaleString()}/Quintal = 
           </span>
           <span className="text-2xl font-black block my-1">
             ₹{totalCalculatedAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
@@ -1511,7 +1503,7 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
                       </span>
                     )}
                   </div>
-                  <span className="font-black text-amber-900">₹{rateDifference.toLocaleString()}</span>
+                  <span className="font-black text-amber-900">₹{rateDifference.toLocaleString()} / Qtl</span>
                 </div>
 
                 <div className="flex justify-between items-center py-1.5 px-1.5 bg-slate-900 text-white rounded font-black">
@@ -1528,9 +1520,7 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
                 <span>📐</span>
                 <span>Formula: </span>
                 <code className="bg-white px-2 py-0.5 rounded border border-indigo-300 font-mono text-[10px] text-slate-900">
-                  {isGrossExcess
-                    ? `${finalDeductibleQtyKg.toLocaleString()} kg × ₹${applicableRate.toLocaleString()} = ₹${totalCalculatedAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}`
-                    : `${finalDeductibleQtyQtl.toFixed(2)} Qtl × ₹${applicableRate.toLocaleString()}/Qtl = ₹${totalCalculatedAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}`}
+                  {finalDeductibleQtyQtl.toFixed(2)} Qtl × ₹{applicableRate.toLocaleString()}/Qtl = ₹{totalCalculatedAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                 </code>
               </div>
               <div className="text-[10px] font-bold text-slate-700">
@@ -1671,7 +1661,7 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
                 </div>
                 <div className="mt-1 flex items-baseline gap-1">
                   <span className="text-sm font-black text-indigo-950">₹{rateDifference.toLocaleString()}</span>
-                  <span className="text-[8.5px] text-slate-500">{isGrossExcess ? '/ kg' : '/ Qtl'}</span>
+                  <span className="text-[8.5px] text-slate-500">/ Qtl</span>
                 </div>
                 <p className="text-[8px] text-slate-600 mt-1 leading-tight">
                   {isGrossShort

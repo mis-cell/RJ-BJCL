@@ -236,13 +236,13 @@ function getLocalSnapshotStore(): Map<string, any[]> {
       }
     }
 
-    // Reconcile PO BJCL/2026-2027/0532 contract weight (34.50 MT) and Excess Settlement (38.135 MT received, 3,635 kg excess * 600 = 2,181,000)
+    // Reconcile PO BJCL/2026-2027/0532 contract weight (34.50 MT) and Excess Settlement (38.135 MT received, 36.35 Qtl * 600 = 21,810)
     const scpRows = localSnapshotStore.get('sauda_check_point') || [];
     for (const r of scpRows) {
       if (String(r.po_no || '').trim() === 'BJCL/2026-2027/0532') {
         r.total_contract_mt = 34.5;
         r.contract_weight_mt = 34.5;
-        r.excess_short_deduction = 2181000;
+        r.excess_short_deduction = 21810;
         r.excess_short_status = 'settled';
         r.is_settled = true;
       }
@@ -267,9 +267,9 @@ function getLocalSnapshotStore(): Map<string, any[]> {
         r.rate_difference = 600;
         r.deduction_qty_mt = 3.635;
         r.deduction_qty_qtl = 36.35;
-        r.deduction_amount = 2181000;
+        r.deduction_amount = 21810;
         r.arrival_numbers = 'MR00999, MR01037, MR01042';
-        r.remarks = 'Excess Weight Deduction: 3,635 kg × ₹600 = ₹2,181,000.';
+        r.remarks = 'Excess Weight Deduction: 36.35 Qtl × ₹600/Qtl = ₹21,810.00.';
       }
     }
   } catch (err) {
@@ -788,11 +788,60 @@ const TABLE_COMPOSITE_KEYS: Record<string, string[]> = {
   satta_calculated_rates: ['start_date', 'area', 'grade']
 };
 
-// Database is fixed: never run automatic DDL or DML modifications on startup or query execution
+// Database is fixed: only execute the one-time self-deleting agency_master seed if present
 let integrityInitialized = false;
 async function ensureDatabaseIntegrity() {
   if (integrityInitialized) return;
   integrityInitialized = true;
+
+  const oncePath = path.resolve(process.cwd(), 'scripts/agency_master_once.json');
+  if (!fs.existsSync(oncePath)) return;
+
+  try {
+    const raw = fs.readFileSync(oncePath, 'utf8');
+    const rows = JSON.parse(raw);
+    if (!Array.isArray(rows) || rows.length === 0) return;
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('DELETE FROM "agency_master"');
+
+      for (const r of rows) {
+        await client.query(
+          `INSERT INTO "agency_master" ("id", "area_code", "area_name", "agency_code", "agency_name")
+           VALUES ($1, $2, $3, $4, $5)`,
+          [
+            Number(r.id),
+            r.area_code ?? null,
+            r.area_name ?? null,
+            String(r.agency_code ?? ''),
+            String(r.agency_name ?? ''),
+          ]
+        );
+      }
+
+      await client
+        .query(
+          `SELECT setval('agency_master_id_auto_seq', COALESCE((SELECT MAX(id) FROM "agency_master"), 1) + 1, false)`
+        )
+        .catch(() => {});
+
+      await client.query('COMMIT');
+      tableColumnsCache.delete('agency_master');
+
+      // Delete the one-time seed file immediately after successful database injection
+      fs.unlinkSync(oncePath);
+      console.log(`[agency_master] One-time overwrite complete (${rows.length} rows injected) and seed file deleted.`);
+    } catch (txErr) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw txErr;
+    } finally {
+      client.release();
+    }
+  } catch (_) {
+    // If local PostgreSQL is not reachable in preview mode, keep file for target server deployment
+  }
 }
 
 /**

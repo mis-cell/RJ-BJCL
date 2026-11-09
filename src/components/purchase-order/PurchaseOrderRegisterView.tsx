@@ -961,11 +961,11 @@ export const PurchaseOrderRegisterView: React.FC<PurchaseOrderRegisterViewProps>
 
                       if (tol.isOverDelivery) {
                         const excessMt = Math.max(0, tol.excessOverToleranceMt || 0);
-                        const excessKg = Math.round(excessMt * 1000);
+                        const excessQtl = Math.round(excessMt * 10 * 100) / 100;
                         const excessRateDiff = (saudaTd5Rate || 0) > (arrivalTd5Rate || 0)
                           ? ((saudaTd5Rate || 0) - (arrivalTd5Rate || 0))
                           : 0;
-                        const rawPenalty = excessRateDiff * excessKg;
+                        const rawPenalty = excessRateDiff * excessQtl;
                         const penaltyAmount = isNaN(rawPenalty) || rawPenalty < 0 ? 0 : Math.round(rawPenalty * 100) / 100;
 
                         return (

@@ -1,0 +1,5553 @@
+[
+  {
+    "id": 1,
+    "area_code": "10",
+    "area_name": "BANGLADESH",
+    "agency_code": "1",
+    "agency_name": "AMBAGAN"
+  },
+  {
+    "id": 3,
+    "area_code": "10",
+    "area_name": "BANGLADESH",
+    "agency_code": "3",
+    "agency_name": "BISWANATH GHAT"
+  },
+  {
+    "id": 4,
+    "area_code": "10",
+    "area_name": "BANGLADESH",
+    "agency_code": "4",
+    "agency_name": "DHINGBAZAR"
+  },
+  {
+    "id": 5,
+    "area_code": "10",
+    "area_name": "BANGLADESH",
+    "agency_code": "5",
+    "agency_name": "DHUBRI"
+  },
+  {
+    "id": 6,
+    "area_code": "10",
+    "area_name": "BANGLADESH",
+    "agency_code": "6",
+    "agency_name": "GOLAPARA"
+  },
+  {
+    "id": 7,
+    "area_code": "10",
+    "area_name": "BANGLADESH",
+    "agency_code": "7",
+    "agency_name": "GOLAKGANJ"
+  },
+  {
+    "id": 8,
+    "area_code": "10",
+    "area_name": "BANGLADESH",
+    "agency_code": "8",
+    "agency_name": "GOURIPUR"
+  },
+  {
+    "id": 9,
+    "area_code": "10",
+    "area_name": "BANGLADESH",
+    "agency_code": "9",
+    "agency_name": "JURIA"
+  },
+  {
+    "id": 10,
+    "area_code": "10",
+    "area_name": "BANGLADESH",
+    "agency_code": "10",
+    "agency_name": "LAKHIPUR"
+  },
+  {
+    "id": 11,
+    "area_code": "10",
+    "area_name": "BANGLADESH",
+    "agency_code": "11",
+    "agency_name": "LANKA"
+  },
+  {
+    "id": 12,
+    "area_code": "10",
+    "area_name": "BANGLADESH",
+    "agency_code": "12",
+    "agency_name": "MOIRABARI"
+  },
+  {
+    "id": 13,
+    "area_code": "10",
+    "area_name": "BANGLADESH",
+    "agency_code": "13",
+    "agency_name": "RUPAHI"
+  },
+  {
+    "id": 14,
+    "area_code": "10",
+    "area_name": "BANGLADESH",
+    "agency_code": "14",
+    "agency_name": "SAPTAGRAM"
+  },
+  {
+    "id": 15,
+    "area_code": "10",
+    "area_name": "BANGLADESH",
+    "agency_code": "15",
+    "agency_name": "TAMBARHAT"
+  },
+  {
+    "id": 16,
+    "area_code": "10",
+    "area_name": "BANGLADESH",
+    "agency_code": "16",
+    "agency_name": "TARABARI"
+  },
+  {
+    "id": 17,
+    "area_code": "10",
+    "area_name": "BANGLADESH",
+    "agency_code": "134",
+    "agency_name": "NOWGAON"
+  },
+  {
+    "id": 18,
+    "area_code": "10",
+    "area_name": "BANGLADESH",
+    "agency_code": "141",
+    "agency_name": "KHARUPETIA"
+  },
+  {
+    "id": 19,
+    "area_code": "10",
+    "area_name": "BANGLADESH",
+    "agency_code": "145",
+    "agency_name": "JCI"
+  },
+  {
+    "id": 20,
+    "area_code": "10",
+    "area_name": "BANGLADESH",
+    "agency_code": "146",
+    "agency_name": "No agency"
+  },
+  {
+    "id": 21,
+    "area_code": "10",
+    "area_name": "BANGLADESH",
+    "agency_code": "156",
+    "agency_name": "GOSAIGAON"
+  },
+  {
+    "id": 22,
+    "area_code": "10",
+    "area_name": "BANGLADESH",
+    "agency_code": "157",
+    "agency_name": "BIJNI"
+  },
+  {
+    "id": 23,
+    "area_code": "10",
+    "area_name": "BANGLADESH",
+    "agency_code": "161",
+    "agency_name": "RAHA"
+  },
+  {
+    "id": 24,
+    "area_code": "10",
+    "area_name": "BANGLADESH",
+    "agency_code": "178",
+    "agency_name": "KOKRAJHAR"
+  },
+  {
+    "id": 25,
+    "area_code": "10",
+    "area_name": "BANGLADESH",
+    "agency_code": "191",
+    "agency_name": "GAUHATI"
+  },
+  {
+    "id": 26,
+    "area_code": "20",
+    "area_name": "BIHAR",
+    "agency_code": "17",
+    "agency_name": "ARARIA"
+  },
+  {
+    "id": 227,
+    "area_code": "204",
+    "area_name": "",
+    "agency_code": "204",
+    "agency_name": "KISHANGANJ"
+  },
+  {
+    "id": 28,
+    "area_code": "20",
+    "area_name": "BIHAR",
+    "agency_code": "19",
+    "agency_name": "GULABBAGH"
+  },
+  {
+    "id": 29,
+    "area_code": "20",
+    "area_name": "BIHAR",
+    "agency_code": "20",
+    "agency_name": "JALALGARH"
+  },
+  {
+    "id": 30,
+    "area_code": "20",
+    "area_name": "BIHAR",
+    "agency_code": "21",
+    "agency_name": "MURLIGAUNJ"
+  },
+  {
+    "id": 31,
+    "area_code": "20",
+    "area_name": "BIHAR",
+    "agency_code": "22",
+    "agency_name": "PURNIA"
+  },
+  {
+    "id": 32,
+    "area_code": "20",
+    "area_name": "BIHAR",
+    "agency_code": "23",
+    "agency_name": "SAHARSA"
+  },
+  {
+    "id": 33,
+    "area_code": "20",
+    "area_name": "BIHAR",
+    "agency_code": "24",
+    "agency_name": "THAKURGAUNG"
+  },
+  {
+    "id": 34,
+    "area_code": "20",
+    "area_name": "BIHAR",
+    "agency_code": "146",
+    "agency_name": "JCI"
+  },
+  {
+    "id": 35,
+    "area_code": "20",
+    "area_name": "BIHAR",
+    "agency_code": "147",
+    "agency_name": "No agency"
+  },
+  {
+    "id": 36,
+    "area_code": "20",
+    "area_name": "BIHAR",
+    "agency_code": "194",
+    "agency_name": "KASBA"
+  },
+  {
+    "id": 37,
+    "area_code": "20",
+    "area_name": "BIHAR",
+    "agency_code": "195",
+    "agency_name": "BEHARIGUNJ"
+  },
+  {
+    "id": 38,
+    "area_code": "20",
+    "area_name": "BIHAR",
+    "agency_code": "198",
+    "agency_name": "SUAPUL"
+  },
+  {
+    "id": 39,
+    "area_code": "20",
+    "area_name": "BIHAR",
+    "agency_code": "200",
+    "agency_name": "PAKUR"
+  },
+  {
+    "id": 40,
+    "area_code": "20",
+    "area_name": "BIHAR",
+    "agency_code": "201",
+    "agency_name": "TRIBENIGANG"
+  },
+  {
+    "id": 41,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "25",
+    "agency_name": "AMTA"
+  },
+  {
+    "id": 42,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "26",
+    "agency_name": "AMTALA"
+  },
+  {
+    "id": 43,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "27",
+    "agency_name": "ANDULIA"
+  },
+  {
+    "id": 44,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "28",
+    "agency_name": "ASSANNAGAR"
+  },
+  {
+    "id": 45,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "29",
+    "agency_name": "AURANGABAD"
+  },
+  {
+    "id": 46,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "30",
+    "agency_name": "BADHURIA"
+  },
+  {
+    "id": 47,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "31",
+    "agency_name": "BALAGARH"
+  },
+  {
+    "id": 48,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "32",
+    "agency_name": "BALIACHAK"
+  },
+  {
+    "id": 49,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "33",
+    "agency_name": "BANGALCHI"
+  },
+  {
+    "id": 50,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "34",
+    "agency_name": "BARA ANDULIA"
+  },
+  {
+    "id": 51,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "35",
+    "agency_name": "BELDANGA"
+  },
+  {
+    "id": 52,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "36",
+    "agency_name": "BETAI"
+  },
+  {
+    "id": 53,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "37",
+    "agency_name": "BETHUADAHARI"
+  },
+  {
+    "id": 54,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "38",
+    "agency_name": "BHADRESWAR"
+  },
+  {
+    "id": 55,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "39",
+    "agency_name": "BGAGIRATHPUR"
+  },
+  {
+    "id": 56,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "40",
+    "agency_name": "BHIMPUR"
+  },
+  {
+    "id": 57,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "41",
+    "agency_name": "BIRHAMPUR"
+  },
+  {
+    "id": 58,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "42",
+    "agency_name": "BIRPUR"
+  },
+  {
+    "id": 59,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "43",
+    "agency_name": "BONGAON"
+  },
+  {
+    "id": 60,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "44",
+    "agency_name": "CHAKDAH"
+  },
+  {
+    "id": 61,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "45",
+    "agency_name": "CHAPADANGA"
+  },
+  {
+    "id": 62,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "46",
+    "agency_name": "CHAPRA"
+  },
+  {
+    "id": 63,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "47",
+    "agency_name": "COSSIMBAZAR"
+  },
+  {
+    "id": 64,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "48",
+    "agency_name": "DAINHAT"
+  },
+  {
+    "id": 65,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "49",
+    "agency_name": "DEBAGRAM"
+  },
+  {
+    "id": 66,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "50",
+    "agency_name": "DOMJOOR"
+  },
+  {
+    "id": 67,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "51",
+    "agency_name": "DOMKOL"
+  },
+  {
+    "id": 68,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "52",
+    "agency_name": "DUDHKUMARHAT"
+  },
+  {
+    "id": 69,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "53",
+    "agency_name": "GANGAPUR"
+  },
+  {
+    "id": 70,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "54",
+    "agency_name": "GOLABARI"
+  },
+  {
+    "id": 71,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "55",
+    "agency_name": "HARIHARPUR"
+  },
+  {
+    "id": 72,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "56",
+    "agency_name": "HARIPAL"
+  },
+  {
+    "id": 73,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "57",
+    "agency_name": "ISLAMPUR"
+  },
+  {
+    "id": 74,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "58",
+    "agency_name": "JALANGI"
+  },
+  {
+    "id": 75,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "59",
+    "agency_name": "JIAGANJ"
+  },
+  {
+    "id": 76,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "60",
+    "agency_name": "JIRAT"
+  },
+  {
+    "id": 77,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "61",
+    "agency_name": "KALIGUNJ"
+  },
+  {
+    "id": 78,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "62",
+    "agency_name": "KALITALA"
+  },
+  {
+    "id": 79,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "63",
+    "agency_name": "KALNA"
+  },
+  {
+    "id": 80,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "64",
+    "agency_name": "KARIMPUR"
+  },
+  {
+    "id": 81,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "65",
+    "agency_name": "KATWA"
+  },
+  {
+    "id": 82,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "66",
+    "agency_name": "KRISHNANAGAR"
+  },
+  {
+    "id": 83,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "67",
+    "agency_name": "LALGOLA"
+  },
+  {
+    "id": 84,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "68",
+    "agency_name": "MAJDIA"
+  },
+  {
+    "id": 85,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "69",
+    "agency_name": "MAYNA"
+  },
+  {
+    "id": 86,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "70",
+    "agency_name": "NABADWIP"
+  },
+  {
+    "id": 87,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "71",
+    "agency_name": "NAZIRPUR"
+  },
+  {
+    "id": 88,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "72",
+    "agency_name": "NIMTALA BAZAR"
+  },
+  {
+    "id": 89,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "73",
+    "agency_name": "NOTIAL BAZAR"
+  },
+  {
+    "id": 90,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "74",
+    "agency_name": "PALASIPARA"
+  },
+  {
+    "id": 91,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "75",
+    "agency_name": "PANCHBERIA"
+  },
+  {
+    "id": 92,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "76",
+    "agency_name": "PATKA BARI"
+  },
+  {
+    "id": 93,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "77",
+    "agency_name": "RANAGHAT"
+  },
+  {
+    "id": 94,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "78",
+    "agency_name": "REZINAGAR"
+  },
+  {
+    "id": 95,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "79",
+    "agency_name": "SAGARPARA"
+  },
+  {
+    "id": 96,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "80",
+    "agency_name": "SAHEBNAGAR"
+  },
+  {
+    "id": 97,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "81",
+    "agency_name": "SARGACHI"
+  },
+  {
+    "id": 98,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "82",
+    "agency_name": "SARGACHIA"
+  },
+  {
+    "id": 99,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "83",
+    "agency_name": "SHEORAPHULLY"
+  },
+  {
+    "id": 100,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "84",
+    "agency_name": "SIDHESHWAR"
+  },
+  {
+    "id": 101,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "85",
+    "agency_name": "SULANTO"
+  },
+  {
+    "id": 102,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "86",
+    "agency_name": "TARKESHWAR"
+  },
+  {
+    "id": 103,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "87",
+    "agency_name": "TEHATTA"
+  },
+  {
+    "id": 104,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "88",
+    "agency_name": "TRIMOHONI"
+  },
+  {
+    "id": 105,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "89",
+    "agency_name": "ULUBERIA"
+  },
+  {
+    "id": 106,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "90",
+    "agency_name": "GOURA"
+  },
+  {
+    "id": 107,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "137",
+    "agency_name": "ASHANAGAR"
+  },
+  {
+    "id": 108,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "138",
+    "agency_name": "NALIKUL"
+  },
+  {
+    "id": 109,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "147",
+    "agency_name": "JCI"
+  },
+  {
+    "id": 110,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "150",
+    "agency_name": "BOGULA"
+  },
+  {
+    "id": 111,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "151",
+    "agency_name": "No agency"
+  },
+  {
+    "id": 112,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "163",
+    "agency_name": "NILGANJE"
+  },
+  {
+    "id": 113,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "164",
+    "agency_name": "HARINGHATA"
+  },
+  {
+    "id": 114,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "167",
+    "agency_name": "BARASAT"
+  },
+  {
+    "id": 115,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "168",
+    "agency_name": "RANINAGAR"
+  },
+  {
+    "id": 116,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "169",
+    "agency_name": "HANSHKHALI"
+  },
+  {
+    "id": 117,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "171",
+    "agency_name": "BERHAMPORE"
+  },
+  {
+    "id": 118,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "179",
+    "agency_name": "ACHINTALA"
+  },
+  {
+    "id": 119,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "180",
+    "agency_name": "BHAGWANWALA"
+  },
+  {
+    "id": 120,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "181",
+    "agency_name": "PRATAPPUR"
+  },
+  {
+    "id": 121,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "182",
+    "agency_name": "CHAITA"
+  },
+  {
+    "id": 122,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "185",
+    "agency_name": "KANTHALIA"
+  },
+  {
+    "id": 123,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "186",
+    "agency_name": "BARACHANDGHAR"
+  },
+  {
+    "id": 124,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "188",
+    "agency_name": "SONAPUR"
+  },
+  {
+    "id": 125,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "189",
+    "agency_name": "GOUSH"
+  },
+  {
+    "id": 126,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "192",
+    "agency_name": "KOLAGHAT"
+  },
+  {
+    "id": 127,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "196",
+    "agency_name": "ALAMPUR"
+  },
+  {
+    "id": 128,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "199",
+    "agency_name": "CHARGHAT"
+  },
+  {
+    "id": 129,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "204",
+    "agency_name": "RAZABABARPUR"
+  },
+  {
+    "id": 130,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "206",
+    "agency_name": "BASHIRHAT"
+  },
+  {
+    "id": 131,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "207",
+    "agency_name": "RAJAPUR"
+  },
+  {
+    "id": 132,
+    "area_code": "40",
+    "area_name": "JUNGLE",
+    "agency_code": "96",
+    "agency_name": "BHOTPATHY"
+  },
+  {
+    "id": 133,
+    "area_code": "40",
+    "area_name": "JUNGLE",
+    "agency_code": "97",
+    "agency_name": "BAMANHAT"
+  },
+  {
+    "id": 134,
+    "area_code": "40",
+    "area_name": "JUNGLE",
+    "agency_code": "98",
+    "agency_name": "COOCH BIHAR"
+  },
+  {
+    "id": 135,
+    "area_code": "40",
+    "area_name": "JUNGLE",
+    "agency_code": "99",
+    "agency_name": "DHUPGURI"
+  },
+  {
+    "id": 136,
+    "area_code": "40",
+    "area_name": "JUNGLE",
+    "agency_code": "100",
+    "agency_name": "DINHATA"
+  },
+  {
+    "id": 137,
+    "area_code": "40",
+    "area_name": "JUNGLE",
+    "agency_code": "101",
+    "agency_name": "MAINAGURI"
+  },
+  {
+    "id": 138,
+    "area_code": "40",
+    "area_name": "JUNGLE",
+    "agency_code": "102",
+    "agency_name": "SILIGURI"
+  },
+  {
+    "id": 139,
+    "area_code": "40",
+    "area_name": "JUNGLE",
+    "agency_code": "103",
+    "agency_name": "TUFANGANJ"
+  },
+  {
+    "id": 140,
+    "area_code": "40",
+    "area_name": "JUNGLE",
+    "agency_code": "104",
+    "agency_name": "CHANGRABANDHA"
+  },
+  {
+    "id": 141,
+    "area_code": "40",
+    "area_name": "JUNGLE",
+    "agency_code": "143",
+    "agency_name": "MATHABANGA"
+  },
+  {
+    "id": 142,
+    "area_code": "40",
+    "area_name": "JUNGLE",
+    "agency_code": "144",
+    "agency_name": "HALDIBARI"
+  },
+  {
+    "id": 143,
+    "area_code": "40",
+    "area_name": "JUNGLE",
+    "agency_code": "149",
+    "agency_name": "JCI"
+  },
+  {
+    "id": 144,
+    "area_code": "40",
+    "area_name": "JUNGLE",
+    "agency_code": "150",
+    "agency_name": "No agency"
+  },
+  {
+    "id": 145,
+    "area_code": "40",
+    "area_name": "JUNGLE",
+    "agency_code": "154",
+    "agency_name": "BELAKOBA"
+  },
+  {
+    "id": 146,
+    "area_code": "40",
+    "area_name": "JUNGLE",
+    "agency_code": "159",
+    "agency_name": "HUSLUDANGA"
+  },
+  {
+    "id": 147,
+    "area_code": "40",
+    "area_name": "JUNGLE",
+    "agency_code": "175",
+    "agency_name": "DEWANHAT"
+  },
+  {
+    "id": 148,
+    "area_code": "40",
+    "area_name": "JUNGLE",
+    "agency_code": "190",
+    "agency_name": "FALAKATA"
+  },
+  {
+    "id": 149,
+    "area_code": "40",
+    "area_name": "JUNGLE",
+    "agency_code": "205",
+    "agency_name": "HARISHCHANDRAPUR"
+  },
+  {
+    "id": 150,
+    "area_code": "40",
+    "area_name": "JUNGLE",
+    "agency_code": "208",
+    "agency_name": "KAMAKHAGURI"
+  },
+  {
+    "id": 151,
+    "area_code": "50",
+    "area_name": "LOWER ASSAM",
+    "agency_code": "114",
+    "agency_name": "BALURGHAT"
+  },
+  {
+    "id": 152,
+    "area_code": "50",
+    "area_name": "LOWER ASSAM",
+    "agency_code": "115",
+    "agency_name": "CHANCHAL"
+  },
+  {
+    "id": 153,
+    "area_code": "50",
+    "area_name": "LOWER ASSAM",
+    "agency_code": "116",
+    "agency_name": "DALKHOLA"
+  },
+  {
+    "id": 154,
+    "area_code": "50",
+    "area_name": "LOWER ASSAM",
+    "agency_code": "117",
+    "agency_name": "GAJAL"
+  },
+  {
+    "id": 155,
+    "area_code": "50",
+    "area_name": "LOWER ASSAM",
+    "agency_code": "118",
+    "agency_name": "GANGARAMPUR"
+  },
+  {
+    "id": 156,
+    "area_code": "50",
+    "area_name": "LOWER ASSAM",
+    "agency_code": "119",
+    "agency_name": "HARIRAMPUR"
+  },
+  {
+    "id": 157,
+    "area_code": "50",
+    "area_name": "LOWER ASSAM",
+    "agency_code": "120",
+    "agency_name": "ISLAMPUR"
+  },
+  {
+    "id": 158,
+    "area_code": "50",
+    "area_name": "LOWER ASSAM",
+    "agency_code": "121",
+    "agency_name": "KANKI"
+  },
+  {
+    "id": 159,
+    "area_code": "50",
+    "area_name": "LOWER ASSAM",
+    "agency_code": "122",
+    "agency_name": "KRISHNAGUNJ"
+  },
+  {
+    "id": 160,
+    "area_code": "50",
+    "area_name": "LOWER ASSAM",
+    "agency_code": "123",
+    "agency_name": "PANJUPARA"
+  },
+  {
+    "id": 161,
+    "area_code": "50",
+    "area_name": "LOWER ASSAM",
+    "agency_code": "124",
+    "agency_name": "RAIGANJ"
+  },
+  {
+    "id": 162,
+    "area_code": "50",
+    "area_name": "LOWER ASSAM",
+    "agency_code": "125",
+    "agency_name": "SAMSI"
+  },
+  {
+    "id": 163,
+    "area_code": "50",
+    "area_name": "LOWER ASSAM",
+    "agency_code": "126",
+    "agency_name": "TULSIHATA"
+  },
+  {
+    "id": 164,
+    "area_code": "50",
+    "area_name": "LOWER ASSAM",
+    "agency_code": "127",
+    "agency_name": "TUNIDIGHI"
+  },
+  {
+    "id": 165,
+    "area_code": "50",
+    "area_name": "LOWER ASSAM",
+    "agency_code": "136",
+    "agency_name": "KALIYAGANJ"
+  },
+  {
+    "id": 166,
+    "area_code": "50",
+    "area_name": "LOWER ASSAM",
+    "agency_code": "151",
+    "agency_name": "BARSOI"
+  },
+  {
+    "id": 167,
+    "area_code": "50",
+    "area_name": "LOWER ASSAM",
+    "agency_code": "152",
+    "agency_name": "TAPAN"
+  },
+  {
+    "id": 168,
+    "area_code": "50",
+    "area_name": "LOWER ASSAM",
+    "agency_code": "158",
+    "agency_name": "SONAPUR"
+  },
+  {
+    "id": 169,
+    "area_code": "50",
+    "area_name": "LOWER ASSAM",
+    "agency_code": "162",
+    "agency_name": "ALOMPUR"
+  },
+  {
+    "id": 170,
+    "area_code": "50",
+    "area_name": "LOWER ASSAM",
+    "agency_code": "166",
+    "agency_name": "SREEGHAR"
+  },
+  {
+    "id": 171,
+    "area_code": "50",
+    "area_name": "LOWER ASSAM",
+    "agency_code": "170",
+    "agency_name": "MALDA"
+  },
+  {
+    "id": 172,
+    "area_code": "50",
+    "area_name": "LOWER ASSAM",
+    "agency_code": "173",
+    "agency_name": "JCI"
+  },
+  {
+    "id": 173,
+    "area_code": "50",
+    "area_name": "LOWER ASSAM",
+    "agency_code": "174",
+    "agency_name": "ACHINTOLA"
+  },
+  {
+    "id": 174,
+    "area_code": "50",
+    "area_name": "LOWER ASSAM",
+    "agency_code": "176",
+    "agency_name": "KUSHMANDI"
+  },
+  {
+    "id": 175,
+    "area_code": "50",
+    "area_name": "LOWER ASSAM",
+    "agency_code": "177",
+    "agency_name": "PATIRAJ"
+  },
+  {
+    "id": 176,
+    "area_code": "50",
+    "area_name": "LOWER ASSAM",
+    "agency_code": "183",
+    "agency_name": "RASHAKHOA"
+  },
+  {
+    "id": 177,
+    "area_code": "50",
+    "area_name": "LOWER ASSAM",
+    "agency_code": "184",
+    "agency_name": "PATIRAM"
+  },
+  {
+    "id": 178,
+    "area_code": "55",
+    "area_name": "",
+    "agency_code": "112",
+    "agency_name": "HILI"
+  },
+  {
+    "id": 179,
+    "area_code": "55",
+    "area_name": "",
+    "agency_code": "128",
+    "agency_name": "SONAPUR"
+  },
+  {
+    "id": 180,
+    "area_code": "55",
+    "area_name": "",
+    "agency_code": "129",
+    "agency_name": "BALURGHAT"
+  },
+  {
+    "id": 181,
+    "area_code": "55",
+    "area_name": "",
+    "agency_code": "130",
+    "agency_name": "GANGARAMPUR"
+  },
+  {
+    "id": 182,
+    "area_code": "55",
+    "area_name": "",
+    "agency_code": "131",
+    "agency_name": "ISLAMPUR"
+  },
+  {
+    "id": 183,
+    "area_code": "55",
+    "area_name": "",
+    "agency_code": "132",
+    "agency_name": "KALIYAGANJ"
+  },
+  {
+    "id": 184,
+    "area_code": "55",
+    "area_name": "",
+    "agency_code": "133",
+    "agency_name": "No agency"
+  },
+  {
+    "id": 185,
+    "area_code": "60",
+    "area_name": "NORTHERN",
+    "agency_code": "91",
+    "agency_name": "BALIANABABGANJ"
+  },
+  {
+    "id": 186,
+    "area_code": "60",
+    "area_name": "NORTHERN",
+    "agency_code": "92",
+    "agency_name": "DHULAIN"
+  },
+  {
+    "id": 187,
+    "area_code": "60",
+    "area_name": "NORTHERN",
+    "agency_code": "93",
+    "agency_name": "LALGOLA"
+  },
+  {
+    "id": 188,
+    "area_code": "60",
+    "area_name": "NORTHERN",
+    "agency_code": "94",
+    "agency_name": "OLD MALDA"
+  },
+  {
+    "id": 189,
+    "area_code": "60",
+    "area_name": "NORTHERN",
+    "agency_code": "133",
+    "agency_name": "SAMSI"
+  },
+  {
+    "id": 190,
+    "area_code": "60",
+    "area_name": "NORTHERN",
+    "agency_code": "135",
+    "agency_name": "MALDA"
+  },
+  {
+    "id": 191,
+    "area_code": "60",
+    "area_name": "NORTHERN",
+    "agency_code": "139",
+    "agency_name": "MURLIGUNJ"
+  },
+  {
+    "id": 192,
+    "area_code": "60",
+    "area_name": "NORTHERN",
+    "agency_code": "148",
+    "agency_name": "JCI"
+  },
+  {
+    "id": 193,
+    "area_code": "60",
+    "area_name": "NORTHERN",
+    "agency_code": "149",
+    "agency_name": "No agency"
+  },
+  {
+    "id": 194,
+    "area_code": "60",
+    "area_name": "NORTHERN",
+    "agency_code": "165",
+    "agency_name": "ACHINTOLA"
+  },
+  {
+    "id": 195,
+    "area_code": "60",
+    "area_name": "NORTHERN",
+    "agency_code": "187",
+    "agency_name": "JANAKINAGAR"
+  },
+  {
+    "id": 196,
+    "area_code": "60",
+    "area_name": "NORTHERN",
+    "agency_code": "193",
+    "agency_name": "TULSHIHATTA"
+  },
+  {
+    "id": 197,
+    "area_code": "60",
+    "area_name": "NORTHERN",
+    "agency_code": "202",
+    "agency_name": "BHAGWANGOLA"
+  },
+  {
+    "id": 198,
+    "area_code": "60",
+    "area_name": "NORTHERN",
+    "agency_code": "203",
+    "agency_name": "HARISCHANDRAPUR"
+  },
+  {
+    "id": 199,
+    "area_code": "65",
+    "area_name": "",
+    "agency_code": "107",
+    "agency_name": "BALIA NABABGUNJ"
+  },
+  {
+    "id": 202,
+    "area_code": "65",
+    "area_name": "",
+    "agency_code": "110",
+    "agency_name": "SHAMSHI"
+  },
+  {
+    "id": 203,
+    "area_code": "65",
+    "area_name": "",
+    "agency_code": "111",
+    "agency_name": "TULSHIHATA"
+  },
+  {
+    "id": 204,
+    "area_code": "65",
+    "area_name": "",
+    "agency_code": "113",
+    "agency_name": "KARIALI"
+  },
+  {
+    "id": 205,
+    "area_code": "65",
+    "area_name": "",
+    "agency_code": "140",
+    "agency_name": "MATHURA"
+  },
+  {
+    "id": 206,
+    "area_code": "65",
+    "area_name": "",
+    "agency_code": "141",
+    "agency_name": "No agency"
+  },
+  {
+    "id": 207,
+    "area_code": "65",
+    "area_name": "",
+    "agency_code": "172",
+    "agency_name": "JCI"
+  },
+  {
+    "id": 208,
+    "area_code": "70",
+    "area_name": "ORISSA",
+    "agency_code": "1",
+    "agency_name": "No agency"
+  },
+  {
+    "id": 209,
+    "area_code": "80",
+    "area_name": "OTHERS",
+    "agency_code": "105",
+    "agency_name": "BANGLADESH"
+  },
+  {
+    "id": 211,
+    "area_code": "80",
+    "area_name": "OTHERS",
+    "agency_code": "142",
+    "agency_name": "JAYNAGAR"
+  },
+  {
+    "id": 212,
+    "area_code": "80",
+    "area_name": "OTHERS",
+    "agency_code": "143",
+    "agency_name": "No agency"
+  },
+  {
+    "id": 213,
+    "area_code": "80",
+    "area_name": "OTHERS",
+    "agency_code": "153",
+    "agency_name": "SHIBPUR"
+  },
+  {
+    "id": 214,
+    "area_code": "90",
+    "area_name": "SEMI NORTHERN",
+    "agency_code": "95",
+    "agency_name": "No agency"
+  },
+  {
+    "id": 215,
+    "area_code": "100",
+    "area_name": "UPPER ASSAM",
+    "agency_code": "1",
+    "agency_name": "NABDWIP"
+  },
+  {
+    "id": 216,
+    "area_code": "100",
+    "area_name": "UPPER ASSAM",
+    "agency_code": "2",
+    "agency_name": "No agency"
+  },
+  {
+    "id": 217,
+    "area_code": "110",
+    "area_name": "",
+    "agency_code": "1",
+    "agency_name": "No agency"
+  },
+  {
+    "id": 218,
+    "area_code": "120",
+    "area_name": "",
+    "agency_code": "1",
+    "agency_name": "No agency"
+  },
+  {
+    "id": 219,
+    "area_code": "130",
+    "area_name": "",
+    "agency_code": "1",
+    "agency_name": "No agency"
+  },
+  {
+    "id": 220,
+    "area_code": "130",
+    "area_name": "",
+    "agency_code": "155",
+    "agency_name": "GOSSAIGOAN"
+  },
+  {
+    "id": 221,
+    "area_code": "140",
+    "area_name": "",
+    "agency_code": "1",
+    "agency_name": "No agency"
+  },
+  {
+    "id": 222,
+    "area_code": "150",
+    "area_name": "",
+    "agency_code": "1",
+    "agency_name": "No agency"
+  },
+  {
+    "id": 223,
+    "area_code": "160",
+    "area_name": "",
+    "agency_code": "1",
+    "agency_name": "No agency"
+  },
+  {
+    "id": 224,
+    "area_code": "170",
+    "area_name": "",
+    "agency_code": "1",
+    "agency_name": "No agency"
+  },
+  {
+    "id": 225,
+    "area_code": "180",
+    "area_name": "",
+    "agency_code": "1",
+    "agency_name": "No agency"
+  },
+  {
+    "id": 226,
+    "area_code": "180",
+    "area_name": "",
+    "agency_code": "197",
+    "agency_name": "AGARTALA"
+  },
+  {
+    "id": 27,
+    "area_code": "20",
+    "area_name": "BIHAR",
+    "agency_code": "18",
+    "agency_name": "FORBIASGANJ"
+  },
+  {
+    "id": 230,
+    "area_code": "T1000",
+    "area_name": "",
+    "agency_code": "T1",
+    "agency_name": "THANARPAR"
+  },
+  {
+    "id": 231,
+    "area_code": "T1002",
+    "area_name": "",
+    "agency_code": "T2",
+    "agency_name": "SHAKTIPUR"
+  },
+  {
+    "id": 232,
+    "area_code": "T1003",
+    "area_name": "",
+    "agency_code": "T3",
+    "agency_name": "GOPALNAGA"
+  },
+  {
+    "id": 233,
+    "area_code": "T1003",
+    "area_name": "",
+    "agency_code": "T3",
+    "agency_name": "DHUBULIA"
+  },
+  {
+    "id": 234,
+    "area_code": "T007",
+    "area_name": "",
+    "agency_code": "T5",
+    "agency_name": "NIRMOLI"
+  },
+  {
+    "id": 235,
+    "area_code": "T1006",
+    "area_name": "",
+    "agency_code": "T6",
+    "agency_name": "NADIA"
+  },
+  {
+    "id": 236,
+    "area_code": "T009",
+    "area_name": "",
+    "agency_code": "T9",
+    "agency_name": "DABIPUR"
+  },
+  {
+    "id": 237,
+    "area_code": "T1010",
+    "area_name": "",
+    "agency_code": "T10",
+    "agency_name": "DUTTA PHU"
+  },
+  {
+    "id": 238,
+    "area_code": "T10011",
+    "area_name": "",
+    "agency_code": "T11",
+    "agency_name": "MAYAPUR"
+  },
+  {
+    "id": 239,
+    "area_code": "T10012",
+    "area_name": "",
+    "agency_code": "T12",
+    "agency_name": "SINGUR"
+  },
+  {
+    "id": 200,
+    "area_code": "60",
+    "area_name": "NORTHERN",
+    "agency_code": "200",
+    "agency_name": "Saktipur"
+  },
+  {
+    "id": 210,
+    "area_code": "60",
+    "area_name": "NORTHERN",
+    "agency_code": "210",
+    "agency_name": "Barsoi"
+  },
+  {
+    "id": 2,
+    "area_code": "T2",
+    "area_name": "",
+    "agency_code": "2",
+    "agency_name": "Shyamnagar"
+  },
+  {
+    "id": 1023,
+    "area_code": "69",
+    "area_name": "",
+    "agency_code": "T00023",
+    "agency_name": "SIMRAHIBAZAR"
+  },
+  {
+    "id": 1013,
+    "area_code": "T10013",
+    "area_name": "",
+    "agency_code": "13",
+    "agency_name": "BILASIPARA"
+  },
+  {
+    "id": 201,
+    "area_code": "20",
+    "area_name": "BIHAR",
+    "agency_code": "201",
+    "agency_name": "KARJANBAZAR"
+  },
+  {
+    "id": 228,
+    "area_code": "20",
+    "area_name": "BIHAR",
+    "agency_code": "1",
+    "agency_name": "No agency"
+  },
+  {
+    "id": 229,
+    "area_code": "20",
+    "area_name": "BIHAR",
+    "agency_code": "1",
+    "agency_name": "No agency"
+  },
+  {
+    "id": 240,
+    "area_code": "20",
+    "area_name": "BIHAR",
+    "agency_code": "2",
+    "agency_name": "ARARIA"
+  },
+  {
+    "id": 241,
+    "area_code": "20",
+    "area_name": "BIHAR",
+    "agency_code": "3",
+    "agency_name": "FORBISGUNJ"
+  },
+  {
+    "id": 242,
+    "area_code": "20",
+    "area_name": "BIHAR",
+    "agency_code": "4",
+    "agency_name": "GULABBAGH"
+  },
+  {
+    "id": 243,
+    "area_code": "20",
+    "area_name": "BIHAR",
+    "agency_code": "5",
+    "agency_name": "JALALGARH"
+  },
+  {
+    "id": 244,
+    "area_code": "20",
+    "area_name": "BIHAR",
+    "agency_code": "6",
+    "agency_name": "KATHIHAR"
+  },
+  {
+    "id": 245,
+    "area_code": "20",
+    "area_name": "BIHAR",
+    "agency_code": "7",
+    "agency_name": "PURNIA"
+  },
+  {
+    "id": 246,
+    "area_code": "20",
+    "area_name": "BIHAR",
+    "agency_code": "8",
+    "agency_name": "SAHARSA"
+  },
+  {
+    "id": 247,
+    "area_code": "20",
+    "area_name": "BIHAR",
+    "agency_code": "9",
+    "agency_name": "SUPOL"
+  },
+  {
+    "id": 248,
+    "area_code": "20",
+    "area_name": "BIHAR",
+    "agency_code": "10",
+    "agency_name": "THAKURGAUNG"
+  },
+  {
+    "id": 249,
+    "area_code": "20",
+    "area_name": "BIHAR",
+    "agency_code": "166",
+    "agency_name": "ARARIA COURT"
+  },
+  {
+    "id": 250,
+    "area_code": "20",
+    "area_name": "BIHAR",
+    "agency_code": "167",
+    "agency_name": "BAHADURGANJ"
+  },
+  {
+    "id": 251,
+    "area_code": "20",
+    "area_name": "BIHAR",
+    "agency_code": "168",
+    "agency_name": "BANMANKI"
+  },
+  {
+    "id": 252,
+    "area_code": "20",
+    "area_name": "BIHAR",
+    "agency_code": "169",
+    "agency_name": "BARSAZ"
+  },
+  {
+    "id": 253,
+    "area_code": "20",
+    "area_name": "BIHAR",
+    "agency_code": "170",
+    "agency_name": "BEHARIGUNJ"
+  },
+  {
+    "id": 254,
+    "area_code": "20",
+    "area_name": "BIHAR",
+    "agency_code": "171",
+    "agency_name": "BISHANPUR"
+  },
+  {
+    "id": 255,
+    "area_code": "20",
+    "area_name": "BIHAR",
+    "agency_code": "172",
+    "agency_name": "CHATTAAPUR"
+  },
+  {
+    "id": 256,
+    "area_code": "20",
+    "area_name": "BIHAR",
+    "agency_code": "173",
+    "agency_name": "CHATTARGANJ"
+  },
+  {
+    "id": 257,
+    "area_code": "20",
+    "area_name": "BIHAR",
+    "agency_code": "175",
+    "agency_name": "GARBANAILI"
+  },
+  {
+    "id": 258,
+    "area_code": "20",
+    "area_name": "BIHAR",
+    "agency_code": "176",
+    "agency_name": "GURPANAILI"
+  },
+  {
+    "id": 259,
+    "area_code": "20",
+    "area_name": "BIHAR",
+    "agency_code": "177",
+    "agency_name": "JADIA"
+  },
+  {
+    "id": 260,
+    "area_code": "20",
+    "area_name": "BIHAR",
+    "agency_code": "178",
+    "agency_name": "KATIHAR"
+  },
+  {
+    "id": 261,
+    "area_code": "20",
+    "area_name": "BIHAR",
+    "agency_code": "179",
+    "agency_name": "KISHANGANJ"
+  },
+  {
+    "id": 262,
+    "area_code": "20",
+    "area_name": "BIHAR",
+    "agency_code": "180",
+    "agency_name": "KOSBA"
+  },
+  {
+    "id": 263,
+    "area_code": "20",
+    "area_name": "BIHAR",
+    "agency_code": "181",
+    "agency_name": "MADHAPURA"
+  },
+  {
+    "id": 264,
+    "area_code": "20",
+    "area_name": "BIHAR",
+    "agency_code": "182",
+    "agency_name": "MURLIGUNJ"
+  },
+  {
+    "id": 265,
+    "area_code": "20",
+    "area_name": "BIHAR",
+    "agency_code": "183",
+    "agency_name": "PRATAGANJ"
+  },
+  {
+    "id": 266,
+    "area_code": "20",
+    "area_name": "BIHAR",
+    "agency_code": "184",
+    "agency_name": "PURNEA"
+  },
+  {
+    "id": 267,
+    "area_code": "20",
+    "area_name": "BIHAR",
+    "agency_code": "185",
+    "agency_name": "RAGHOPUR"
+  },
+  {
+    "id": 268,
+    "area_code": "20",
+    "area_name": "BIHAR",
+    "agency_code": "186",
+    "agency_name": "SALMARI"
+  },
+  {
+    "id": 269,
+    "area_code": "20",
+    "area_name": "BIHAR",
+    "agency_code": "187",
+    "agency_name": "SIMRAHI"
+  },
+  {
+    "id": 270,
+    "area_code": "20",
+    "area_name": "BIHAR",
+    "agency_code": "188",
+    "agency_name": "SINGHESWARSTHAN"
+  },
+  {
+    "id": 271,
+    "area_code": "20",
+    "area_name": "BIHAR",
+    "agency_code": "189",
+    "agency_name": "SONALI"
+  },
+  {
+    "id": 272,
+    "area_code": "20",
+    "area_name": "BIHAR",
+    "agency_code": "190",
+    "agency_name": "SUPAUL"
+  },
+  {
+    "id": 273,
+    "area_code": "20",
+    "area_name": "BIHAR",
+    "agency_code": "192",
+    "agency_name": "TRIBENIGANJ"
+  },
+  {
+    "id": 274,
+    "area_code": "20",
+    "area_name": "BIHAR",
+    "agency_code": "413",
+    "agency_name": "KASBA"
+  },
+  {
+    "id": 275,
+    "area_code": "20",
+    "area_name": "BIHAR",
+    "agency_code": "445",
+    "agency_name": "KARJANBAZAR"
+  },
+  {
+    "id": 276,
+    "area_code": "20",
+    "area_name": "BIHAR",
+    "agency_code": "483",
+    "agency_name": "GULAGBAGH"
+  },
+  {
+    "id": 277,
+    "area_code": "20",
+    "area_name": "BIHAR",
+    "agency_code": "502",
+    "agency_name": "DURGAGANJ"
+  },
+  {
+    "id": 278,
+    "area_code": "20",
+    "area_name": "BIHAR",
+    "agency_code": "508",
+    "agency_name": "SIMRAHIBAZAR"
+  },
+  {
+    "id": 279,
+    "area_code": "20",
+    "area_name": "BIHAR",
+    "agency_code": "580",
+    "agency_name": "SRIPUR"
+  },
+  {
+    "id": 280,
+    "area_code": "20",
+    "area_name": "BIHAR",
+    "agency_code": "582",
+    "agency_name": "BARSOI"
+  },
+  {
+    "id": 281,
+    "area_code": "20",
+    "area_name": "BIHAR",
+    "agency_code": "609",
+    "agency_name": "GULABBAG"
+  },
+  {
+    "id": 282,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "628",
+    "agency_name": "NIRMOLI"
+  },
+  {
+    "id": 283,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "1",
+    "agency_name": "No agency"
+  },
+  {
+    "id": 284,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "11",
+    "agency_name": "AMTA"
+  },
+  {
+    "id": 285,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "12",
+    "agency_name": "AMTALA"
+  },
+  {
+    "id": 286,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "13",
+    "agency_name": "ANDULIA"
+  },
+  {
+    "id": 287,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "14",
+    "agency_name": "ASHANAGAR"
+  },
+  {
+    "id": 288,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "15",
+    "agency_name": "AURANGABAD"
+  },
+  {
+    "id": 289,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "16",
+    "agency_name": "BADHURIA"
+  },
+  {
+    "id": 290,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "17",
+    "agency_name": "BALAGARH"
+  },
+  {
+    "id": 291,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "18",
+    "agency_name": "BALIACHAK"
+  },
+  {
+    "id": 292,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "19",
+    "agency_name": "BANGALCHI"
+  },
+  {
+    "id": 293,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "20",
+    "agency_name": "BARA ANDULIA"
+  },
+  {
+    "id": 294,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "21",
+    "agency_name": "BARACHANDGHAR"
+  },
+  {
+    "id": 295,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "22",
+    "agency_name": "BARASAT"
+  },
+  {
+    "id": 296,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "23",
+    "agency_name": "BELDANGA"
+  },
+  {
+    "id": 297,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "24",
+    "agency_name": "BERHAMPORE"
+  },
+  {
+    "id": 298,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "25",
+    "agency_name": "BETAI"
+  },
+  {
+    "id": 299,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "26",
+    "agency_name": "BETHUADAHARI"
+  },
+  {
+    "id": 300,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "27",
+    "agency_name": "BHADRESWAR"
+  },
+  {
+    "id": 301,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "28",
+    "agency_name": "BHAGIRATHPUR"
+  },
+  {
+    "id": 302,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "29",
+    "agency_name": "BHIMPUR"
+  },
+  {
+    "id": 303,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "30",
+    "agency_name": "BIRPUR"
+  },
+  {
+    "id": 304,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "31",
+    "agency_name": "BAGULA"
+  },
+  {
+    "id": 305,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "32",
+    "agency_name": "BONGOAN"
+  },
+  {
+    "id": 306,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "33",
+    "agency_name": "CHAITA"
+  },
+  {
+    "id": 307,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "34",
+    "agency_name": "CHAKDAH"
+  },
+  {
+    "id": 308,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "35",
+    "agency_name": "CHAPADANGA"
+  },
+  {
+    "id": 309,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "36",
+    "agency_name": "CHAPRA"
+  },
+  {
+    "id": 310,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "37",
+    "agency_name": "COSSIMBAZAR"
+  },
+  {
+    "id": 311,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "38",
+    "agency_name": "DAINHAT"
+  },
+  {
+    "id": 312,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "39",
+    "agency_name": "DEBAGRAM"
+  },
+  {
+    "id": 313,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "40",
+    "agency_name": "DOMJOOR"
+  },
+  {
+    "id": 314,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "41",
+    "agency_name": "DOMKAL"
+  },
+  {
+    "id": 315,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "42",
+    "agency_name": "DUDHKUMARHAT"
+  },
+  {
+    "id": 316,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "43",
+    "agency_name": "GANGAPUR"
+  },
+  {
+    "id": 317,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "44",
+    "agency_name": "GOLABARI"
+  },
+  {
+    "id": 318,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "45",
+    "agency_name": "GOURA"
+  },
+  {
+    "id": 319,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "46",
+    "agency_name": "GOUSH"
+  },
+  {
+    "id": 320,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "47",
+    "agency_name": "HANSHKHALI"
+  },
+  {
+    "id": 321,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "48",
+    "agency_name": "HARIHARPUR"
+  },
+  {
+    "id": 322,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "49",
+    "agency_name": "HARINGHATA"
+  },
+  {
+    "id": 323,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "50",
+    "agency_name": "HARIPAL"
+  },
+  {
+    "id": 324,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "51",
+    "agency_name": "ISLAMPUR"
+  },
+  {
+    "id": 325,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "52",
+    "agency_name": "JALANGI"
+  },
+  {
+    "id": 326,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "53",
+    "agency_name": "JIAGANJ"
+  },
+  {
+    "id": 327,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "54",
+    "agency_name": "JIRAT"
+  },
+  {
+    "id": 328,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "55",
+    "agency_name": "KALIGANJ"
+  },
+  {
+    "id": 329,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "56",
+    "agency_name": "KALITALA"
+  },
+  {
+    "id": 330,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "57",
+    "agency_name": "KALNA"
+  },
+  {
+    "id": 331,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "58",
+    "agency_name": "KANTHALIA"
+  },
+  {
+    "id": 332,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "59",
+    "agency_name": "KARIMPUR"
+  },
+  {
+    "id": 333,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "60",
+    "agency_name": "KATWA"
+  },
+  {
+    "id": 334,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "61",
+    "agency_name": "KOLAGHAT"
+  },
+  {
+    "id": 335,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "62",
+    "agency_name": "KRISHNANAGAR"
+  },
+  {
+    "id": 336,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "63",
+    "agency_name": "MAJDIA"
+  },
+  {
+    "id": 337,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "64",
+    "agency_name": "MAYNA"
+  },
+  {
+    "id": 338,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "65",
+    "agency_name": "NABADWIP"
+  },
+  {
+    "id": 339,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "66",
+    "agency_name": "NALIKUL"
+  },
+  {
+    "id": 340,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "67",
+    "agency_name": "NAZIRPUR"
+  },
+  {
+    "id": 341,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "68",
+    "agency_name": "NILGANJ"
+  },
+  {
+    "id": 342,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "69",
+    "agency_name": "NIMTALA BAZAR"
+  },
+  {
+    "id": 343,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "70",
+    "agency_name": "NOTIAL BAZAR"
+  },
+  {
+    "id": 344,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "71",
+    "agency_name": "PALASIPARA"
+  },
+  {
+    "id": 345,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "72",
+    "agency_name": "PANCHBERIA"
+  },
+  {
+    "id": 346,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "73",
+    "agency_name": "PATKA BARI"
+  },
+  {
+    "id": 347,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "74",
+    "agency_name": "PRATAPPUR"
+  },
+  {
+    "id": 348,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "75",
+    "agency_name": "RAJAPUR"
+  },
+  {
+    "id": 349,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "76",
+    "agency_name": "RANAGHAT"
+  },
+  {
+    "id": 350,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "77",
+    "agency_name": "RANINAGAR"
+  },
+  {
+    "id": 351,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "78",
+    "agency_name": "REZINAGAR"
+  },
+  {
+    "id": 352,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "79",
+    "agency_name": "SAGARPARA"
+  },
+  {
+    "id": 353,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "80",
+    "agency_name": "SAHEBNAGAR"
+  },
+  {
+    "id": 354,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "81",
+    "agency_name": "SARGACHI"
+  },
+  {
+    "id": 355,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "82",
+    "agency_name": "SHEORAPHULLY"
+  },
+  {
+    "id": 356,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "83",
+    "agency_name": "SIDHESHWAR"
+  },
+  {
+    "id": 357,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "84",
+    "agency_name": "SONAPUR"
+  },
+  {
+    "id": 358,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "85",
+    "agency_name": "SULANTO"
+  },
+  {
+    "id": 359,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "86",
+    "agency_name": "TARKESHWAR"
+  },
+  {
+    "id": 360,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "87",
+    "agency_name": "TEHATTA"
+  },
+  {
+    "id": 361,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "88",
+    "agency_name": "TRIMOHINI"
+  },
+  {
+    "id": 362,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "89",
+    "agency_name": "ULUBERIA"
+  },
+  {
+    "id": 363,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "193",
+    "agency_name": "24 PARGANAS NORTH"
+  },
+  {
+    "id": 364,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "194",
+    "agency_name": "AMDANGA"
+  },
+  {
+    "id": 365,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "195",
+    "agency_name": "AMTOLA"
+  },
+  {
+    "id": 366,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "196",
+    "agency_name": "ARANGHATA"
+  },
+  {
+    "id": 367,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "197",
+    "agency_name": "AZIZNAGAR"
+  },
+  {
+    "id": 368,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "198",
+    "agency_name": "BADURIA"
+  },
+  {
+    "id": 369,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "199",
+    "agency_name": "BAGDA"
+  },
+  {
+    "id": 370,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "200",
+    "agency_name": "BAGJOLA"
+  },
+  {
+    "id": 371,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "201",
+    "agency_name": "BALIA"
+  },
+  {
+    "id": 372,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "202",
+    "agency_name": "BALICHAK"
+  },
+  {
+    "id": 373,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "203",
+    "agency_name": "BANGALJHI"
+  },
+  {
+    "id": 374,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "204",
+    "agency_name": "BANGAON"
+  },
+  {
+    "id": 375,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "205",
+    "agency_name": "BASIRHAT"
+  },
+  {
+    "id": 376,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "206",
+    "agency_name": "BENKI"
+  },
+  {
+    "id": 377,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "207",
+    "agency_name": "BERACHAMPA"
+  },
+  {
+    "id": 378,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "208",
+    "agency_name": "BERAMPORE"
+  },
+  {
+    "id": 379,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "209",
+    "agency_name": "BHABTA"
+  },
+  {
+    "id": 380,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "210",
+    "agency_name": "BHAGWANGOLA"
+  },
+  {
+    "id": 381,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "211",
+    "agency_name": "BHAIRATHPUR"
+  },
+  {
+    "id": 382,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "212",
+    "agency_name": "BITHARI"
+  },
+  {
+    "id": 383,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "213",
+    "agency_name": "BURDWAN"
+  },
+  {
+    "id": 384,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "214",
+    "agency_name": "CHAMPADANGA"
+  },
+  {
+    "id": 385,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "215",
+    "agency_name": "CHANDITALA"
+  },
+  {
+    "id": 386,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "216",
+    "agency_name": "CHARGHAT"
+  },
+  {
+    "id": 387,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "217",
+    "agency_name": "DASPUR"
+  },
+  {
+    "id": 388,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "218",
+    "agency_name": "DEGANGA"
+  },
+  {
+    "id": 389,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "220",
+    "agency_name": "DOMKALI"
+  },
+  {
+    "id": 390,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "221",
+    "agency_name": "DUDKUMARHAT"
+  },
+  {
+    "id": 391,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "222",
+    "agency_name": "DUTTAPUKAR"
+  },
+  {
+    "id": 392,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "223",
+    "agency_name": "FARAKKA"
+  },
+  {
+    "id": 393,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "224",
+    "agency_name": "GAIGHATA"
+  },
+  {
+    "id": 394,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "225",
+    "agency_name": "GANNAPUR"
+  },
+  {
+    "id": 395,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "226",
+    "agency_name": "GANRAPOTA"
+  },
+  {
+    "id": 396,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "227",
+    "agency_name": "GOBARDANGA"
+  },
+  {
+    "id": 397,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "228",
+    "agency_name": "GOPALNAGAR"
+  },
+  {
+    "id": 398,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "229",
+    "agency_name": "HABRA"
+  },
+  {
+    "id": 399,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "230",
+    "agency_name": "HANSKHALI"
+  },
+  {
+    "id": 400,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "231",
+    "agency_name": "HANSNABAD"
+  },
+  {
+    "id": 401,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "232",
+    "agency_name": "HARIHARPARA"
+  },
+  {
+    "id": 402,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "233",
+    "agency_name": "HOOGHLY"
+  },
+  {
+    "id": 403,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "234",
+    "agency_name": "JANGIPARA"
+  },
+  {
+    "id": 404,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "235",
+    "agency_name": "JANGIPUR"
+  },
+  {
+    "id": 405,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "236",
+    "agency_name": "KALGANJ"
+  },
+  {
+    "id": 406,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "237",
+    "agency_name": "KALIAGANJ"
+  },
+  {
+    "id": 407,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "238",
+    "agency_name": "KALSUR- BAGJOLA"
+  },
+  {
+    "id": 408,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "239",
+    "agency_name": "KAZISAHA SKUS"
+  },
+  {
+    "id": 409,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "240",
+    "agency_name": "KHANAKUL"
+  },
+  {
+    "id": 410,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "241",
+    "agency_name": "KRISHNAGAR"
+  },
+  {
+    "id": 411,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "242",
+    "agency_name": "KRISHNAGUNJ"
+  },
+  {
+    "id": 412,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "243",
+    "agency_name": "LALBAGH"
+  },
+  {
+    "id": 413,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "244",
+    "agency_name": "LALGOLA"
+  },
+  {
+    "id": 414,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "245",
+    "agency_name": "MASAT"
+  },
+  {
+    "id": 415,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "246",
+    "agency_name": "MIDNAPORE"
+  },
+  {
+    "id": 416,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "247",
+    "agency_name": "MOYNA"
+  },
+  {
+    "id": 417,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "248",
+    "agency_name": "MURSHIDABAD"
+  },
+  {
+    "id": 418,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "249",
+    "agency_name": "NABIPUR SKUS"
+  },
+  {
+    "id": 419,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "250",
+    "agency_name": "NADIA"
+  },
+  {
+    "id": 420,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "251",
+    "agency_name": "NADIGRAM"
+  },
+  {
+    "id": 421,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "252",
+    "agency_name": "NAGARUKHRA"
+  },
+  {
+    "id": 422,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "253",
+    "agency_name": "NAHATA"
+  },
+  {
+    "id": 423,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "254",
+    "agency_name": "NAKASHIPARA"
+  },
+  {
+    "id": 424,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "255",
+    "agency_name": "NOWDA"
+  },
+  {
+    "id": 425,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "256",
+    "agency_name": "PALASHIPARA"
+  },
+  {
+    "id": 426,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "257",
+    "agency_name": "PATIKABARI"
+  },
+  {
+    "id": 427,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "258",
+    "agency_name": "PATRASAYER"
+  },
+  {
+    "id": 428,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "259",
+    "agency_name": "PATULI"
+  },
+  {
+    "id": 429,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "260",
+    "agency_name": "POLERHAT"
+  },
+  {
+    "id": 430,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "261",
+    "agency_name": "PURBASTHALI"
+  },
+  {
+    "id": 431,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "262",
+    "agency_name": "PURSURAH"
+  },
+  {
+    "id": 432,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "263",
+    "agency_name": "RAGHUNATHGUNJ"
+  },
+  {
+    "id": 433,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "264",
+    "agency_name": "RANSAGAR BENFED DPC"
+  },
+  {
+    "id": 434,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "265",
+    "agency_name": "SASMSERGUNJ"
+  },
+  {
+    "id": 435,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "266",
+    "agency_name": "SAMUDRAGARH SKUS"
+  },
+  {
+    "id": 436,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "267",
+    "agency_name": "SANTIPUR"
+  },
+  {
+    "id": 437,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "268",
+    "agency_name": "SHAKTIPUR"
+  },
+  {
+    "id": 438,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "269",
+    "agency_name": "SUTI"
+  },
+  {
+    "id": 439,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "270",
+    "agency_name": "SWARUPNAGAR"
+  },
+  {
+    "id": 440,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "271",
+    "agency_name": "TARAKESWAR"
+  },
+  {
+    "id": 441,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "272",
+    "agency_name": "UDAYNARAYANPUR"
+  },
+  {
+    "id": 442,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "388",
+    "agency_name": "PIRTALA"
+  },
+  {
+    "id": 443,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "389",
+    "agency_name": "24 PARGANAS"
+  },
+  {
+    "id": 444,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "390",
+    "agency_name": "KOLKATA"
+  },
+  {
+    "id": 445,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "393",
+    "agency_name": "SANKRAIL"
+  },
+  {
+    "id": 446,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "395",
+    "agency_name": "SHIBPUR"
+  },
+  {
+    "id": 447,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "396",
+    "agency_name": "PANSKURA"
+  },
+  {
+    "id": 448,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "397",
+    "agency_name": "DHUBULIA"
+  },
+  {
+    "id": 449,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "398",
+    "agency_name": "DUTTA PHULIA"
+  },
+  {
+    "id": 450,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "401",
+    "agency_name": "MANIKPUR"
+  },
+  {
+    "id": 451,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "415",
+    "agency_name": "BIRNAGAR"
+  },
+  {
+    "id": 452,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "416",
+    "agency_name": "KANAIKHALI"
+  },
+  {
+    "id": 453,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "417",
+    "agency_name": "GOBINDOPUR"
+  },
+  {
+    "id": 454,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "418",
+    "agency_name": "GOPALPUR"
+  },
+  {
+    "id": 455,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "424",
+    "agency_name": "SWORNA KALI"
+  },
+  {
+    "id": 456,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "439",
+    "agency_name": "RAJHATI"
+  },
+  {
+    "id": 457,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "442",
+    "agency_name": "SINGUR"
+  },
+  {
+    "id": 458,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "446",
+    "agency_name": "GHATAL"
+  },
+  {
+    "id": 459,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "449",
+    "agency_name": "DHULAIN"
+  },
+  {
+    "id": 460,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "454",
+    "agency_name": "MUNISIYA"
+  },
+  {
+    "id": 461,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "455",
+    "agency_name": "BADKULLA"
+  },
+  {
+    "id": 462,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "460",
+    "agency_name": "SULANTU"
+  },
+  {
+    "id": 463,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "463",
+    "agency_name": "PARULIA"
+  },
+  {
+    "id": 464,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "471",
+    "agency_name": "SUJANPUR"
+  },
+  {
+    "id": 465,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "472",
+    "agency_name": "SUJNIPUR"
+  },
+  {
+    "id": 466,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "475",
+    "agency_name": "SHAIKPARA"
+  },
+  {
+    "id": 467,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "476",
+    "agency_name": "MADANPUR"
+  },
+  {
+    "id": 468,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "477",
+    "agency_name": "GOURIBAGH"
+  },
+  {
+    "id": 469,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "479",
+    "agency_name": "REGINAGAR"
+  },
+  {
+    "id": 470,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "497",
+    "agency_name": "BANKURA"
+  },
+  {
+    "id": 471,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "506",
+    "agency_name": "ACHINTOLA"
+  },
+  {
+    "id": 472,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "517",
+    "agency_name": "LOCHANPUR"
+  },
+  {
+    "id": 473,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "518",
+    "agency_name": "CHANDITALLA"
+  },
+  {
+    "id": 474,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "519",
+    "agency_name": "RADHANAGAR"
+  },
+  {
+    "id": 475,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "520",
+    "agency_name": "BHATPARA"
+  },
+  {
+    "id": 476,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "521",
+    "agency_name": "SAKTIPUR"
+  },
+  {
+    "id": 477,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "522",
+    "agency_name": "DEVNATHPUR"
+  },
+  {
+    "id": 478,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "525",
+    "agency_name": "BHALUKA"
+  },
+  {
+    "id": 479,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "527",
+    "agency_name": "BIKAL NAGAR"
+  },
+  {
+    "id": 480,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "531",
+    "agency_name": "KALYANI"
+  },
+  {
+    "id": 481,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "535",
+    "agency_name": "PAGLACHANDI"
+  },
+  {
+    "id": 482,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "537",
+    "agency_name": "NAWDA"
+  },
+  {
+    "id": 483,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "538",
+    "agency_name": "GAYESHPUR"
+  },
+  {
+    "id": 484,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "539",
+    "agency_name": "KAZISAHA"
+  },
+  {
+    "id": 485,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "540",
+    "agency_name": "NAWPARA"
+  },
+  {
+    "id": 486,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "541",
+    "agency_name": "MURUTIA"
+  },
+  {
+    "id": 487,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "543",
+    "agency_name": "GAOS"
+  },
+  {
+    "id": 488,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "544",
+    "agency_name": "NANDANGHAT"
+  },
+  {
+    "id": 489,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "546",
+    "agency_name": "HANSPURIA"
+  },
+  {
+    "id": 490,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "547",
+    "agency_name": "GANESHPUR"
+  },
+  {
+    "id": 491,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "548",
+    "agency_name": "MOGRA"
+  },
+  {
+    "id": 492,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "550",
+    "agency_name": "BANJETIA"
+  },
+  {
+    "id": 493,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "555",
+    "agency_name": "DABIPUR"
+  },
+  {
+    "id": 494,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "563",
+    "agency_name": "TARAPUR"
+  },
+  {
+    "id": 495,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "564",
+    "agency_name": "TALDANGA"
+  },
+  {
+    "id": 496,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "567",
+    "agency_name": "CHANDGHAR"
+  },
+  {
+    "id": 497,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "568",
+    "agency_name": "KHAKALI"
+  },
+  {
+    "id": 498,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "573",
+    "agency_name": "KALADANGA"
+  },
+  {
+    "id": 499,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "574",
+    "agency_name": "NAKURTALA"
+  },
+  {
+    "id": 500,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "576",
+    "agency_name": "SUBARNAPUR"
+  },
+  {
+    "id": 501,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "579",
+    "agency_name": "SHEBRAMPUR"
+  },
+  {
+    "id": 502,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "588",
+    "agency_name": "DEBNATHPUR"
+  },
+  {
+    "id": 503,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "590",
+    "agency_name": "JOYNAGAR"
+  },
+  {
+    "id": 504,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "591",
+    "agency_name": "MAYAPUR"
+  },
+  {
+    "id": 505,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "593",
+    "agency_name": "NAGADIBAZAR"
+  },
+  {
+    "id": 506,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "594",
+    "agency_name": "GOAS"
+  },
+  {
+    "id": 507,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "596",
+    "agency_name": "SEKHPARA"
+  },
+  {
+    "id": 508,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "597",
+    "agency_name": "BOGULA"
+  },
+  {
+    "id": 509,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "598",
+    "agency_name": "SHYAMNAGAR"
+  },
+  {
+    "id": 510,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "599",
+    "agency_name": "GANGNAPUR"
+  },
+  {
+    "id": 511,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "604",
+    "agency_name": "PANDUA"
+  },
+  {
+    "id": 512,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "605",
+    "agency_name": "KESHABPUR"
+  },
+  {
+    "id": 513,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "607",
+    "agency_name": "NABIPUR"
+  },
+  {
+    "id": 514,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "610",
+    "agency_name": "PURBA TRIMOHINI"
+  },
+  {
+    "id": 515,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "611",
+    "agency_name": "MALIPARA"
+  },
+  {
+    "id": 516,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "613",
+    "agency_name": "GAZNA"
+  },
+  {
+    "id": 517,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "614",
+    "agency_name": "KALUKHALI"
+  },
+  {
+    "id": 518,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "615",
+    "agency_name": "BARANAGAR"
+  },
+  {
+    "id": 519,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "616",
+    "agency_name": "SANNYASITALA"
+  },
+  {
+    "id": 520,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "617",
+    "agency_name": "HARERAMPUR BANIAKHUTY"
+  },
+  {
+    "id": 521,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "618",
+    "agency_name": "DAULATABAD"
+  },
+  {
+    "id": 522,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "619",
+    "agency_name": "HARIRAMPUR"
+  },
+  {
+    "id": 523,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "620",
+    "agency_name": "AAMTA"
+  },
+  {
+    "id": 524,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "622",
+    "agency_name": "PANIGHATA"
+  },
+  {
+    "id": 525,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "626",
+    "agency_name": "JAGATDAL"
+  },
+  {
+    "id": 526,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "630",
+    "agency_name": "SAHEBGANJ"
+  },
+  {
+    "id": 527,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "631",
+    "agency_name": "NISCHINTAPUR"
+  },
+  {
+    "id": 528,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "632",
+    "agency_name": "TIKARBARIA"
+  },
+  {
+    "id": 529,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "633",
+    "agency_name": "THANARPARA"
+  },
+  {
+    "id": 530,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "634",
+    "agency_name": "SAHEBRAMPUR"
+  },
+  {
+    "id": 531,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "635",
+    "agency_name": "SATUI"
+  },
+  {
+    "id": 532,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "636",
+    "agency_name": "HARITALA"
+  },
+  {
+    "id": 533,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "637",
+    "agency_name": "KADAMTALLA"
+  },
+  {
+    "id": 534,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "638",
+    "agency_name": "BERABERI"
+  },
+  {
+    "id": 535,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "639",
+    "agency_name": "BASUDEBPUR"
+  },
+  {
+    "id": 536,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "640",
+    "agency_name": "GANGADHARI"
+  },
+  {
+    "id": 537,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "641",
+    "agency_name": "CHILAKHALI"
+  },
+  {
+    "id": 538,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "642",
+    "agency_name": "SHIBNAGAR"
+  },
+  {
+    "id": 539,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "643",
+    "agency_name": "RAMNAGAR"
+  },
+  {
+    "id": 540,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "644",
+    "agency_name": "BALIRGHAT"
+  },
+  {
+    "id": 541,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "645",
+    "agency_name": "PAHARPUR"
+  },
+  {
+    "id": 542,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "646",
+    "agency_name": "SARBANGAPUR"
+  },
+  {
+    "id": 543,
+    "area_code": "30",
+    "area_name": "DAISEE",
+    "agency_code": "647",
+    "agency_name": "RATANPUR"
+  },
+  {
+    "id": 544,
+    "area_code": "40",
+    "area_name": "JUNGLE",
+    "agency_code": "648",
+    "agency_name": "PALASHI"
+  },
+  {
+    "id": 545,
+    "area_code": "40",
+    "area_name": "JUNGLE",
+    "agency_code": "1",
+    "agency_name": "No agency"
+  },
+  {
+    "id": 546,
+    "area_code": "40",
+    "area_name": "JUNGLE",
+    "agency_code": "90",
+    "agency_name": "ACHINTOLA"
+  },
+  {
+    "id": 547,
+    "area_code": "40",
+    "area_name": "JUNGLE",
+    "agency_code": "91",
+    "agency_name": "BALIA NABABGUNJ"
+  },
+  {
+    "id": 548,
+    "area_code": "40",
+    "area_name": "JUNGLE",
+    "agency_code": "92",
+    "agency_name": "BHAGWANGOLA"
+  },
+  {
+    "id": 549,
+    "area_code": "40",
+    "area_name": "JUNGLE",
+    "agency_code": "93",
+    "agency_name": "DHULAIN"
+  },
+  {
+    "id": 550,
+    "area_code": "40",
+    "area_name": "JUNGLE",
+    "agency_code": "94",
+    "agency_name": "HARISH CHA.PUR"
+  },
+  {
+    "id": 551,
+    "area_code": "40",
+    "area_name": "JUNGLE",
+    "agency_code": "95",
+    "agency_name": "JANAKINAGAR"
+  },
+  {
+    "id": 552,
+    "area_code": "40",
+    "area_name": "JUNGLE",
+    "agency_code": "96",
+    "agency_name": "KARIALI"
+  },
+  {
+    "id": 553,
+    "area_code": "40",
+    "area_name": "JUNGLE",
+    "agency_code": "97",
+    "agency_name": "LALGOLA"
+  },
+  {
+    "id": 554,
+    "area_code": "40",
+    "area_name": "JUNGLE",
+    "agency_code": "98",
+    "agency_name": "MALDA"
+  },
+  {
+    "id": 555,
+    "area_code": "40",
+    "area_name": "JUNGLE",
+    "agency_code": "99",
+    "agency_name": "MATHURAPUR"
+  },
+  {
+    "id": 556,
+    "area_code": "40",
+    "area_name": "JUNGLE",
+    "agency_code": "100",
+    "agency_name": "MURLIGANJ"
+  },
+  {
+    "id": 557,
+    "area_code": "40",
+    "area_name": "JUNGLE",
+    "agency_code": "101",
+    "agency_name": "OLD MALDA"
+  },
+  {
+    "id": 558,
+    "area_code": "40",
+    "area_name": "JUNGLE",
+    "agency_code": "102",
+    "agency_name": "SHAMSHI"
+  },
+  {
+    "id": 559,
+    "area_code": "40",
+    "area_name": "JUNGLE",
+    "agency_code": "103",
+    "agency_name": "TRIBENIGUNJ"
+  },
+  {
+    "id": 560,
+    "area_code": "40",
+    "area_name": "JUNGLE",
+    "agency_code": "104",
+    "agency_name": "TULSHIHATA"
+  },
+  {
+    "id": 561,
+    "area_code": "40",
+    "area_name": "JUNGLE",
+    "agency_code": "452",
+    "agency_name": "BIHARIJUNG"
+  },
+  {
+    "id": 562,
+    "area_code": "40",
+    "area_name": "JUNGLE",
+    "agency_code": "484",
+    "agency_name": "SAMSI"
+  },
+  {
+    "id": 563,
+    "area_code": "40",
+    "area_name": "JUNGLE",
+    "agency_code": "492",
+    "agency_name": "CHANCHAL"
+  },
+  {
+    "id": 564,
+    "area_code": "40",
+    "area_name": "JUNGLE",
+    "agency_code": "526",
+    "agency_name": "FARAKKA"
+  },
+  {
+    "id": 565,
+    "area_code": "40",
+    "area_name": "JUNGLE",
+    "agency_code": "600",
+    "agency_name": "DHULIAN"
+  },
+  {
+    "id": 566,
+    "area_code": "40",
+    "area_name": "JUNGLE",
+    "agency_code": "601",
+    "agency_name": "BULBULCHANDI"
+  },
+  {
+    "id": 567,
+    "area_code": "50",
+    "area_name": "LOWER ASSAM",
+    "agency_code": "602",
+    "agency_name": "BHULBHULCHANDI"
+  },
+  {
+    "id": 568,
+    "area_code": "50",
+    "area_name": "LOWER ASSAM",
+    "agency_code": "1",
+    "agency_name": "No agency"
+  },
+  {
+    "id": 569,
+    "area_code": "50",
+    "area_name": "LOWER ASSAM",
+    "agency_code": "105",
+    "agency_name": "AMBAGAN"
+  },
+  {
+    "id": 570,
+    "area_code": "50",
+    "area_name": "LOWER ASSAM",
+    "agency_code": "106",
+    "agency_name": "BIJNI"
+  },
+  {
+    "id": 571,
+    "area_code": "50",
+    "area_name": "LOWER ASSAM",
+    "agency_code": "107",
+    "agency_name": "BILASHIPARA"
+  },
+  {
+    "id": 572,
+    "area_code": "50",
+    "area_name": "LOWER ASSAM",
+    "agency_code": "108",
+    "agency_name": "BISWANATH GHAT"
+  },
+  {
+    "id": 573,
+    "area_code": "50",
+    "area_name": "LOWER ASSAM",
+    "agency_code": "109",
+    "agency_name": "DHUBRI"
+  },
+  {
+    "id": 574,
+    "area_code": "50",
+    "area_name": "LOWER ASSAM",
+    "agency_code": "110",
+    "agency_name": "GOLAKGANJ"
+  },
+  {
+    "id": 575,
+    "area_code": "50",
+    "area_name": "LOWER ASSAM",
+    "agency_code": "111",
+    "agency_name": "GOLAPARA"
+  },
+  {
+    "id": 576,
+    "area_code": "50",
+    "area_name": "LOWER ASSAM",
+    "agency_code": "112",
+    "agency_name": "GOSSAIGON"
+  },
+  {
+    "id": 577,
+    "area_code": "50",
+    "area_name": "LOWER ASSAM",
+    "agency_code": "113",
+    "agency_name": "GOURIPUR"
+  },
+  {
+    "id": 578,
+    "area_code": "50",
+    "area_name": "LOWER ASSAM",
+    "agency_code": "114",
+    "agency_name": "GUWAHATI"
+  },
+  {
+    "id": 579,
+    "area_code": "50",
+    "area_name": "LOWER ASSAM",
+    "agency_code": "115",
+    "agency_name": "JURIA"
+  },
+  {
+    "id": 580,
+    "area_code": "50",
+    "area_name": "LOWER ASSAM",
+    "agency_code": "116",
+    "agency_name": "KHARUPETIA"
+  },
+  {
+    "id": 581,
+    "area_code": "50",
+    "area_name": "LOWER ASSAM",
+    "agency_code": "117",
+    "agency_name": "KOKRAJHAR"
+  },
+  {
+    "id": 582,
+    "area_code": "50",
+    "area_name": "LOWER ASSAM",
+    "agency_code": "118",
+    "agency_name": "LAKHIPUR"
+  },
+  {
+    "id": 583,
+    "area_code": "50",
+    "area_name": "LOWER ASSAM",
+    "agency_code": "119",
+    "agency_name": "SAPATGARM"
+  },
+  {
+    "id": 584,
+    "area_code": "50",
+    "area_name": "LOWER ASSAM",
+    "agency_code": "120",
+    "agency_name": "TAMARHAT"
+  },
+  {
+    "id": 585,
+    "area_code": "50",
+    "area_name": "LOWER ASSAM",
+    "agency_code": "121",
+    "agency_name": "TARABARI"
+  },
+  {
+    "id": 586,
+    "area_code": "50",
+    "area_name": "LOWER ASSAM",
+    "agency_code": "273",
+    "agency_name": "ABHAYPURI"
+  },
+  {
+    "id": 587,
+    "area_code": "50",
+    "area_name": "LOWER ASSAM",
+    "agency_code": "274",
+    "agency_name": "AHYAPURI"
+  },
+  {
+    "id": 588,
+    "area_code": "50",
+    "area_name": "LOWER ASSAM",
+    "agency_code": "275",
+    "agency_name": "AMPATTY"
+  },
+  {
+    "id": 589,
+    "area_code": "50",
+    "area_name": "LOWER ASSAM",
+    "agency_code": "276",
+    "agency_name": "BAHARIHAT"
+  },
+  {
+    "id": 590,
+    "area_code": "50",
+    "area_name": "LOWER ASSAM",
+    "agency_code": "277",
+    "agency_name": "BARPETA"
+  },
+  {
+    "id": 591,
+    "area_code": "50",
+    "area_name": "LOWER ASSAM",
+    "agency_code": "278",
+    "agency_name": "BARPETA RD."
+  },
+  {
+    "id": 592,
+    "area_code": "50",
+    "area_name": "LOWER ASSAM",
+    "agency_code": "279",
+    "agency_name": "BONGAIGAON"
+  },
+  {
+    "id": 593,
+    "area_code": "50",
+    "area_name": "LOWER ASSAM",
+    "agency_code": "280",
+    "agency_name": "DARANG"
+  },
+  {
+    "id": 594,
+    "area_code": "50",
+    "area_name": "LOWER ASSAM",
+    "agency_code": "281",
+    "agency_name": "GAROBANDHA"
+  },
+  {
+    "id": 595,
+    "area_code": "50",
+    "area_name": "LOWER ASSAM",
+    "agency_code": "282",
+    "agency_name": "GOALPARA"
+  },
+  {
+    "id": 596,
+    "area_code": "50",
+    "area_name": "LOWER ASSAM",
+    "agency_code": "283",
+    "agency_name": "HOWLY"
+  },
+  {
+    "id": 597,
+    "area_code": "50",
+    "area_name": "LOWER ASSAM",
+    "agency_code": "284",
+    "agency_name": "KALDOBA"
+  },
+  {
+    "id": 598,
+    "area_code": "50",
+    "area_name": "LOWER ASSAM",
+    "agency_code": "285",
+    "agency_name": "KAMRUP"
+  },
+  {
+    "id": 599,
+    "area_code": "50",
+    "area_name": "LOWER ASSAM",
+    "agency_code": "286",
+    "agency_name": "LAKHIGANJ"
+  },
+  {
+    "id": 600,
+    "area_code": "50",
+    "area_name": "LOWER ASSAM",
+    "agency_code": "287",
+    "agency_name": "MANKACHAR"
+  },
+  {
+    "id": 601,
+    "area_code": "50",
+    "area_name": "LOWER ASSAM",
+    "agency_code": "288",
+    "agency_name": "MONDIA"
+  },
+  {
+    "id": 602,
+    "area_code": "50",
+    "area_name": "LOWER ASSAM",
+    "agency_code": "289",
+    "agency_name": "NAGARBERA"
+  },
+  {
+    "id": 603,
+    "area_code": "50",
+    "area_name": "LOWER ASSAM",
+    "agency_code": "290",
+    "agency_name": "PAILDAHA"
+  },
+  {
+    "id": 604,
+    "area_code": "50",
+    "area_name": "LOWER ASSAM",
+    "agency_code": "291",
+    "agency_name": "PHULBARI"
+  },
+  {
+    "id": 605,
+    "area_code": "50",
+    "area_name": "LOWER ASSAM",
+    "agency_code": "292",
+    "agency_name": "UPARHALI"
+  },
+  {
+    "id": 606,
+    "area_code": "50",
+    "area_name": "LOWER ASSAM",
+    "agency_code": "293",
+    "agency_name": "WEST GARO HILLS"
+  },
+  {
+    "id": 607,
+    "area_code": "50",
+    "area_name": "LOWER ASSAM",
+    "agency_code": "294",
+    "agency_name": "ZIKZAK"
+  },
+  {
+    "id": 608,
+    "area_code": "50",
+    "area_name": "LOWER ASSAM",
+    "agency_code": "295",
+    "agency_name": "MANIKCHAR"
+  },
+  {
+    "id": 609,
+    "area_code": "50",
+    "area_name": "LOWER ASSAM",
+    "agency_code": "400",
+    "agency_name": "BILASIPARA"
+  },
+  {
+    "id": 610,
+    "area_code": "50",
+    "area_name": "LOWER ASSAM",
+    "agency_code": "561",
+    "agency_name": "GUWAGACHA"
+  },
+  {
+    "id": 611,
+    "area_code": "60",
+    "area_name": "NORTHERN",
+    "agency_code": "575",
+    "agency_name": "BECHIMARI"
+  },
+  {
+    "id": 612,
+    "area_code": "60",
+    "area_name": "NORTHERN",
+    "agency_code": "1",
+    "agency_name": "No agency"
+  },
+  {
+    "id": 613,
+    "area_code": "60",
+    "area_name": "NORTHERN",
+    "agency_code": "122",
+    "agency_name": "BAMANHAT"
+  },
+  {
+    "id": 614,
+    "area_code": "60",
+    "area_name": "NORTHERN",
+    "agency_code": "123",
+    "agency_name": "BELAKUBA"
+  },
+  {
+    "id": 615,
+    "area_code": "60",
+    "area_name": "NORTHERN",
+    "agency_code": "124",
+    "agency_name": "BHOTPATHY"
+  },
+  {
+    "id": 616,
+    "area_code": "60",
+    "area_name": "NORTHERN",
+    "agency_code": "125",
+    "agency_name": "CHANGRABANDHA"
+  },
+  {
+    "id": 617,
+    "area_code": "60",
+    "area_name": "NORTHERN",
+    "agency_code": "126",
+    "agency_name": "COOCHBIHAR"
+  },
+  {
+    "id": 618,
+    "area_code": "60",
+    "area_name": "NORTHERN",
+    "agency_code": "127",
+    "agency_name": "DEWANHAT"
+  },
+  {
+    "id": 619,
+    "area_code": "60",
+    "area_name": "NORTHERN",
+    "agency_code": "128",
+    "agency_name": "DHUPGURI"
+  },
+  {
+    "id": 620,
+    "area_code": "60",
+    "area_name": "NORTHERN",
+    "agency_code": "129",
+    "agency_name": "DINHATA"
+  },
+  {
+    "id": 621,
+    "area_code": "60",
+    "area_name": "NORTHERN",
+    "agency_code": "130",
+    "agency_name": "FALAKATA"
+  },
+  {
+    "id": 622,
+    "area_code": "60",
+    "area_name": "NORTHERN",
+    "agency_code": "131",
+    "agency_name": "HALDIBARI"
+  },
+  {
+    "id": 623,
+    "area_code": "60",
+    "area_name": "NORTHERN",
+    "agency_code": "132",
+    "agency_name": "HUSLUDANGA"
+  },
+  {
+    "id": 624,
+    "area_code": "60",
+    "area_name": "NORTHERN",
+    "agency_code": "133",
+    "agency_name": "MAINAGURI"
+  },
+  {
+    "id": 625,
+    "area_code": "60",
+    "area_name": "NORTHERN",
+    "agency_code": "134",
+    "agency_name": "MATHABANGA"
+  },
+  {
+    "id": 626,
+    "area_code": "60",
+    "area_name": "NORTHERN",
+    "agency_code": "135",
+    "agency_name": "SILIGURI"
+  },
+  {
+    "id": 627,
+    "area_code": "60",
+    "area_name": "NORTHERN",
+    "agency_code": "296",
+    "agency_name": "ALIPURDUAR DPC"
+  },
+  {
+    "id": 628,
+    "area_code": "60",
+    "area_name": "NORTHERN",
+    "agency_code": "297",
+    "agency_name": "BARNISH"
+  },
+  {
+    "id": 629,
+    "area_code": "60",
+    "area_name": "NORTHERN",
+    "agency_code": "298",
+    "agency_name": "BAROVISA"
+  },
+  {
+    "id": 630,
+    "area_code": "60",
+    "area_name": "NORTHERN",
+    "agency_code": "299",
+    "agency_name": "BAXIHAT DPC"
+  },
+  {
+    "id": 631,
+    "area_code": "60",
+    "area_name": "NORTHERN",
+    "agency_code": "300",
+    "agency_name": "BELAKOBA"
+  },
+  {
+    "id": 632,
+    "area_code": "60",
+    "area_name": "NORTHERN",
+    "agency_code": "301",
+    "agency_name": "BHOTPATTY"
+  },
+  {
+    "id": 633,
+    "area_code": "60",
+    "area_name": "NORTHERN",
+    "agency_code": "302",
+    "agency_name": "BIDHANNAGAR"
+  },
+  {
+    "id": 634,
+    "area_code": "60",
+    "area_name": "NORTHERN",
+    "agency_code": "303",
+    "agency_name": "CHOWDHURIHAT"
+  },
+  {
+    "id": 635,
+    "area_code": "60",
+    "area_name": "NORTHERN",
+    "agency_code": "304",
+    "agency_name": "COOCHBEHAR"
+  },
+  {
+    "id": 636,
+    "area_code": "60",
+    "area_name": "NORTHERN",
+    "agency_code": "305",
+    "agency_name": "DAKSHIN COOCHBEHAR"
+  },
+  {
+    "id": 637,
+    "area_code": "60",
+    "area_name": "NORTHERN",
+    "agency_code": "306",
+    "agency_name": "JALPAIGURI"
+  },
+  {
+    "id": 638,
+    "area_code": "60",
+    "area_name": "NORTHERN",
+    "agency_code": "307",
+    "agency_name": "JAMALDA S/C"
+  },
+  {
+    "id": 639,
+    "area_code": "60",
+    "area_name": "NORTHERN",
+    "agency_code": "308",
+    "agency_name": "KAMAKHYAGURI"
+  },
+  {
+    "id": 640,
+    "area_code": "60",
+    "area_name": "NORTHERN",
+    "agency_code": "309",
+    "agency_name": "MAL"
+  },
+  {
+    "id": 641,
+    "area_code": "60",
+    "area_name": "NORTHERN",
+    "agency_code": "310",
+    "agency_name": "MATHABHANGA"
+  },
+  {
+    "id": 642,
+    "area_code": "60",
+    "area_name": "NORTHERN",
+    "agency_code": "311",
+    "agency_name": "SETAI"
+  },
+  {
+    "id": 643,
+    "area_code": "60",
+    "area_name": "NORTHERN",
+    "agency_code": "312",
+    "agency_name": "SITALKHUCHI"
+  },
+  {
+    "id": 644,
+    "area_code": "60",
+    "area_name": "NORTHERN",
+    "agency_code": "313",
+    "agency_name": "TUFANGUNJ"
+  },
+  {
+    "id": 645,
+    "area_code": "60",
+    "area_name": "NORTHERN",
+    "agency_code": "314",
+    "agency_name": "VETAGURI"
+  },
+  {
+    "id": 646,
+    "area_code": "60",
+    "area_name": "NORTHERN",
+    "agency_code": "394",
+    "agency_name": "GOSAIMARI"
+  },
+  {
+    "id": 647,
+    "area_code": "60",
+    "area_name": "NORTHERN",
+    "agency_code": "407",
+    "agency_name": "TUFANGANJ"
+  },
+  {
+    "id": 648,
+    "area_code": "60",
+    "area_name": "NORTHERN",
+    "agency_code": "408",
+    "agency_name": "BHETAGURI"
+  },
+  {
+    "id": 649,
+    "area_code": "60",
+    "area_name": "NORTHERN",
+    "agency_code": "486",
+    "agency_name": "PUNDIBARI"
+  },
+  {
+    "id": 650,
+    "area_code": "60",
+    "area_name": "NORTHERN",
+    "agency_code": "490",
+    "agency_name": "CHOWDHURYHAT"
+  },
+  {
+    "id": 651,
+    "area_code": "60",
+    "area_name": "NORTHERN",
+    "agency_code": "498",
+    "agency_name": "MAYNAGURI"
+  },
+  {
+    "id": 652,
+    "area_code": "60",
+    "area_name": "NORTHERN",
+    "agency_code": "504",
+    "agency_name": "SITAI"
+  },
+  {
+    "id": 653,
+    "area_code": "60",
+    "area_name": "NORTHERN",
+    "agency_code": "516",
+    "agency_name": "GOKSHADANGA"
+  },
+  {
+    "id": 654,
+    "area_code": "60",
+    "area_name": "NORTHERN",
+    "agency_code": "559",
+    "agency_name": "NISHIGANJ"
+  },
+  {
+    "id": 655,
+    "area_code": "60",
+    "area_name": "NORTHERN",
+    "agency_code": "578",
+    "agency_name": "BAROBISHA"
+  },
+  {
+    "id": 656,
+    "area_code": "60",
+    "area_name": "NORTHERN",
+    "agency_code": "585",
+    "agency_name": "BOXIIRHAT"
+  },
+  {
+    "id": 657,
+    "area_code": "60",
+    "area_name": "NORTHERN",
+    "agency_code": "586",
+    "agency_name": "BOXIRHAT"
+  },
+  {
+    "id": 658,
+    "area_code": "70",
+    "area_name": "ORISSA",
+    "agency_code": "587",
+    "agency_name": "CHANGRA BANDHA"
+  },
+  {
+    "id": 659,
+    "area_code": "70",
+    "area_name": "ORISSA",
+    "agency_code": "1",
+    "agency_name": "No agency"
+  },
+  {
+    "id": 660,
+    "area_code": "70",
+    "area_name": "ORISSA",
+    "agency_code": "315",
+    "agency_name": "BALBABALI"
+  },
+  {
+    "id": 661,
+    "area_code": "70",
+    "area_name": "ORISSA",
+    "agency_code": "316",
+    "agency_name": "BALIPAL"
+  },
+  {
+    "id": 662,
+    "area_code": "70",
+    "area_name": "ORISSA",
+    "agency_code": "317",
+    "agency_name": "BARUA"
+  },
+  {
+    "id": 663,
+    "area_code": "70",
+    "area_name": "ORISSA",
+    "agency_code": "318",
+    "agency_name": "BHADRAK"
+  },
+  {
+    "id": 664,
+    "area_code": "70",
+    "area_name": "ORISSA",
+    "agency_code": "319",
+    "agency_name": "CHAGARIA"
+  },
+  {
+    "id": 665,
+    "area_code": "70",
+    "area_name": "ORISSA",
+    "agency_code": "320",
+    "agency_name": "CHAMPAPUR"
+  },
+  {
+    "id": 666,
+    "area_code": "70",
+    "area_name": "ORISSA",
+    "agency_code": "321",
+    "agency_name": "CHANDOL"
+  },
+  {
+    "id": 667,
+    "area_code": "70",
+    "area_name": "ORISSA",
+    "agency_code": "322",
+    "agency_name": "CUTTAK"
+  },
+  {
+    "id": 668,
+    "area_code": "70",
+    "area_name": "ORISSA",
+    "agency_code": "323",
+    "agency_name": "DANPUR"
+  },
+  {
+    "id": 669,
+    "area_code": "70",
+    "area_name": "ORISSA",
+    "agency_code": "324",
+    "agency_name": "DHANMANDAL"
+  },
+  {
+    "id": 670,
+    "area_code": "70",
+    "area_name": "ORISSA",
+    "agency_code": "325",
+    "agency_name": "FAKIRPUR"
+  },
+  {
+    "id": 671,
+    "area_code": "70",
+    "area_name": "ORISSA",
+    "agency_code": "326",
+    "agency_name": "GOTRA"
+  },
+  {
+    "id": 672,
+    "area_code": "70",
+    "area_name": "ORISSA",
+    "agency_code": "327",
+    "agency_name": "JAJPUR"
+  },
+  {
+    "id": 673,
+    "area_code": "70",
+    "area_name": "ORISSA",
+    "agency_code": "328",
+    "agency_name": "JAJPUR ROAD"
+  },
+  {
+    "id": 674,
+    "area_code": "70",
+    "area_name": "ORISSA",
+    "agency_code": "329",
+    "agency_name": "KENDRAPARA"
+  },
+  {
+    "id": 675,
+    "area_code": "70",
+    "area_name": "ORISSA",
+    "agency_code": "330",
+    "agency_name": "KENDUPATNA"
+  },
+  {
+    "id": 676,
+    "area_code": "70",
+    "area_name": "ORISSA",
+    "agency_code": "331",
+    "agency_name": "KEONJHAR"
+  },
+  {
+    "id": 677,
+    "area_code": "70",
+    "area_name": "ORISSA",
+    "agency_code": "332",
+    "agency_name": "MAHANGA"
+  },
+  {
+    "id": 678,
+    "area_code": "70",
+    "area_name": "ORISSA",
+    "agency_code": "333",
+    "agency_name": "MARSHAGHAI"
+  },
+  {
+    "id": 679,
+    "area_code": "70",
+    "area_name": "ORISSA",
+    "agency_code": "334",
+    "agency_name": "NUANPURA"
+  },
+  {
+    "id": 680,
+    "area_code": "70",
+    "area_name": "ORISSA",
+    "agency_code": "335",
+    "agency_name": "PANCHAPANDAB"
+  },
+  {
+    "id": 681,
+    "area_code": "70",
+    "area_name": "ORISSA",
+    "agency_code": "336",
+    "agency_name": "SAILANG"
+  },
+  {
+    "id": 682,
+    "area_code": "70",
+    "area_name": "ORISSA",
+    "agency_code": "337",
+    "agency_name": "SOMPUR"
+  },
+  {
+    "id": 683,
+    "area_code": "80",
+    "area_name": "OTHERS",
+    "agency_code": "338",
+    "agency_name": "TARAPUR"
+  },
+  {
+    "id": 684,
+    "area_code": "80",
+    "area_name": "OTHERS",
+    "agency_code": "1",
+    "agency_name": "No agency"
+  },
+  {
+    "id": 685,
+    "area_code": "80",
+    "area_name": "OTHERS",
+    "agency_code": "136",
+    "agency_name": "JAYNAGAR"
+  },
+  {
+    "id": 686,
+    "area_code": "80",
+    "area_name": "OTHERS",
+    "agency_code": "137",
+    "agency_name": "SHIBPUR"
+  },
+  {
+    "id": 687,
+    "area_code": "80",
+    "area_name": "OTHERS",
+    "agency_code": "339",
+    "agency_name": "AMADALAVALASA"
+  },
+  {
+    "id": 688,
+    "area_code": "80",
+    "area_name": "OTHERS",
+    "agency_code": "340",
+    "agency_name": "AMDALAYALASA"
+  },
+  {
+    "id": 689,
+    "area_code": "80",
+    "area_name": "OTHERS",
+    "agency_code": "341",
+    "agency_name": "BALJIPOTA"
+  },
+  {
+    "id": 690,
+    "area_code": "80",
+    "area_name": "OTHERS",
+    "agency_code": "342",
+    "agency_name": "BOBBILI"
+  },
+  {
+    "id": 691,
+    "area_code": "80",
+    "area_name": "OTHERS",
+    "agency_code": "343",
+    "agency_name": "CHIPURUPALLI"
+  },
+  {
+    "id": 692,
+    "area_code": "80",
+    "area_name": "OTHERS",
+    "agency_code": "344",
+    "agency_name": "DONKINVALSAH"
+  },
+  {
+    "id": 693,
+    "area_code": "80",
+    "area_name": "OTHERS",
+    "agency_code": "345",
+    "agency_name": "GAJAPATINAGRAM"
+  },
+  {
+    "id": 694,
+    "area_code": "80",
+    "area_name": "OTHERS",
+    "agency_code": "346",
+    "agency_name": "HIRAMANDALAM"
+  },
+  {
+    "id": 695,
+    "area_code": "80",
+    "area_name": "OTHERS",
+    "agency_code": "347",
+    "agency_name": "KOTABOMALI"
+  },
+  {
+    "id": 696,
+    "area_code": "80",
+    "area_name": "OTHERS",
+    "agency_code": "348",
+    "agency_name": "MAKKUVA"
+  },
+  {
+    "id": 697,
+    "area_code": "80",
+    "area_name": "OTHERS",
+    "agency_code": "349",
+    "agency_name": "PALAKONDA"
+  },
+  {
+    "id": 698,
+    "area_code": "80",
+    "area_name": "OTHERS",
+    "agency_code": "350",
+    "agency_name": "PARAVATIPURAM"
+  },
+  {
+    "id": 699,
+    "area_code": "80",
+    "area_name": "OTHERS",
+    "agency_code": "351",
+    "agency_name": "PONDURU"
+  },
+  {
+    "id": 700,
+    "area_code": "80",
+    "area_name": "OTHERS",
+    "agency_code": "352",
+    "agency_name": "RAJAM"
+  },
+  {
+    "id": 701,
+    "area_code": "80",
+    "area_name": "OTHERS",
+    "agency_code": "353",
+    "agency_name": "SRIKAKULAM"
+  },
+  {
+    "id": 702,
+    "area_code": "80",
+    "area_name": "OTHERS",
+    "agency_code": "354",
+    "agency_name": "VIRAGHATTAM"
+  },
+  {
+    "id": 703,
+    "area_code": "80",
+    "area_name": "OTHERS",
+    "agency_code": "355",
+    "agency_name": "VIZIANAGRAM"
+  },
+  {
+    "id": 704,
+    "area_code": "80",
+    "area_name": "OTHERS",
+    "agency_code": "363",
+    "agency_name": "HARISHCHANDRAPUR"
+  },
+  {
+    "id": 705,
+    "area_code": "80",
+    "area_name": "OTHERS",
+    "agency_code": "399",
+    "agency_name": "AGARTALA"
+  },
+  {
+    "id": 706,
+    "area_code": "90",
+    "area_name": "SEMI NORTHERN",
+    "agency_code": "505",
+    "agency_name": "DHULAGARH"
+  },
+  {
+    "id": 707,
+    "area_code": "90",
+    "area_name": "SEMI NORTHERN",
+    "agency_code": "1",
+    "agency_name": "No agency"
+  },
+  {
+    "id": 708,
+    "area_code": "90",
+    "area_name": "SEMI NORTHERN",
+    "agency_code": "138",
+    "agency_name": "ALOMPUR"
+  },
+  {
+    "id": 709,
+    "area_code": "90",
+    "area_name": "SEMI NORTHERN",
+    "agency_code": "139",
+    "agency_name": "BALURGHAT"
+  },
+  {
+    "id": 710,
+    "area_code": "90",
+    "area_name": "SEMI NORTHERN",
+    "agency_code": "140",
+    "agency_name": "BARSOI"
+  },
+  {
+    "id": 711,
+    "area_code": "90",
+    "area_name": "SEMI NORTHERN",
+    "agency_code": "141",
+    "agency_name": "CHANCHAL"
+  },
+  {
+    "id": 712,
+    "area_code": "90",
+    "area_name": "SEMI NORTHERN",
+    "agency_code": "142",
+    "agency_name": "DALKHOLA"
+  },
+  {
+    "id": 713,
+    "area_code": "90",
+    "area_name": "SEMI NORTHERN",
+    "agency_code": "143",
+    "agency_name": "GAJOL"
+  },
+  {
+    "id": 714,
+    "area_code": "90",
+    "area_name": "SEMI NORTHERN",
+    "agency_code": "144",
+    "agency_name": "GANGARAMPUR"
+  },
+  {
+    "id": 715,
+    "area_code": "90",
+    "area_name": "SEMI NORTHERN",
+    "agency_code": "145",
+    "agency_name": "HARIRAMPUR"
+  },
+  {
+    "id": 716,
+    "area_code": "90",
+    "area_name": "SEMI NORTHERN",
+    "agency_code": "146",
+    "agency_name": "HILLI"
+  },
+  {
+    "id": 717,
+    "area_code": "90",
+    "area_name": "SEMI NORTHERN",
+    "agency_code": "147",
+    "agency_name": "ISLAMPUR"
+  },
+  {
+    "id": 718,
+    "area_code": "90",
+    "area_name": "SEMI NORTHERN",
+    "agency_code": "148",
+    "agency_name": "KALIAGANJ"
+  },
+  {
+    "id": 719,
+    "area_code": "90",
+    "area_name": "SEMI NORTHERN",
+    "agency_code": "149",
+    "agency_name": "KANKI"
+  },
+  {
+    "id": 720,
+    "area_code": "90",
+    "area_name": "SEMI NORTHERN",
+    "agency_code": "150",
+    "agency_name": "KUSHMANDI"
+  },
+  {
+    "id": 721,
+    "area_code": "90",
+    "area_name": "SEMI NORTHERN",
+    "agency_code": "151",
+    "agency_name": "PANJIPARA"
+  },
+  {
+    "id": 722,
+    "area_code": "90",
+    "area_name": "SEMI NORTHERN",
+    "agency_code": "152",
+    "agency_name": "PATIRAJ"
+  },
+  {
+    "id": 723,
+    "area_code": "90",
+    "area_name": "SEMI NORTHERN",
+    "agency_code": "153",
+    "agency_name": "RAIGANJ"
+  },
+  {
+    "id": 724,
+    "area_code": "90",
+    "area_name": "SEMI NORTHERN",
+    "agency_code": "154",
+    "agency_name": "RASHAKHOA"
+  },
+  {
+    "id": 725,
+    "area_code": "90",
+    "area_name": "SEMI NORTHERN",
+    "agency_code": "155",
+    "agency_name": "SONAPUR"
+  },
+  {
+    "id": 726,
+    "area_code": "90",
+    "area_name": "SEMI NORTHERN",
+    "agency_code": "156",
+    "agency_name": "SREEGHAR"
+  },
+  {
+    "id": 727,
+    "area_code": "90",
+    "area_name": "SEMI NORTHERN",
+    "agency_code": "157",
+    "agency_name": "TAPAN"
+  },
+  {
+    "id": 728,
+    "area_code": "90",
+    "area_name": "SEMI NORTHERN",
+    "agency_code": "158",
+    "agency_name": "TULSIHATA"
+  },
+  {
+    "id": 729,
+    "area_code": "90",
+    "area_name": "SEMI NORTHERN",
+    "agency_code": "159",
+    "agency_name": "TUNIDIGHI"
+  },
+  {
+    "id": 730,
+    "area_code": "90",
+    "area_name": "SEMI NORTHERN",
+    "agency_code": "356",
+    "agency_name": "BANSHIHARI"
+  },
+  {
+    "id": 731,
+    "area_code": "90",
+    "area_name": "SEMI NORTHERN",
+    "agency_code": "357",
+    "agency_name": "BARAHAR"
+  },
+  {
+    "id": 732,
+    "area_code": "90",
+    "area_name": "SEMI NORTHERN",
+    "agency_code": "358",
+    "agency_name": "BENFED MANGABARI"
+  },
+  {
+    "id": 733,
+    "area_code": "90",
+    "area_name": "SEMI NORTHERN",
+    "agency_code": "359",
+    "agency_name": "DAKSHIN DINAJPUR"
+  },
+  {
+    "id": 734,
+    "area_code": "90",
+    "area_name": "SEMI NORTHERN",
+    "agency_code": "360",
+    "agency_name": "GABGACHI BENFEDE DPC"
+  },
+  {
+    "id": 735,
+    "area_code": "90",
+    "area_name": "SEMI NORTHERN",
+    "agency_code": "361",
+    "agency_name": "GOALPOKHER"
+  },
+  {
+    "id": 736,
+    "area_code": "90",
+    "area_name": "SEMI NORTHERN",
+    "agency_code": "362",
+    "agency_name": "HARIRAMPORE"
+  },
+  {
+    "id": 737,
+    "area_code": "90",
+    "area_name": "SEMI NORTHERN",
+    "agency_code": "364",
+    "agency_name": "HEMTABAD"
+  },
+  {
+    "id": 738,
+    "area_code": "90",
+    "area_name": "SEMI NORTHERN",
+    "agency_code": "365",
+    "agency_name": "ITAHAR"
+  },
+  {
+    "id": 739,
+    "area_code": "90",
+    "area_name": "SEMI NORTHERN",
+    "agency_code": "366",
+    "agency_name": "KALIAGUNJ"
+  },
+  {
+    "id": 740,
+    "area_code": "90",
+    "area_name": "SEMI NORTHERN",
+    "agency_code": "367",
+    "agency_name": "KARANDIGHI"
+  },
+  {
+    "id": 741,
+    "area_code": "90",
+    "area_name": "SEMI NORTHERN",
+    "agency_code": "368",
+    "agency_name": "MALDA"
+  },
+  {
+    "id": 742,
+    "area_code": "90",
+    "area_name": "SEMI NORTHERN",
+    "agency_code": "369",
+    "agency_name": "RAIGUNJ"
+  },
+  {
+    "id": 743,
+    "area_code": "90",
+    "area_name": "SEMI NORTHERN",
+    "agency_code": "370",
+    "agency_name": "RAMPUR"
+  },
+  {
+    "id": 744,
+    "area_code": "90",
+    "area_name": "SEMI NORTHERN",
+    "agency_code": "371",
+    "agency_name": "RATUA II"
+  },
+  {
+    "id": 745,
+    "area_code": "90",
+    "area_name": "SEMI NORTHERN",
+    "agency_code": "372",
+    "agency_name": "SAMSI"
+  },
+  {
+    "id": 746,
+    "area_code": "90",
+    "area_name": "SEMI NORTHERN",
+    "agency_code": "373",
+    "agency_name": "TULSHIHATA"
+  },
+  {
+    "id": 747,
+    "area_code": "90",
+    "area_name": "SEMI NORTHERN",
+    "agency_code": "374",
+    "agency_name": "UTTAR DINAJPUR"
+  },
+  {
+    "id": 748,
+    "area_code": "90",
+    "area_name": "SEMI NORTHERN",
+    "agency_code": "403",
+    "agency_name": "KUSIDA"
+  },
+  {
+    "id": 749,
+    "area_code": "90",
+    "area_name": "SEMI NORTHERN",
+    "agency_code": "404",
+    "agency_name": "HARISHCHANDRAPUR"
+  },
+  {
+    "id": 750,
+    "area_code": "90",
+    "area_name": "SEMI NORTHERN",
+    "agency_code": "406",
+    "agency_name": "SILIGURI"
+  },
+  {
+    "id": 751,
+    "area_code": "90",
+    "area_name": "SEMI NORTHERN",
+    "agency_code": "411",
+    "agency_name": "PATIRAM"
+  },
+  {
+    "id": 752,
+    "area_code": "90",
+    "area_name": "SEMI NORTHERN",
+    "agency_code": "412",
+    "agency_name": "BILASHPUR"
+  },
+  {
+    "id": 753,
+    "area_code": "90",
+    "area_name": "SEMI NORTHERN",
+    "agency_code": "444",
+    "agency_name": "KHARIBARI"
+  },
+  {
+    "id": 754,
+    "area_code": "90",
+    "area_name": "SEMI NORTHERN",
+    "agency_code": "447",
+    "agency_name": "THAKURGUNJ"
+  },
+  {
+    "id": 755,
+    "area_code": "90",
+    "area_name": "SEMI NORTHERN",
+    "agency_code": "448",
+    "agency_name": "LABHA"
+  },
+  {
+    "id": 756,
+    "area_code": "90",
+    "area_name": "SEMI NORTHERN",
+    "agency_code": "450",
+    "agency_name": "TRIMOHINI HAT"
+  },
+  {
+    "id": 757,
+    "area_code": "90",
+    "area_name": "SEMI NORTHERN",
+    "agency_code": "451",
+    "agency_name": "DANGAHAT"
+  },
+  {
+    "id": 758,
+    "area_code": "90",
+    "area_name": "SEMI NORTHERN",
+    "agency_code": "511",
+    "agency_name": "BULBULCHANDI"
+  },
+  {
+    "id": 759,
+    "area_code": "90",
+    "area_name": "SEMI NORTHERN",
+    "agency_code": "514",
+    "agency_name": "FULBARI"
+  },
+  {
+    "id": 760,
+    "area_code": "90",
+    "area_name": "SEMI NORTHERN",
+    "agency_code": "524",
+    "agency_name": "FARAKKA"
+  },
+  {
+    "id": 761,
+    "area_code": "90",
+    "area_name": "SEMI NORTHERN",
+    "agency_code": "530",
+    "agency_name": "MATHURAPUR"
+  },
+  {
+    "id": 762,
+    "area_code": "90",
+    "area_name": "SEMI NORTHERN",
+    "agency_code": "532",
+    "agency_name": "BUNIYADPUR"
+  },
+  {
+    "id": 763,
+    "area_code": "90",
+    "area_name": "SEMI NORTHERN",
+    "agency_code": "536",
+    "agency_name": "KAMARPARA"
+  },
+  {
+    "id": 764,
+    "area_code": "90",
+    "area_name": "SEMI NORTHERN",
+    "agency_code": "569",
+    "agency_name": "LICHUPOKRI"
+  },
+  {
+    "id": 765,
+    "area_code": "90",
+    "area_name": "SEMI NORTHERN",
+    "agency_code": "572",
+    "agency_name": "KISHANGANJ"
+  },
+  {
+    "id": 766,
+    "area_code": "100",
+    "area_name": "UPPER ASSAM",
+    "agency_code": "581",
+    "agency_name": "DASPARA"
+  },
+  {
+    "id": 767,
+    "area_code": "100",
+    "area_name": "UPPER ASSAM",
+    "agency_code": "1",
+    "agency_name": "No agency"
+  },
+  {
+    "id": 768,
+    "area_code": "100",
+    "area_name": "UPPER ASSAM",
+    "agency_code": "160",
+    "agency_name": "DHINGBAZAR"
+  },
+  {
+    "id": 769,
+    "area_code": "100",
+    "area_name": "UPPER ASSAM",
+    "agency_code": "161",
+    "agency_name": "LANKA"
+  },
+  {
+    "id": 770,
+    "area_code": "100",
+    "area_name": "UPPER ASSAM",
+    "agency_code": "162",
+    "agency_name": "MOIRABARI"
+  },
+  {
+    "id": 771,
+    "area_code": "100",
+    "area_name": "UPPER ASSAM",
+    "agency_code": "163",
+    "agency_name": "NOWGAON"
+  },
+  {
+    "id": 772,
+    "area_code": "100",
+    "area_name": "UPPER ASSAM",
+    "agency_code": "164",
+    "agency_name": "RAHA"
+  },
+  {
+    "id": 773,
+    "area_code": "100",
+    "area_name": "UPPER ASSAM",
+    "agency_code": "165",
+    "agency_name": "RUPAHI"
+  },
+  {
+    "id": 774,
+    "area_code": "100",
+    "area_name": "UPPER ASSAM",
+    "agency_code": "375",
+    "agency_name": "AMBAGAN"
+  },
+  {
+    "id": 775,
+    "area_code": "100",
+    "area_name": "UPPER ASSAM",
+    "agency_code": "376",
+    "agency_name": "BHURAGAON"
+  },
+  {
+    "id": 776,
+    "area_code": "100",
+    "area_name": "UPPER ASSAM",
+    "agency_code": "377",
+    "agency_name": "BISWANATGHAT"
+  },
+  {
+    "id": 777,
+    "area_code": "100",
+    "area_name": "UPPER ASSAM",
+    "agency_code": "378",
+    "agency_name": "DAMDUMIA"
+  },
+  {
+    "id": 778,
+    "area_code": "100",
+    "area_name": "UPPER ASSAM",
+    "agency_code": "379",
+    "agency_name": "DHING"
+  },
+  {
+    "id": 779,
+    "area_code": "100",
+    "area_name": "UPPER ASSAM",
+    "agency_code": "380",
+    "agency_name": "JALHLA BANDHA"
+  },
+  {
+    "id": 780,
+    "area_code": "100",
+    "area_name": "UPPER ASSAM",
+    "agency_code": "381",
+    "agency_name": "JURIA"
+  },
+  {
+    "id": 781,
+    "area_code": "100",
+    "area_name": "UPPER ASSAM",
+    "agency_code": "382",
+    "agency_name": "LALKA"
+  },
+  {
+    "id": 782,
+    "area_code": "100",
+    "area_name": "UPPER ASSAM",
+    "agency_code": "383",
+    "agency_name": "MOIRAGAON-SONITPUR"
+  },
+  {
+    "id": 783,
+    "area_code": "100",
+    "area_name": "UPPER ASSAM",
+    "agency_code": "384",
+    "agency_name": "NAGAON"
+  },
+  {
+    "id": 784,
+    "area_code": "100",
+    "area_name": "UPPER ASSAM",
+    "agency_code": "385",
+    "agency_name": "SONITPUR"
+  },
+  {
+    "id": 785,
+    "area_code": "100",
+    "area_name": "UPPER ASSAM",
+    "agency_code": "386",
+    "agency_name": "TALUK"
+  },
+  {
+    "id": 786,
+    "area_code": "100",
+    "area_name": "UPPER ASSAM",
+    "agency_code": "387",
+    "agency_name": "TEZPUR"
+  },
+  {
+    "id": 787,
+    "area_code": "100",
+    "area_name": "UPPER ASSAM",
+    "agency_code": "409",
+    "agency_name": "BETADARUA ROAD"
+  },
+  {
+    "id": 788,
+    "area_code": "100",
+    "area_name": "UPPER ASSAM",
+    "agency_code": "556",
+    "agency_name": "UPARHALI"
+  },
+  {
+    "id": 789,
+    "area_code": "100",
+    "area_name": "UPPER ASSAM",
+    "agency_code": "566",
+    "agency_name": "KALIABAR"
+  },
+  {
+    "id": 790,
+    "area_code": "100",
+    "area_name": "UPPER ASSAM",
+    "agency_code": "577",
+    "agency_name": "BECHIMARI"
+  },
+  {
+    "id": 791,
+    "area_code": "",
+    "area_name": "",
+    "agency_code": "583",
+    "agency_name": "KHARUPETIA"
+  }
+]

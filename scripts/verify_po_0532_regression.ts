@@ -189,11 +189,12 @@ export function calculatePoSettlement(params: {
   const excessMt = isGrossExcess ? Math.abs(grossVarianceMt) : 0;
   const excessKg = Math.round(excessMt * 1000);
 
-  // Policy: 3% tolerance does NOT apply to excess weight
+  // Policy: 3% tolerance does NOT apply to excess weight; deduction is Excess in Qtl × Rate Diff/Qtl
   const exemptionKg = isGrossExcess ? 0 : Math.round(contractMt * 0.03 * 1000);
   const finalDeductibleExcessKg = isGrossExcess ? excessKg : 0;
+  const finalDeductibleExcessQtl = isGrossExcess ? Math.round(excessMt * 10 * 100) / 100 : 0;
   const rateDifference = isGrossExcess ? Math.max(0, saudaRateQtl - lastMrSattaRateQtl) : 0;
-  const totalDeductionAmount = isGrossExcess ? Math.round(finalDeductibleExcessKg * rateDifference * 100) / 100 : 0;
+  const totalDeductionAmount = isGrossExcess ? Math.round(finalDeductibleExcessQtl * rateDifference * 100) / 100 : 0;
 
   return {
     mrBreakdown,
@@ -204,6 +205,7 @@ export function calculatePoSettlement(params: {
     excessKg,
     exemptionKg,
     finalDeductibleExcessKg,
+    finalDeductibleExcessQtl,
     rateDifference,
     totalDeductionAmount,
   };
@@ -287,8 +289,9 @@ function runRegressionSuite() {
   assert.strictEqual(baseline.excessKg, 3635, 'Excess weight must be 38,135 - 34,500 = 3,635 kg');
   assert.strictEqual(baseline.exemptionKg, 0, '3% tolerance must NOT apply to excess weight');
   assert.strictEqual(baseline.finalDeductibleExcessKg, 3635, 'Final deductible excess must be 3,635 kg');
-  assert.strictEqual(baseline.rateDifference, 600, 'Rate difference must be ₹600');
-  assert.strictEqual(baseline.totalDeductionAmount, 2181000, 'Total excess deduction must be 3,635 * 600 = ₹2,181,000');
+  assert.strictEqual(baseline.finalDeductibleExcessQtl, 36.35, 'Final deductible excess in Quintal must be 36.35 Qtl');
+  assert.strictEqual(baseline.rateDifference, 600, 'Rate difference must be ₹600/Qtl');
+  assert.strictEqual(baseline.totalDeductionAmount, 21810, 'Total excess deduction must be 36.35 Qtl * ₹600/Qtl = ₹21,810.00');
 
   // 3. Verify reopening / recalculating 10 times (including running comparePoInspection on each refresh cycle)
   // NEVER mutates MR00999.grid_details or changes the result
@@ -312,7 +315,7 @@ function runRegressionSuite() {
       inspections: sourceRows,
     });
     assert.strictEqual(repeat.totalClaimKg, 38135, `Recalculation #${i} totalClaimKg changed`);
-    assert.strictEqual(repeat.totalDeductionAmount, 2181000, `Recalculation #${i} totalDeductionAmount changed`);
+    assert.strictEqual(repeat.totalDeductionAmount, 21810, `Recalculation #${i} totalDeductionAmount changed`);
   }
 
   // 4. Verify immunity to the historical cumulative corruption values (50,678 kg, 278,774 kg, 582,902 kg)
@@ -344,7 +347,7 @@ function runRegressionSuite() {
     assert.strictEqual(recovered.mrBreakdown.length, 3, 'Each linked MR must be counted exactly once');
     assert.strictEqual(rec999.netWtKg, 12662, `Failed to recover MR00999 net weight 12,662 kg when top-level final_receipt_wt=${corruptedNetMt}`);
     assert.strictEqual(recovered.totalClaimKg, 38135, `Failed to preserve 38,135 kg total claim when top-level final_receipt_wt=${corruptedNetMt}`);
-    assert.strictEqual(recovered.totalDeductionAmount, 2181000, `Failed to preserve ₹2,181,000 deduction when top-level final_receipt_wt=${corruptedNetMt}`);
+    assert.strictEqual(recovered.totalDeductionAmount, 21810, `Failed to preserve ₹21,810.00 deduction when top-level final_receipt_wt=${corruptedNetMt}`);
   }
 
   // 5. Verify that passing all 9 rows across temporary_material_received + final_arrival + material_inspection
@@ -358,9 +361,9 @@ function runRegressionSuite() {
   });
   assert.strictEqual(fromAllTables.mrBreakdown.length, 3, '9 rows across arrival/inspection tables must deduplicate to 3 MRs');
   assert.strictEqual(fromAllTables.totalClaimKg, 38135, 'Total claim from 9 combined rows must be 38,135 kg');
-  assert.strictEqual(fromAllTables.totalDeductionAmount, 2181000, 'Total deduction from 9 combined rows must be ₹2,181,000');
+  assert.strictEqual(fromAllTables.totalDeductionAmount, 21810, 'Total deduction from 9 combined rows must be ₹21,810.00');
 
-  console.log('✓ All regression assertions passed! MR00999=12,662 kg, MR01037=13,593 kg, MR01042(Gross)=11,880 kg => Total=38,135 kg, Excess=3,635 kg, Deduction=₹2,181,000');
+  console.log('✓ All regression assertions passed! MR00999=12,662 kg, MR01037=13,593 kg, MR01042(Gross)=11,880 kg => Total=38,135 kg, Excess=3,635 kg (36.35 Qtl), Deduction=36.35 Qtl × ₹600/Qtl = ₹21,810.00');
 }
 
 runRegressionSuite();
