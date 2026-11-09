@@ -7,20 +7,10 @@ set -e
 echo "🚀 [1/5] Pulling latest code from GitHub..."
 git pull origin main
 
-echo "📦 [2/5] Installing dependencies..."
+echo "📦 [2/4] Installing dependencies..."
 npm install
 
-echo "🔄 [3/5] Checking and reconciling database tables..."
-npm run reconcile:database || true
-if [ -f "sync_pending_temporary_arrival.sh" ]; then
-    bash sync_pending_temporary_arrival.sh || true
-fi
-if [ -f "scripts/fix_po_0532_contract_qty.sql" ]; then
-    echo "🔧 Applying Sauda Check Point & Settlement database fixes..."
-    PGPASSWORD="${PGPASSWORD:-postgres}" psql -h 127.0.0.1 -p 5432 -U postgres -d bjcl_db -f scripts/fix_po_0532_contract_qty.sql || sudo -u postgres psql -d bjcl_db -f scripts/fix_po_0532_contract_qty.sql || true
-fi
-
-echo "🔨 [4/5] Building production assets (Vite + Express server)..."
+echo "🔨 [3/4] Building production assets (Vite + Express server)..."
 npm run build
 
 echo "🔄 [5/5] Restarting PM2 process..."
