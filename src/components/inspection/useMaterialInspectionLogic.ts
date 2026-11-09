@@ -670,7 +670,7 @@ export function useMaterialInspectionLogic(onLogEvent?: (event: string, details:
     loadSavedInspectionsList();
   }, [], { tables: ['material_inspection', 'mill_inspection_master', 'material_inspections', 'purchase_master', 'final_arrival', 'temporary_material_received', 'clubbed_pomr'] });
 
-  // Automatically retrieve full P.O. data from purchase_master whenever po_no changes
+  // Automatically retrieve full P.O. data from sauda_check_point and purchase_master whenever po_no changes
   useEffect(() => {
     if (!supabase || !masterData.po_no) {
       setSelectedPoData(null);
@@ -678,12 +678,37 @@ export function useMaterialInspectionLogic(onLogEvent?: (event: string, details:
     }
     const fetchActualPoData = async () => {
       try {
-        const { data, error } = await supabase
-          .from("purchase_master")
-          .select("*")
-          .eq("po_no", masterData.po_no.trim())
-          .maybeSingle();
-        if (error) throw error;
+        const rawPo = masterData.po_no.trim().replace(/^#/, '');
+        const noPtf = rawPo.replace(/\(PTF\)/gi, '').trim();
+        const lastSeg = noPtf.split(/[\/\-]/).pop()?.replace(/[^0-9]/g, '') || '';
+        const numVal = lastSeg ? parseInt(lastSeg, 10) : NaN;
+        const shortNum = !isNaN(numVal) && numVal > 0 ? String(numVal) : '';
+        const paddedNum = shortNum ? shortNum.padStart(4, '0') : '';
+
+        const orClauses = [
+          `po_no.eq."${rawPo}"`,
+          `po_no.eq."#${rawPo}"`,
+          `contract_po_no.eq."${rawPo}"`
+        ];
+        if (shortNum && paddedNum) {
+          orClauses.push(
+            `contract_po_no.eq."${paddedNum}"`,
+            `contract_po_no.eq."${shortNum}"`,
+            `po_no.ilike."%/${paddedNum}"`,
+            `po_no.ilike."%/${shortNum}"`,
+            `po_no.ilike."%/${paddedNum}(PTF)"`
+          );
+        }
+
+        const [pmRes, scpRes] = await Promise.all([
+          supabase.from("purchase_master").select("*").or(orClauses.join(',')).limit(1).maybeSingle(),
+          supabase.from("sauda_check_point").select("*").or(orClauses.join(',')).limit(1).maybeSingle()
+        ]);
+
+        const pmData = pmRes?.data || null;
+        const scpData = scpRes?.data || null;
+        const data = pmData || scpData ? { ...(pmData || {}), ...(scpData || {}) } : null;
+
         if (data) {
           setSelectedPoData(data);
           if (data.po_date) {
@@ -894,12 +919,30 @@ export function useMaterialInspectionLogic(onLogEvent?: (event: string, details:
 
   useEffect(() => {
     const autoClaim = calculateDeliveryClaimVal();
-    if (autoClaim > 0 && !(masterData as any).delivery_claim) {
-      setMasterData((prev) => ({
-        ...prev,
-        delivery_claim: autoClaim,
-      }));
+    let computedLateDays = 0;
+    if (selectedPoData?.delivery_to) {
+      const deliveryToObj = parseDateOnly(selectedPoData.delivery_to);
+      const receiptDateObj = parseDateOnly(masterData.unloading_date || masterData.arrival_date || masterData.mr_date);
+      if (deliveryToObj && receiptDateObj && receiptDateObj.getTime() > deliveryToObj.getTime()) {
+        const rawLate = Math.round((receiptDateObj.getTime() - deliveryToObj.getTime()) / (1000 * 60 * 60 * 24));
+        const grace = Number(selectedPoData.grace_days || 0);
+        computedLateDays = rawLate > grace ? rawLate : 0;
+      }
     }
+
+    setMasterData((prev) => {
+      let changed = false;
+      const next: any = { ...prev };
+      if (autoClaim > 0 && !next.delivery_claim) {
+        next.delivery_claim = autoClaim;
+        changed = true;
+      }
+      if (computedLateDays > 0 && (!next.detention_days || Number(next.detention_days) === 0)) {
+        next.detention_days = computedLateDays;
+        changed = true;
+      }
+      return changed ? next : prev;
+    });
   }, [selectedPoData, masterData.unloading_date, masterData.arrival_date, masterData.mr_date, detailsList]);
 
   const handleSyncSettlementAmount = async () => {

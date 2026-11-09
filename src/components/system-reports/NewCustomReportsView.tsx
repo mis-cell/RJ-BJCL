@@ -78,6 +78,7 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
           saudaCpRes,
           tempArrRes,
           matInspRes,
+          matInspDetailRes,
           millInspRes,
           millInspDetailRes,
           matMismatchRes,
@@ -92,6 +93,7 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
           supabase.from('sauda_check_point').select('*').order('created_at', { ascending: false }),
           supabase.from('temporary_material_received').select('*').order('date', { ascending: false }),
           supabase.from('material_inspection').select('*').order('created_at', { ascending: false }),
+          supabase.from('material_inspection_details').select('*').then(r => r, () => ({ data: [] })),
           supabase.from('mill_inspection_master').select('*').order('created_at', { ascending: false }).then(r => r, () => ({ data: [] })),
           supabase.from('mill_inspection_detail').select('*').then(r => r, () => ({ data: [] })),
           supabase.from('material_mismatch').select('*').then(r => r, () => ({ data: [] })),
@@ -107,7 +109,7 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
         const rawCheckpoints = saudaCpRes.data || [];
         const rawTempArrivals = tempArrRes.data || [];
         const rawMatInsp = [...(matInspRes.data || []), ...((millInspRes as any)?.data || [])];
-        const rawMillInspDetails = (millInspDetailRes as any)?.data || [];
+        const rawMillInspDetails = [...((matInspDetailRes as any)?.data || []), ...((millInspDetailRes as any)?.data || [])];
         const rawMatMismatches = (matMismatchRes as any)?.data || [];
         const rawSattaMismatches = (sattaMismatchRes as any)?.data || [];
         const rawScpDeductions = (scpDedRes as any)?.data || [];
@@ -558,10 +560,26 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
           broker: string;
         }>();
 
+        const extractPoSuffixKeys = (val: any): string[] => {
+          const s = String(val || '').trim();
+          const m = s.match(/(?:^|[\/\-_\s])0*(\d{1,5})$/);
+          if (!m || !m[1]) return [];
+          const shortNum = m[1];
+          const paddedNum = shortNum.padStart(4, '0');
+          return [
+            `SUFFIX_${paddedNum}`,
+            `SUFFIX_${shortNum}`,
+            cleanPoKey(`PO-${shortNum}`),
+            cleanPoKey(`PO-${paddedNum}`),
+            cleanPoKey(shortNum),
+            cleanPoKey(paddedNum)
+          ].filter(Boolean);
+        };
+
         rawPos.forEach((po: any) => {
           const key = cleanPoKey(po.po_no || po.po_number);
           if (!key) return;
-          poDeliveryMap.set(key, {
+          const entry = {
             poNo: String(po.po_no || po.po_number || key).trim(),
             poDate: String(po.po_date || po.date || po.s_date || '').split('T')[0],
             deliveryFrom: String(po.delivery_from || po.delivery_gt_from || '').split('T')[0],
@@ -570,14 +588,24 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
             deliveryPenaltyRate: Number(po.delivery_penalty || po.shipment_penalty || 0),
             supplier: String(po.supplier || po.supplier_name || '').toUpperCase().trim(),
             broker: String(po.broker || po.broker_name || '').toUpperCase().trim()
+          };
+          poDeliveryMap.set(key, entry);
+          extractPoSuffixKeys(po.po_no || po.po_number || po.contract_po_no).forEach(sk => {
+            if (!poDeliveryMap.has(sk)) poDeliveryMap.set(sk, entry);
           });
         });
 
         rawCheckpoints.forEach((cp: any) => {
-          const keys = [cp.po_no, cp.ptf_no, cp.sauda_no, cp.contract_po_no].map(cleanPoKey).filter(Boolean);
+          const keys = [
+            cp.po_no,
+            cp.ptf_no,
+            cp.sauda_no,
+            cp.contract_po_no,
+            ...extractPoSuffixKeys(cp.po_no || cp.contract_po_no)
+          ].map(cleanPoKey).filter(Boolean);
           if (keys.length === 0) return;
           const primaryKey = keys[0];
-          const existing = poDeliveryMap.get(primaryKey);
+          const existing = keys.map(k => poDeliveryMap.get(k)).find(Boolean);
 
           const entry = {
             poNo: String(cp.po_no || existing?.poNo || primaryKey).trim(),
@@ -591,6 +619,7 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
           };
 
           keys.forEach(k => poDeliveryMap.set(k, entry));
+          extractPoSuffixKeys(cp.po_no || cp.contract_po_no).forEach(sk => poDeliveryMap.set(sk, entry));
         });
 
         const calcDelayDays = (deliveryToStr?: string, arrivalDateStr?: string): number => {
@@ -681,7 +710,9 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
             ''
           ).trim();
           const poKey = cleanPoKey(rawPoNo);
-          const poInfo = poKey ? poDeliveryMap.get(poKey) : undefined;
+          const suffixCandidates = extractPoSuffixKeys(rawPoNo);
+          const poInfo = (poKey ? poDeliveryMap.get(poKey) : undefined) ||
+            suffixCandidates.map(sk => poDeliveryMap.get(sk)).find(Boolean);
 
           const tempArrivalDate = String(
             tmr?.date ||
@@ -902,9 +933,9 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
           const unit = String(cp?.purchase_unit_name || cp?.unit_type || cp?.unit || 'BALES').toUpperCase().trim();
 
           const contractMt = Number(
-            savedDed?.contract_weight_mt ||
             cp?.total_contract_mt ||
             cp?.contract_weight_mt ||
+            savedDed?.contract_weight_mt ||
             cp?.total_wt_in_ton ||
             cp?.weight_mt ||
             cp?.contract_mt ||
@@ -912,21 +943,21 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
             0
           );
 
-          if (contractMt <= 0 && !savedDed) return;
+          if (contractMt <= 0) return;
 
           // Match Mill Inspections for this PO
           const matchedInsps = rawMatInsp.filter((insp: any) => {
             const iPo = cleanPoKey(insp.po_no || insp.mill_po_no || insp.contract_po_no || insp.sauda_no);
             if (!iPo) return false;
             if (iPo === poKey) return true;
-            if (poSuffix.length >= 3 && iPo.endsWith(poSuffix)) return true;
+            if (poSuffix.length >= 3 && (iPo === poSuffix || iPo === `PO-${poSuffix}` || iPo === `PO-${poSuffix.replace(/^0+/, '')}`)) return true;
             return false;
           });
 
           const uniqueByMr = new Map<string, any>();
           matchedInsps.forEach((insp: any) => {
             const rawMr = String(insp.mr_no || insp.arrival_no || '').trim();
-            if (!rawMr) return;
+            if (!rawMr || rawMr.toUpperCase() === 'NO' || rawMr.toUpperCase() === 'N/A' || rawMr === '-') return;
             const mKey = canonicalMrKey(rawMr);
             const existing = uniqueByMr.get(mKey);
             const hasGrid = Boolean(insp.grid_details || insp.details);
@@ -946,12 +977,18 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
           });
 
           const saudaRate =
-            Number(savedDed?.sauda_rate) ||
-            Number(cp?.b_rate) ||
-            Number(cp?.rate_qntl) ||
-            Number(cp?.rate) ||
+            Number(cp?.b_rate || cp?.base_rate || cp?.b_rate_qtl || cp?.s_b_rate || cp?.sauda_b_rate || 0) ||
             getTd5RateForDate(saudaDate) ||
+            Number(cp?.rate || cp?.purchase_rate || cp?.rate_per_qtl || cp?.sauda_rate || cp?.contract_rate || savedDed?.sauda_rate || 0) ||
             12900;
+
+          const toMtFromRawWt = (val: any): number => {
+            const n = Number(val || 0);
+            if (!Number.isFinite(n) || n <= 0) return 0;
+            if (n >= 500) return n / 1000;
+            if (n > 50 && n < 500) return n / 10;
+            return n;
+          };
 
           const mrBreakdown: any[] = [];
           let computedTotalClaimMt = 0;
@@ -964,76 +1001,108 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
               const isLast = idx === sortedInsps.length - 1;
               const mrNoStr = toMillInspectionMrNo(insp.mr_no || insp.arrival_no || '');
               const mKey = canonicalMrKey(mrNoStr);
-              const mrDateStr = String(insp.arrival_date || insp.mr_date || insp.date || '').split('T')[0];
+              const mrDateStr = String(insp.arrival_date || insp.mr_date || insp.inspection_date || insp.date || '').split('T')[0];
 
-              let gMt = 0;
-              let nMt = 0;
-              let bags = 0;
-              let gradeStr = String(insp.grade || insp.selected_grade || cp?.grade || 'TD6').trim();
-              let markaStr = String(insp.marka || 'NO MARK').trim();
-              let cropYearStr = String(insp.crop_year || '2026-27').trim();
+              let mrGrossMt = toMtFromRawWt(insp.challan_gross_wt ?? insp.receipt_gross_wt ?? insp.gross_weight);
+              let mrNetMt = toMtFromRawWt(insp.final_receipt_wt ?? insp.total_final_receipt_wt ?? insp.reduced_weight ?? insp.weight_reduced);
+              let bags = Number(insp.total_packets || insp.quantity || insp.total_quantity || insp.packets || insp.bags || 0) || 0;
+              let gradeStr = String(insp.receipt_grade_name || insp.challan_grade_name || insp.grading || insp.grade || insp.selected_grade || cp?.grade || 'TD6').trim();
+              let markaStr = String(insp.challan_marka_name || insp.marka || 'NO MARK').trim();
+              let cropYearStr = String(insp.crop_year || insp.financial_year || '2026-27').trim();
 
-              let gItems: any[] = [];
+              let embeddedGrid: any[] = [];
               if (insp.grid_details) {
                 try {
-                  gItems = typeof insp.grid_details === 'string' ? JSON.parse(insp.grid_details) : insp.grid_details;
+                  const parsed = typeof insp.grid_details === 'string' ? JSON.parse(insp.grid_details) : insp.grid_details;
+                  if (Array.isArray(parsed)) embeddedGrid = parsed;
                 } catch (_) {}
               }
-              if ((!gItems || !gItems.length) && insp.details) {
+              if (embeddedGrid.length === 0 && insp.details) {
                 try {
-                  gItems = typeof insp.details === 'string' ? JSON.parse(insp.details) : insp.details;
+                  const parsed = typeof insp.details === 'string' ? JSON.parse(insp.details) : insp.details;
+                  if (Array.isArray(parsed)) embeddedGrid = parsed;
                 } catch (_) {}
               }
 
-              if (Array.isArray(gItems) && gItems.length > 0) {
+              const matchingDetails = embeddedGrid.length > 0
+                ? embeddedGrid
+                : rawMillInspDetails.filter((d: any) => {
+                    const dMr = String(d.mr_no || '').trim();
+                    return dMr && canonicalMrKey(dMr) === mKey;
+                  });
+
+              if (Array.isArray(matchingDetails) && matchingDetails.length > 0) {
                 const seenSrl = new Set<string>();
-                gItems.forEach((it: any, itIdx: number) => {
-                  if (!it || typeof it !== 'object') return;
-                  const itMr = String(it.mr_no || '').trim();
+                let sumDetailGrossMt = 0;
+                let sumDetailNetMt = 0;
+                let sumDetailBags = 0;
+                const gradesSet: string[] = [];
+                const markasSet: string[] = [];
+
+                matchingDetails.forEach((d: any, itIdx: number) => {
+                  if (!d || typeof d !== 'object') return;
+                  const itMr = String(d.mr_no || '').trim();
                   if (itMr && canonicalMrKey(itMr) !== mKey) return;
-                  let g = Number(it.challan_gross_wt ?? it.receipt_gross_wt ?? it.gross_weight ?? 0);
-                  let n = Number(it.final_receipt_wt ?? it.reduced_weight ?? it.netto_pnto ?? 0);
-                  if (g <= 0 && n <= 0) return;
+                  const gRaw = Number(d.challan_gross_wt ?? d.receipt_gross_wt ?? d.gross_weight_batch ?? d.gross_weight ?? 0);
+                  const nRaw = Number(d.final_receipt_wt ?? d.reduced_weight ?? d.netto_pnto ?? 0);
+                  if (gRaw <= 0 && nRaw <= 0) return;
+
                   const srl =
-                    it.srl_no !== undefined && it.srl_no !== null && String(it.srl_no).trim() !== ''
-                      ? `SRL_${String(it.srl_no).trim()}`
-                      : `ROW_${itIdx}_${g}_${n}`;
+                    d.srl_no !== undefined && d.srl_no !== null && String(d.srl_no).trim() !== ''
+                      ? `SRL_${String(d.srl_no).trim()}`
+                      : `ROW_${String(d.arrival_grade || d.receipt_grade_name || d.challan_grade_name || itIdx).trim()}_${gRaw}_${nRaw}`;
                   if (seenSrl.has(srl)) return;
                   seenSrl.add(srl);
 
-                  if (g >= 500) g = g / 1000;
-                  else if (g > 50 && g < 500) g = g / 10;
-                  gMt += g;
+                  const gWt = toMtFromRawWt(gRaw);
+                  let nWt = toMtFromRawWt(nRaw);
+                  if (nWt <= 0 && d.quantity_rcpt) nWt = toMtFromRawWt(d.quantity_rcpt);
+                  if (nWt <= 0 && gWt > 0) nWt = gWt;
 
-                  if (n >= 500) n = n / 1000;
-                  else if (n > 50 && n < 500) n = n / 10;
-                  nMt += n;
+                  sumDetailGrossMt += gWt;
+                  sumDetailNetMt += nWt;
+                  sumDetailBags += Number(d.quantity || d.packets || d.bales || d.bags || 0) || 0;
 
-                  bags += Number(it.quantity ?? it.packets ?? it.bags ?? 0) || 0;
-                  if (it.grade || it.quality) gradeStr = String(it.grade || it.quality).trim();
-                  if (it.marka) markaStr = String(it.marka).trim();
-                  if (it.crop_year) cropYearStr = String(it.crop_year).trim();
+                  const gName = String(d.arrival_grade || d.receipt_grade_name || d.challan_grade_name || d.stock_grade_name || d.grade || '').trim();
+                  if (gName && !gradesSet.includes(gName)) gradesSet.push(gName);
+                  const mName = String(d.marka || d.marks || '').trim();
+                  if (mName && !markasSet.includes(mName)) markasSet.push(mName);
+                  if (d.crop_year) cropYearStr = String(d.crop_year).trim();
                 });
+
+                const roundedDetailGross = Math.round(sumDetailGrossMt * 1000) / 1000;
+                const roundedDetailNet = Math.round(sumDetailNetMt * 1000) / 1000;
+
+                if (roundedDetailGross > 0 && (mrGrossMt <= 0 || Math.abs(mrGrossMt - roundedDetailGross) > 0.05)) {
+                  mrGrossMt = roundedDetailGross;
+                }
+                if (
+                  roundedDetailNet > 0 &&
+                  (mrNetMt <= 0 ||
+                    (mrGrossMt > 0 && mrNetMt > mrGrossMt + 0.001) ||
+                    Math.abs(mrNetMt - roundedDetailNet) > 0.05)
+                ) {
+                  mrNetMt = roundedDetailNet;
+                }
+                if (bags <= 0 && sumDetailBags > 0) bags = sumDetailBags;
+                if (gradesSet.length > 0) gradeStr = gradesSet[0];
+                if (markasSet.length > 0) markaStr = markasSet[0];
               }
 
-              let topG = Number(insp.challan_gross_wt || insp.receipt_gross_wt || insp.gross_weight || 0);
-              if (topG >= 500) topG = topG / 1000;
-              else if (topG > 50 && topG < 500) topG = topG / 10;
-
-              let topN = Number(insp.final_receipt_wt || insp.total_final_receipt_wt || insp.reduced_weight || 0);
-              if (topN >= 500) topN = topN / 1000;
-              else if (topN > 50 && topN < 500) topN = topN / 10;
-
-              if (gMt <= 0 && topG > 0) gMt = topG;
-              if (nMt <= 0 && topN > 0) {
-                nMt = gMt > 0 && topN > gMt + 0.001 ? gMt : topN;
+              if (mrGrossMt > 0 && mrNetMt > mrGrossMt + 0.001) {
+                mrNetMt = mrGrossMt;
               }
-              if (gMt > 0 && nMt > gMt + 0.001) nMt = gMt;
-              if (gMt <= 0) gMt = nMt;
-              if (nMt <= 0) nMt = gMt;
-              if (bags <= 0) bags = Number(insp.quantity || insp.total_quantity || insp.bags || 0) || 0;
+              if (mrNetMt <= 0) {
+                if (insp.weight_qtl) mrNetMt = Number(insp.weight_qtl) / 10;
+                else if (insp.weight) mrNetMt = toMtFromRawWt(insp.weight);
+              }
+              if (mrGrossMt <= 0) mrGrossMt = mrNetMt;
+              if (mrNetMt <= 0) mrNetMt = mrGrossMt;
 
-              const finalClaimMt = isMulti && isLast ? gMt : nMt;
+              mrGrossMt = Math.round(mrGrossMt * 1000) / 1000;
+              mrNetMt = Math.round(mrNetMt * 1000) / 1000;
+
+              const finalClaimMt = isMulti && isLast ? mrGrossMt : mrNetMt;
               computedTotalClaimMt += finalClaimMt;
 
               if (isLast) {
@@ -1051,10 +1120,10 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
                 marka: markaStr,
                 cropYear: cropYearStr,
                 bags,
-                grossMt: Number(gMt.toFixed(3)),
-                grossKg: Math.round(gMt * 1000),
-                netMt: Number(nMt.toFixed(3)),
-                netKg: Math.round(nMt * 1000),
+                grossMt: Number(mrGrossMt.toFixed(3)),
+                grossKg: Math.round(mrGrossMt * 1000),
+                netMt: Number(mrNetMt.toFixed(3)),
+                netKg: Math.round(mrNetMt * 1000),
                 finalClaimMt: Number(finalClaimMt.toFixed(3)),
                 finalClaimKg: Math.round(finalClaimMt * 1000),
                 finalClaimQtl: Number((finalClaimMt * 10).toFixed(2)),
@@ -1068,49 +1137,105 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
 
           const totalReceivedMt =
             computedTotalClaimMt > 0
-              ? Number(computedTotalClaimMt.toFixed(3))
-              : Number(savedDed?.total_received_mt || cp?.received_weight_mt || 0);
+              ? Math.round(computedTotalClaimMt * 1000) / 1000
+              : Math.round(Number(savedDed?.total_received_mt || cp?.received_weight_mt || 0) * 1000) / 1000;
 
-          if (totalReceivedMt <= 0 && !savedDed) return;
+          if (totalReceivedMt <= 0) return;
 
-          const tol = calculateWeightTolerance(contractMt, totalReceivedMt, unit);
-          let variationType = String(savedDed?.variation_type || '').toLowerCase();
-          if (!variationType || variationType === 'pending_arrival') {
-            if (tol.isOverDelivery) variationType = 'excess';
-            else if (tol.isUnderDelivery) variationType = 'short';
-            else variationType = 'within_tolerance';
+          // =========================================================================
+          // Exact Extra & Short Weight & Rate Settlement Logic (from Sauda Check Point):
+          // 1. Compare Sauda Contract Qty vs Total Final Receipt Claim:
+          //    - Excess (Received > Contract): NO 3% tolerance on Excess!
+          //      Deductible Wt = Total Final Receipt Claim - Sauda Contract Qty
+          //      (e.g., 38,135 kg - 34,500 kg = 3,635 kg = 3.635 MT = 36.35 Qtl)
+          //    - Short (Received < Contract):
+          //      * If shortage >= 1.5 MT (1,500 kg): No 3% tolerance, full shortage chargeable.
+          //      * If shortage < 1.5 MT and <= 3% of Contract: Within 3% Exemption -> 0 deductible.
+          //      * If shortage < 1.5 MT and > 3% of Contract: Deduct (Shortage - 3% of Contract).
+          // 2. Satta Rate Difference & Deduction:
+          //    - Excess: If Sauda Rate > Last MR Rate, Diff = Sauda Rate - Last MR Rate; else ₹0.
+          //    - Short: If Last MR Rate > Sauda Rate, Diff = Last MR Rate - Sauda Rate; else ₹0.
+          //    - Total Deduction (₹) = Deductible Quintal (Qtl) × Rate Diff / Qtl
+          //      (e.g., 36.35 Qtl × ₹600/Qtl = ₹21,810.00)
+          // =========================================================================
+          const grossVarianceMt = Math.round((contractMt - totalReceivedMt) * 1000) / 1000;
+          const isGrossShort = grossVarianceMt > 0.0001;
+          const isGrossExcess = grossVarianceMt < -0.0001;
+          const shortageMt = isGrossShort ? grossVarianceMt : 0;
+          const excessMt = isGrossExcess ? Math.abs(grossVarianceMt) : 0;
+          const tolerance3PctMt = Math.round((contractMt * 0.03) * 1000) / 1000;
+
+          let deductionQtyMt = 0;
+          let isWithinTolerance = false;
+          let variationType: 'excess' | 'short' | 'within_tolerance' = 'within_tolerance';
+          let policyLabel = 'Within 3% Tolerance';
+
+          if (isGrossExcess) {
+            variationType = 'excess';
+            deductionQtyMt = Math.max(0, Math.round(excessMt * 1000) / 1000);
+            isWithinTolerance = false;
+            policyLabel = 'No 3% Tolerance on Excess';
+          } else if (isGrossShort) {
+            if (shortageMt >= 1.5) {
+              variationType = 'short';
+              deductionQtyMt = Math.max(0, Math.round(shortageMt * 1000) / 1000);
+              isWithinTolerance = false;
+              policyLabel = 'Short ≥ 1.5 MT (Full Shortage)';
+            } else if (shortageMt <= tolerance3PctMt) {
+              variationType = 'within_tolerance';
+              deductionQtyMt = 0;
+              isWithinTolerance = true;
+              policyLabel = 'Within 3% Exemption';
+            } else {
+              variationType = 'short';
+              deductionQtyMt = Math.max(0, Math.round((shortageMt - tolerance3PctMt) * 1000) / 1000);
+              isWithinTolerance = false;
+              policyLabel = '3% Short Weight Exemption';
+            }
+          } else {
+            variationType = 'within_tolerance';
+            deductionQtyMt = 0;
+            isWithinTolerance = true;
+            policyLabel = 'Exact Weight';
           }
+
+          const deductionQtyKg = Math.round(deductionQtyMt * 1000);
+          const deductionQtyQtl = Math.round(deductionQtyMt * 10 * 100) / 100;
 
           const lastMrRate =
-            Number(savedDed?.satta_rate) ||
             (lastMrDate ? getTd5RateForDate(lastMrDate) : 0) ||
-            (mrBreakdown.length > 0 ? mrBreakdown[mrBreakdown.length - 1].mrSattaRate : saudaRate);
+            (mrBreakdown.length > 0 ? mrBreakdown[mrBreakdown.length - 1].mrSattaRate : 0) ||
+            Number(savedDed?.satta_rate) ||
+            saudaRate;
 
-          const rateDiff =
-            Number(savedDed?.applicable_rate) ||
-            Number(savedDed?.rate_difference) ||
-            (variationType === 'excess'
-              ? Math.max(0, saudaRate - lastMrRate)
-              : variationType === 'short'
-              ? Math.max(0, lastMrRate - saudaRate)
-              : Math.abs(saudaRate - lastMrRate));
+          const isShortRateLowerOrEqual = isGrossShort && lastMrRate <= saudaRate;
+          const isExcessApplicableForSauda = isGrossExcess && lastMrRate >= saudaRate;
 
-          let deductionQtyMt = Number(savedDed?.deduction_qty_mt || 0);
-          if (deductionQtyMt <= 0) {
-            if (variationType === 'excess') {
-              deductionQtyMt = Math.max(0, Number((totalReceivedMt - contractMt).toFixed(3)));
-            } else if (variationType === 'short') {
-              deductionQtyMt = Math.max(0, Number((tol.shortUnderToleranceMt || 0).toFixed(3)));
-            }
+          const rateDifference = isGrossShort
+            ? (lastMrRate > saudaRate ? lastMrRate - saudaRate : 0)
+            : isGrossExcess
+            ? Math.max(0, saudaRate - lastMrRate)
+            : 0;
+
+          const rateMode = String(savedDed?.rate_basis || 'rate_difference');
+          let rateDiff = rateDifference;
+          if (rateMode === 'custom' && Number(savedDed?.applicable_rate) > 0) {
+            rateDiff = Number(savedDed.applicable_rate);
+          } else if (rateMode === 'last_mr_satta') {
+            rateDiff = lastMrRate;
+          } else if (rateMode === 'sauda_satta') {
+            rateDiff = saudaRate;
           }
-          const deductionQtyKg = Math.round(deductionQtyMt * 1000);
-          const deductionQtyQtl = Number((deductionQtyMt * 10).toFixed(2));
 
-          // Always ensure Quintal * Rate calculation (e.g. 36.35 Qtl * 600 = 21,810.00)
-          const expectedQtlDeduction = Math.round(deductionQtyQtl * rateDiff * 100) / 100;
-          let rawDedAmt = Number(savedDed?.deduction_amount ?? cp?.excess_short_deduction ?? 0);
-          if (expectedQtlDeduction > 0 && (rawDedAmt <= 0 || Math.abs(rawDedAmt - expectedQtlDeduction * 100) < 5)) {
-            rawDedAmt = expectedQtlDeduction;
+          let rawDedAmt = 0;
+          if (!isWithinTolerance && deductionQtyQtl > 0) {
+            if (isGrossShort && rateMode === 'rate_difference' && isShortRateLowerOrEqual) {
+              rawDedAmt = 0;
+            } else if (isGrossExcess && rateMode === 'rate_difference' && isExcessApplicableForSauda) {
+              rawDedAmt = 0;
+            } else {
+              rawDedAmt = Math.round(deductionQtyQtl * rateDiff * 100) / 100;
+            }
           }
 
           const linkedMrsStr =
@@ -1149,19 +1274,14 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
               totalReceivedQtl: Number((totalReceivedMt * 10).toFixed(2)),
               totalReceivedKg: Math.round(totalReceivedMt * 1000),
               variationType,
-              policyLabel:
-                variationType === 'excess'
-                  ? 'No 3% Tolerance on Excess'
-                  : variationType === 'short'
-                  ? '3% Short Weight Exemption'
-                  : 'Within 3% Tolerance',
+              policyLabel,
               deductionQtyMt,
               deductionQtyQtl,
               deductionQtyKg,
               saudaRate,
               lastMrRate,
               rateDiff,
-              rateBasis: String(savedDed?.rate_basis || 'rate_difference'),
+              rateBasis: rateMode,
               deductionAmount: rawDedAmt,
               saudaMaterialValue,
               totalFinalPayable,
@@ -1941,12 +2061,12 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
                   </span>
                 </div>
 
-                <div className="bg-gradient-to-br from-purple-700 to-purple-900 text-white p-3.5 rounded-2xl shadow-md space-y-1">
-                  <span className="text-[10px] uppercase font-bold text-purple-200">Total Deductible Weight</span>
+                <div className="bg-slate-900 text-white p-3.5 rounded-2xl border border-slate-700 shadow-md space-y-1">
+                  <span className="text-[10px] uppercase font-bold text-amber-300">Total Deductible Weight</span>
                   <div className="text-xl font-black text-white">
                     {filteredShortExcessList.reduce((a, c) => a + c.deductionQtyQtl, 0).toFixed(2)} Qtl
                   </div>
-                  <span className="text-[10px] text-purple-200">
+                  <span className="text-[10px] text-slate-300">
                     {filteredShortExcessList.reduce((a, c) => a + c.deductionQtyKg, 0).toLocaleString('en-IN')} kg ({filteredShortExcessList.reduce((a, c) => a + c.deductionQtyMt, 0).toFixed(3)} MT)
                   </span>
                 </div>

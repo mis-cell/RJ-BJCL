@@ -2557,7 +2557,7 @@ export function useSettlementWorkflow({ onClose, onLogEvent }: { onClose?: () =>
           }
           if (existingMaster.po_no) {
             setSelectedPoNo(existingMaster.po_no);
-            handlePoNoSelection(existingMaster.po_no, true, masterMrNoToUse);
+            await handlePoNoSelection(existingMaster.po_no, true, masterMrNoToUse);
           }
           setSuccessMessage(`Loaded existing Settlement Report for M.R. No. ${targetMrNo}`);
           return;
@@ -2842,15 +2842,17 @@ export function useSettlementWorkflow({ onClose, onLogEvent }: { onClose?: () =>
     // Calculate auto Delivery Claim (-) penalty if delivery is received after PO delivery_to date
     const poDeliveryToDate = selectedPoData?.delivery_to || selectedPoData?.delivery_gt_to || selectedPoData?.shipment_date || selectedPoData?.delivery_to_date;
     const poDeliveryPenaltyRate = Number(selectedPoData?.delivery_penalty || selectedPoData?.shipment_penalty || 0);
+    const poGraceDays = Number(selectedPoData?.grace_days || 0);
     const arrivalVoucherDate = masterData.arrival_date || masterData.sett_date || (masterData as any).challan_date;
-    const deliveryDelayDays = calculateDeliveryDelayDays(poDeliveryToDate, arrivalVoucherDate);
+    const rawDelayDays = calculateDeliveryDelayDays(poDeliveryToDate, arrivalVoucherDate);
+    const deliveryDelayDays = rawDelayDays > poGraceDays ? rawDelayDays : 0;
 
     const totalArrWeightMt = Math.round((detailCols.reduce((sum, col) => {
       const colWt = Number(col.arr_qty_wt) > 0 
         ? Number(col.arr_qty_wt) 
         : (Number(col.wt_quantity) > 0 ? Number(col.wt_quantity) : 0);
       return sum + colWt;
-    }, 0) || Number(masterData.electronic_scale_net) || 0) * 1000) / 1000;
+    }, 0) || Number(masterData.electronic_scale_net) || Number(masterData.supplier_net_wt) || Number(masterData.challan_weight) || 0) * 1000) / 1000;
     const totalArrWeightQtl = Math.round(totalArrWeightMt * 10 * 100) / 100;
 
     const autoDeliveryClaimAmt = (deliveryDelayDays > 0 && poDeliveryPenaltyRate > 0 && totalArrWeightQtl > 0)
@@ -2980,6 +2982,10 @@ export function useSettlementWorkflow({ onClose, onLogEvent }: { onClose?: () =>
             ? Number(prev.summary_delivery_claim)
             : autoDeliveryClaimAmt);
 
+      const targetDetentionDays = (Number(prev.detention_days) || 0) > 0
+        ? Number(prev.detention_days)
+        : deliveryDelayDays;
+
       if (
         prev.summary_material_value !== calculatedMaterialValue ||
         prev.val_material_value !== calculatedMaterialValue ||
@@ -2990,6 +2996,7 @@ export function useSettlementWorkflow({ onClose, onLogEvent }: { onClose?: () =>
         prev.summary_rate_aff_cd_cl !== targetRateAffCdCl ||
         prev.val_premium_amt !== calculatedPremiumAmount ||
         prev.summary_delivery_claim !== targetDeliveryClaim ||
+        prev.detention_days !== targetDetentionDays ||
         prev.actual_apmc_fees !== nextActualApmcFees ||
         (calculatedRatePerMt > 0 && (prev.summary_rate_qtel !== nextRatePerMt || prev.rate_qntl !== nextRatePerMt))
       ) {
@@ -3008,13 +3015,14 @@ export function useSettlementWorkflow({ onClose, onLogEvent }: { onClose?: () =>
           summary_rate_aff_cd_cl: targetRateAffCdCl,
           summary_rate_wt_claim: calculatedRateWtClaim,
           val_premium_amt: calculatedPremiumAmount,
-          summary_delivery_claim: targetDeliveryClaim
+          summary_delivery_claim: targetDeliveryClaim,
+          detention_days: targetDetentionDays
         };
       }
       return prev;
     });
 
-  }, [detailCols, visibleSpecCols, areaMasterList, masterData.electronic_scale_net, masterData.summary_rate_aff_cd_cl, masterData.summary_rate_qtel, masterData.summary_premium_amount, masterData.summary_premium_wt, masterData.summary_deduction_amount, masterData.summary_delivery_claim, masterData.val_add_amt, masterData.val_less_amt, masterData.val_qty_claim, masterData.val_ex_short, masterData.summary_less_amount, masterData.final_less_adv, masterData.final_on_ac_adv, masterData.final_cst_pct_amt, masterData.actual_apmc_fees, masterData.arival_apmc_fees, masterData.arrival_date, masterData.sett_date, selectedPoData]);
+  }, [detailCols, visibleSpecCols, areaMasterList, masterData.electronic_scale_net, masterData.supplier_net_wt, masterData.challan_weight, masterData.summary_rate_aff_cd_cl, masterData.summary_rate_qtel, masterData.summary_premium_amount, masterData.summary_premium_wt, masterData.summary_deduction_amount, masterData.summary_delivery_claim, masterData.detention_days, masterData.val_add_amt, masterData.val_less_amt, masterData.val_qty_claim, masterData.val_ex_short, masterData.summary_less_amount, masterData.final_less_adv, masterData.final_on_ac_adv, masterData.final_cst_pct_amt, masterData.actual_apmc_fees, masterData.arival_apmc_fees, masterData.arrival_date, masterData.sett_date, selectedPoData]);
 
   // Handle master updates
   const handleMasterChange = (field: keyof SettlementMaster, value: any) => {

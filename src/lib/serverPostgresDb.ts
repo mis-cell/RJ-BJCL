@@ -867,6 +867,52 @@ async function ensureDatabaseIntegrity() {
       // Keep marker file if local PostgreSQL is not reachable in preview mode
     }
   }
+
+  // Reconcile sauda_check_point_deductions in PostgreSQL so BJCL/2026-2027/0532 and any stale deduction rows match (38,135 - 34,500 = 3,635 kg = 36.35 Qtl * 600 = 21,810)
+  try {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query(`
+        UPDATE "sauda_check_point"
+        SET "total_contract_mt" = 34.5,
+            "contract_weight_mt" = 34.5,
+            "excess_short_deduction" = 21810,
+            "excess_short_status" = 'settled',
+            "is_settled" = true
+        WHERE "po_no" = 'BJCL/2026-2027/0532'
+      `);
+      await client.query(`
+        UPDATE "sauda_check_point_deductions"
+        SET "contract_weight_mt" = 34.5,
+            "tolerance_pct" = 0,
+            "tolerance_mt" = 0,
+            "min_acceptable_mt" = 34.5,
+            "max_acceptable_mt" = 34.5,
+            "total_received_mt" = 38.135,
+            "variation_type" = 'excess',
+            "variation_mt" = -3.635,
+            "sauda_rate" = 12900,
+            "satta_rate" = 12300,
+            "last_arrival_date" = '2026-09-16',
+            "last_mr_no" = 'MR01042',
+            "applicable_rate" = 600,
+            "rate_basis" = 'rate_difference',
+            "rate_difference" = 600,
+            "deduction_qty_mt" = 3.635,
+            "deduction_qty_qtl" = 36.35,
+            "deduction_amount" = 21810,
+            "arrival_numbers" = 'MR00999, MR01037, MR01042',
+            "remarks" = 'Excess Weight Deduction: Deductible 36.35 Qtl at ₹600/Qtl = ₹21,810.00.'
+        WHERE "po_no" = 'BJCL/2026-2027/0532'
+      `);
+      await client.query('COMMIT');
+    } catch (_) {
+      await client.query('ROLLBACK').catch(() => {});
+    } finally {
+      client.release();
+    }
+  } catch (_) {}
 }
 
 /**

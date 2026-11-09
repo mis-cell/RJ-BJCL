@@ -437,13 +437,26 @@ export async function resolvePaymentDeductionsForPoAndMr(params: {
   // Enrich from saudaCheckPoints or purchaseOrders if missing
   if ((!poDeliveryToDate || deliveryPenaltyRate <= 0) && cleanPoNo) {
     const upperPo = cleanPoNo.toUpperCase();
+    const extractTailPadded = (val: any): string => {
+      const s = String(val || '').trim().replace(/^#+/, '').replace(/\(PTF\)/gi, '').trim();
+      const seg = s.split(/[\/\-]/).pop()?.replace(/[^0-9]/g, '') || '';
+      const n = seg ? parseInt(seg, 10) : NaN;
+      return !isNaN(n) && n > 0 ? String(n).padStart(4, '0') : '';
+    };
+    const targetTail = extractTailPadded(cleanPoNo);
+    const shortTail = targetTail ? String(parseInt(targetTail, 10)) : '';
+
     const matchInList = (list: any[]) =>
       list.find(item => {
         const k1 = String(item.po_no || '').trim().replace(/^#/, '').toUpperCase();
         const k2 = String(item.ptf_no || '').trim().replace(/^#/, '').toUpperCase();
         const k3 = String(item.sauda_no || '').trim().replace(/^#/, '').toUpperCase();
         const k4 = String(item.contract_po_no || '').trim().replace(/^#/, '').toUpperCase();
-        return k1 === upperPo || k2 === upperPo || k3 === upperPo || k4 === upperPo;
+        if (k1 === upperPo || k2 === upperPo || k3 === upperPo || k4 === upperPo) return true;
+        if (targetTail) {
+          if (extractTailPadded(k1) === targetTail || (k4 && extractTailPadded(k4) === targetTail)) return true;
+        }
+        return false;
       });
 
     const scpMatch = matchInList(saudaCheckPoints);
@@ -474,10 +487,25 @@ export async function resolvePaymentDeductionsForPoAndMr(params: {
 
     if ((!poDeliveryToDate || deliveryPenaltyRate <= 0) && supabase) {
       try {
+        const orParts = [
+          `po_no.eq."${cleanPoNo}"`,
+          `po_no.eq."#${cleanPoNo}"`,
+          `ptf_no.eq."${cleanPoNo}"`,
+          `sauda_no.eq."${cleanPoNo}"`,
+          `contract_po_no.eq."${cleanPoNo}"`
+        ];
+        if (targetTail && shortTail) {
+          orParts.push(
+            `contract_po_no.eq."${targetTail}"`,
+            `contract_po_no.eq."${shortTail}"`,
+            `po_no.ilike."%/${targetTail}"`,
+            `po_no.ilike."%/${shortTail}"`
+          );
+        }
         const { data: scpDb } = await supabase
           .from('sauda_check_point')
           .select('delivery_to, shipment_date, delivery_penalty, shipment_penalty')
-          .or(`po_no.eq."${cleanPoNo}",po_no.eq."#${cleanPoNo}",ptf_no.eq."${cleanPoNo}",sauda_no.eq."${cleanPoNo}"`)
+          .or(orParts.join(','))
           .limit(1)
           .maybeSingle();
         if (scpDb) {
@@ -492,7 +520,7 @@ export async function resolvePaymentDeductionsForPoAndMr(params: {
           const { data: pmDb } = await supabase
             .from('purchase_master')
             .select('delivery_to, delivery_gt_to, shipment_date, delivery_penalty, shipment_penalty')
-            .or(`po_no.eq."${cleanPoNo}",po_no.eq."#${cleanPoNo}",contract_po_no.eq."${cleanPoNo}"`)
+            .or(orParts.join(','))
             .limit(1)
             .maybeSingle();
           if (pmDb) {

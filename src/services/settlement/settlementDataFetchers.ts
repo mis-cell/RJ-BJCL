@@ -99,9 +99,57 @@ export const fetchPoAndItemDetails = async (
     if (supabase) {
       const noPtfPo = cleanPo.replace(/\(PTF\)/gi, '').trim();
       const ptfPo = `${noPtfPo}(PTF)`;
+
+      // Extract numeric PO suffix so shorthand codes like "PO-291" or "291" match "BJCL/2026-2027/0291" and contract_po_no "0291"
+      const lastSeg = noPtfPo.split(/[\/\-]/).pop()?.replace(/[^0-9]/g, '') || '';
+      const numVal = lastSeg ? parseInt(lastSeg, 10) : NaN;
+      const shortNum = !isNaN(numVal) && numVal > 0 ? String(numVal) : '';
+      const paddedNum = shortNum ? shortNum.padStart(4, '0') : '';
+
+      const pmOrParts = [
+        `po_no.eq."${cleanPo}"`,
+        `po_no.eq."${withHash}"`,
+        `po_no.eq."${poNo}"`,
+        `po_no.eq."${noPtfPo}"`,
+        `po_no.eq."${ptfPo}"`,
+        `contract_po_no.eq."${cleanPo}"`,
+        `contract_po_no.eq."${noPtfPo}"`
+      ];
+      const scpOrParts = [
+        `po_no.eq."${cleanPo}"`,
+        `po_no.eq."${withHash}"`,
+        `po_no.eq."${poNo}"`,
+        `po_no.eq."${noPtfPo}"`,
+        `po_no.eq."${ptfPo}"`,
+        `ptf_no.eq."${cleanPo}"`,
+        `ptf_no.eq."${noPtfPo}"`,
+        `sauda_no.eq."${cleanPo}"`,
+        `sauda_no.eq."${noPtfPo}"`,
+        `contract_po_no.eq."${cleanPo}"`,
+        `contract_po_no.eq."${noPtfPo}"`
+      ];
+
+      if (shortNum && paddedNum) {
+        pmOrParts.push(
+          `contract_po_no.eq."${paddedNum}"`,
+          `contract_po_no.eq."${shortNum}"`,
+          `po_no.ilike."%/${paddedNum}"`,
+          `po_no.ilike."%/${shortNum}"`,
+          `po_no.ilike."%/${paddedNum}(PTF)"`
+        );
+        scpOrParts.push(
+          `contract_po_no.eq."${paddedNum}"`,
+          `contract_po_no.eq."${shortNum}"`,
+          `po_no.ilike."%/${paddedNum}"`,
+          `po_no.ilike."%/${shortNum}"`,
+          `po_no.ilike."%/${paddedNum}(PTF)"`,
+          `ptf_no.ilike."%/${paddedNum}%"`
+        );
+      }
+
       const [pmRes, scpRes, smRes, rlRes] = await Promise.all([
-        supabase.from('purchase_master').select('*').or(`po_no.eq."${cleanPo}",po_no.eq."${withHash}",po_no.eq."${poNo}",po_no.eq."${noPtfPo}",po_no.eq."${ptfPo}"`).limit(1).maybeSingle(),
-        supabase.from('sauda_check_point').select('*').or(`po_no.eq."${cleanPo}",po_no.eq."${withHash}",po_no.eq."${poNo}",po_no.eq."${noPtfPo}",po_no.eq."${ptfPo}",ptf_no.eq."${cleanPo}",ptf_no.eq."${noPtfPo}",sauda_no.eq."${cleanPo}",sauda_no.eq."${noPtfPo}"`).limit(1).maybeSingle(),
+        supabase.from('purchase_master').select('*').or(pmOrParts.join(',')).limit(1).maybeSingle(),
+        supabase.from('sauda_check_point').select('*').or(scpOrParts.join(',')).limit(1).maybeSingle(),
         supabase.from('sauda_master').select('*').or(`sauda_no.eq."${cleanPo}",sauda_no.eq."${noPtfPo}",session.eq."${cleanPo}",session.eq."${noPtfPo}"`).limit(1).maybeSingle().then(r => r, () => ({ data: null })),
         supabase.from('return_lorry').select('*').or(`po_no.eq."${cleanPo}",new_po_no.eq."${cleanPo}",po_no.eq."${withHash}",new_po_no.eq."${withHash}"`).limit(1).maybeSingle().then(r => r, () => ({ data: null }))
       ]);
@@ -163,6 +211,10 @@ export const fetchPoAndItemDetails = async (
           po_date: pm.po_date || scp.po_date || scp.s_date,
           supplier: pm.supplier || scp.supplier_name || scp.supplier,
           broker: pm.broker || scp.broker_name || scp.broker,
+          delivery_to: scp.delivery_to || pm.delivery_to || scp.shipment_date || pm.shipment_date,
+          delivery_from: scp.delivery_from || pm.delivery_from,
+          delivery_penalty: Number(scp.delivery_penalty ?? pm.delivery_penalty ?? scp.shipment_penalty ?? pm.shipment_penalty ?? 0),
+          grace_days: Number(scp.grace_days ?? pm.grace_days ?? 0),
           total_contract_mt: maxContractMt || pm.total_contract_mt || scp.total_contract_mt || scp.quantity || 0,
           total_lorries: totalLorries,
           total_no_of_lorries: totalLorries,
@@ -278,10 +330,20 @@ export const fetchPoAndItemDetails = async (
         poDetails = parsedFromScp;
       }
 
-      // Also fetch purchase_detail_master and sauda_check_point_details so we never miss rate or premium
+      // Also fetch purchase_detail_master and sauda_check_point_details (including canonical poData.po_no if poNo was shorthand like PO-291)
+      const canonicalPo = String(poData?.po_no || cleanPo).trim();
+      const detailOrParts = [
+        `po_no.eq."${cleanPo}"`,
+        `po_no.eq."${withHash}"`,
+        `po_no.eq."${poNo}"`
+      ];
+      if (canonicalPo && canonicalPo !== cleanPo) {
+        detailOrParts.push(`po_no.eq."${canonicalPo}"`, `po_no.eq."#${canonicalPo}"`);
+      }
+
       const [pdmRes, scpdRes] = await Promise.all([
-        supabase.from('purchase_detail_master').select('*').or(`po_no.eq."${cleanPo}",po_no.eq."${withHash}",po_no.eq."${poNo}"`).order('srl_no', { ascending: true }),
-        supabase.from('sauda_check_point_details').select('*').or(`po_no.eq."${cleanPo}",po_no.eq."${withHash}",po_no.eq."${poNo}"`).order('srl_no', { ascending: true })
+        supabase.from('purchase_detail_master').select('*').or(detailOrParts.join(',')).order('srl_no', { ascending: true }),
+        supabase.from('sauda_check_point_details').select('*').or(detailOrParts.join(',')).order('srl_no', { ascending: true })
       ]);
 
       if (scpdRes?.data && scpdRes.data.length > 0) {
@@ -295,8 +357,8 @@ export const fetchPoAndItemDetails = async (
           poDetails = scpdRes.data;
         } else {
           const [pdmIlike, scpdIlike] = await Promise.all([
-            supabase.from('purchase_detail_master').select('*').ilike('po_no', cleanPo),
-            supabase.from('sauda_check_point_details').select('*').ilike('po_no', cleanPo)
+            supabase.from('purchase_detail_master').select('*').ilike('po_no', canonicalPo || cleanPo),
+            supabase.from('sauda_check_point_details').select('*').ilike('po_no', canonicalPo || cleanPo)
           ]);
           if (scpdIlike?.data && scpdIlike.data.length > 0) {
             scpItemsForMerge = [...scpItemsForMerge, ...scpdIlike.data];
@@ -307,15 +369,35 @@ export const fetchPoAndItemDetails = async (
       }
     }
 
+    const extractTailDigits = (val: any): string => {
+      const s = String(val || '').trim().replace(/^#+/, '').replace(/\(PTF\)/gi, '').trim();
+      const seg = s.split(/[\/\-]/).pop()?.replace(/[^0-9]/g, '') || '';
+      const n = seg ? parseInt(seg, 10) : NaN;
+      return !isNaN(n) && n > 0 ? String(n).padStart(4, '0') : '';
+    };
+    const targetTailDigits = extractTailDigits(cleanPo);
+
+    const matchesPoCandidate = (recPo: any, recContractPo?: any): boolean => {
+      const uClean = cleanPo.toUpperCase();
+      const p1 = String(recPo || '').trim().toUpperCase().replace(/^#/, '');
+      const p2 = String(recContractPo || '').trim().toUpperCase().replace(/^#/, '');
+      if (p1 === uClean || (p2 && p2 === uClean)) return true;
+      if (targetTailDigits) {
+        if (extractTailDigits(p1) === targetTailDigits) return true;
+        if (p2 && extractTailDigits(p2) === targetTailDigits) return true;
+      }
+      return false;
+    };
+
     if (!poData) {
       const [localPm, localScp, localSm] = await Promise.all([
         dbModule.fetchAll('purchase_master').catch(() => []),
         dbModule.fetchAll('sauda_check_point').catch(() => []),
         dbModule.fetchAll('sauda_master').catch(() => [])
       ]);
-      const matchPm = (localPm || []).find((p: any) => String(p.po_no || '').trim().toUpperCase().replace(/^#/, '') === cleanPo.toUpperCase());
-      const matchScp = (localScp || []).find((p: any) => String(p.po_no || '').trim().toUpperCase().replace(/^#/, '') === cleanPo.toUpperCase());
-      const matchSm = (localSm || []).find((s: any) => String(s.sauda_no || s.po_no || s.contract_no || '').trim().toUpperCase().replace(/^#/, '') === cleanPo.toUpperCase());
+      const matchPm = (localPm || []).find((p: any) => matchesPoCandidate(p.po_no, p.contract_po_no));
+      const matchScp = (localScp || []).find((p: any) => matchesPoCandidate(p.po_no, p.contract_po_no || p.ptf_no));
+      const matchSm = (localSm || []).find((s: any) => matchesPoCandidate(s.sauda_no || s.po_no || s.contract_no));
       const totalLorries = resolveContractLorries(matchScp, matchPm, matchSm);
       if (matchPm && matchScp) poData = { ...matchPm, ...matchScp, total_lorries: totalLorries, contract_lorries: totalLorries };
       else if (matchPm) poData = { ...matchPm, total_lorries: totalLorries, contract_lorries: totalLorries };
@@ -327,8 +409,13 @@ export const fetchPoAndItemDetails = async (
         dbModule.fetchAll('purchase_detail_master').catch(() => []),
         dbModule.fetchAll('sauda_check_point_details').catch(() => [])
       ]);
-      const matchPdm = (localPdm || []).filter((d: any) => String(d.po_no || '').trim().toUpperCase().replace(/^#/, '') === cleanPo.toUpperCase());
-      const matchScpd = (localScpD || []).filter((d: any) => String(d.po_no || '').trim().toUpperCase().replace(/^#/, '') === cleanPo.toUpperCase());
+      const canonicalPo = String(poData?.po_no || cleanPo).trim();
+      const matchPdm = (localPdm || []).filter((d: any) =>
+        matchesPoCandidate(d.po_no) || String(d.po_no || '').trim().toUpperCase() === canonicalPo.toUpperCase()
+      );
+      const matchScpd = (localScpD || []).filter((d: any) =>
+        matchesPoCandidate(d.po_no) || String(d.po_no || '').trim().toUpperCase() === canonicalPo.toUpperCase()
+      );
       if (matchScpd.length > 0) scpItemsForMerge = [...scpItemsForMerge, ...matchScpd];
       if (matchPdm.length > 0) poDetails = matchPdm;
       else if (matchScpd.length > 0) poDetails = matchScpd;
@@ -566,7 +653,7 @@ export const fetchSaudaCheckpointDeduction = async (cleanPoNo: string) => {
             const contractMt = Number(updated.contract_weight_mt);
             const tolMt = Math.round(contractMt * 0.03 * 1000) / 1000;
 
-            if (roundedLiveMt > 0 && Math.abs(roundedLiveMt - Number(updated.total_received_mt || 0)) > 0.001) {
+            if (roundedLiveMt > 0 && contractMt > 0) {
               updated.total_received_mt = roundedLiveMt;
               updated.variation_mt = Number((contractMt - roundedLiveMt).toFixed(3));
               updated.arrival_numbers = mrEntries.map(e => e.mrNo).join(', ');
