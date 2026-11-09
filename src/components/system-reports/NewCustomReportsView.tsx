@@ -99,7 +99,7 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
           supabase.from('material_mismatch').select('*').then(r => r, () => ({ data: [] })),
           supabase.from('satta_mismatch').select('*').then(r => r, () => ({ data: [] })),
           supabase.from('sauda_check_point_deductions').select('*').order('updated_at', { ascending: false }).then(r => r, () => ({ data: [] })),
-          supabase.from('satta_base_rates').select('*').order('effective_date', { ascending: false }).then(r => r, () => ({ data: [] }))
+          supabase.from('satta_base_rates').select('*').order('start_date', { ascending: false }).then(r => r, () => ({ data: [] }))
         ]);
 
         const rawPos = poRes.data || [];
@@ -933,20 +933,45 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
         // =========================================================================
         // 5. Process 14. Short and Excess Deduction (From Sauda Check Point -> Extra & Short Weight & Rate Settlement)
         // =========================================================================
+        const normalizeDateYmd = (dStr: any): string => {
+          if (!dStr) return '';
+          let clean = String(dStr).trim();
+          if (clean.includes('T')) clean = clean.split('T')[0];
+          if (clean.includes('/')) {
+            const parts = clean.split('/');
+            if (parts.length === 3) {
+              if (parts[2].length === 4) return `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
+              if (parts[0].length === 4) return `${parts[0]}-${parts[1].padStart(2, '0')}-${parts[2].padStart(2, '0')}`;
+            }
+          }
+          if (clean.includes('-')) {
+            const parts = clean.split('-');
+            if (parts.length === 3) {
+              if (parts[0].length === 2 && parts[2].length === 4) return `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
+              if (parts[0].length === 4) return `${parts[0]}-${parts[1].padStart(2, '0')}-${parts[2].padStart(2, '0')}`;
+            }
+          }
+          return clean;
+        };
+
+        const normalizedSattaBaseRates = rawSattaBaseRates
+          .map((b: any) => ({
+            ymd: normalizeDateYmd(b.start_date || b.effective_date || b.satta_date || b.date || b.base_date || b.start || ''),
+            rate: Number(b.base_rate || b.td5_base_rate || b.rate || b.b_rate || b.baseRate || 0)
+          }))
+          .filter((item: { ymd: string; rate: number }) => item.rate > 0)
+          .sort((a: { ymd: string; rate: number }, b: { ymd: string; rate: number }) => b.ymd.localeCompare(a.ymd));
+
         const getTd5RateForDate = (dateStr?: string): number => {
-          if (!dateStr) return 0;
-          const cleanDate = String(dateStr).split('T')[0];
-          const exact = rawSattaBaseRates.find((r: any) => String(r.effective_date || r.date || '').split('T')[0] === cleanDate);
-          if (exact && Number(exact.td5_base_rate || exact.base_rate || exact.rate || 0) > 0) {
-            return Number(exact.td5_base_rate || exact.base_rate || exact.rate);
+          if (normalizedSattaBaseRates.length === 0) return 0;
+          const targetYmd = normalizeDateYmd(dateStr);
+          if (targetYmd) {
+            const exact = normalizedSattaBaseRates.find((b: any) => b.ymd === targetYmd);
+            if (exact) return exact.rate;
+            const onOrBefore = normalizedSattaBaseRates.find((b: any) => b.ymd && b.ymd <= targetYmd);
+            if (onOrBefore) return onOrBefore.rate;
           }
-          const sortedBefore = rawSattaBaseRates
-            .filter((r: any) => String(r.effective_date || r.date || '').split('T')[0] <= cleanDate)
-            .sort((a: any, b: any) => String(b.effective_date || b.date || '').localeCompare(String(a.effective_date || a.date || '')));
-          if (sortedBefore.length > 0) {
-            return Number(sortedBefore[0].td5_base_rate || sortedBefore[0].base_rate || sortedBefore[0].rate || 0);
-          }
-          return 0;
+          return normalizedSattaBaseRates[0]?.rate || 0;
         };
 
         const extractMrSeq = (mr: any): number => {
@@ -994,9 +1019,9 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
           const poNo = String(savedDed?.po_no || cp?.po_no || cp?.contract_po_no || poKey).trim();
           const poSuffix = poKey.split('/').pop()?.trim() || '';
 
-          const saudaDate = String(
-            cp?.s_date || cp?.po_date || cp?.date || cp?.contract_date || savedDed?.created_at || ''
-          ).split('T')[0];
+          const saudaDate = normalizeDateYmd(
+            cp?.sauda_date || cp?.s_date || cp?.po_date || cp?.contract_date || cp?.voucher_date || cp?.date || savedDed?.created_at || ''
+          );
 
           const supplier = String(
             savedDed?.supplier || cp?.supplier || cp?.supplier_name || cp?.supp_name || 'UNKNOWN SUPPLIER'
@@ -1070,8 +1095,8 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
 
           const mrBreakdown: any[] = [];
           let computedTotalClaimMt = 0;
-          let lastMrNo = String(savedDed?.last_mr_no || '').trim();
-          let lastMrDate = String(savedDed?.last_arrival_date || '').split('T')[0];
+              let lastMrNo = String(savedDed?.last_mr_no || '').trim();
+          let lastMrDate = normalizeDateYmd(savedDed?.last_arrival_date || '');
 
           if (sortedInsps.length > 0) {
             const isMulti = sortedInsps.length > 1;
@@ -1079,7 +1104,7 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
               const isLast = idx === sortedInsps.length - 1;
               const mrNoStr = toMillInspectionMrNo(insp.mr_no || insp.arrival_no || '');
               const mKey = canonicalMrKey(mrNoStr);
-              const mrDateStr = String(insp.arrival_date || insp.mr_date || insp.inspection_date || insp.date || '').split('T')[0];
+              const mrDateStr = normalizeDateYmd(insp.arrival_date || insp.mr_date || insp.inspection_date || insp.date || insp.created_at || '');
 
               let mrGrossMt = toMtFromRawWt(insp.challan_gross_wt ?? insp.receipt_gross_wt ?? insp.gross_weight);
               let mrNetMt = toMtFromRawWt(insp.final_receipt_wt ?? insp.total_final_receipt_wt ?? insp.reduced_weight ?? insp.weight_reduced);
@@ -2464,7 +2489,10 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
       {selectedSettlementPo && (
         <ExcessShortSettlementModal
           po={selectedSettlementPo}
-          onClose={() => setSelectedSettlementPo(null)}
+          onClose={() => {
+            setSelectedSettlementPo(null);
+            loadReportsData();
+          }}
           onSaveSuccess={() => {
             setSelectedSettlementPo(null);
             loadReportsData();
