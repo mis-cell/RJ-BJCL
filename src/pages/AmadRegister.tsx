@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useLiveAutoRefresh } from '../hooks/useLiveAutoRefresh';
+import { getDatabaseSessionHeaders } from '../lib/localPostgresClient';
 import Papa from 'papaparse';
 import { 
   Archive, 
@@ -469,10 +470,11 @@ export default function AmadRegister({ onClose, onNew, onCreateFinalMr, onNaviga
     try {
       const res = await fetch('/api/db/sync-pending-arrivals', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { ...getDatabaseSessionHeaders(), 'Content-Type': 'application/json' },
         body: JSON.stringify(customOptions || {})
       });
       const json = await res.json();
+      if (!res.ok) throw new Error(json.error?.message || json.message || 'Arrival sync failed.');
       await fetchAmads();
       if (json && json.message) {
         setRefreshMessage(json.message);

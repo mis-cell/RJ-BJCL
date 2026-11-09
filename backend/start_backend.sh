@@ -20,7 +20,7 @@ sudo systemctl start postgresql
 # 2. Start Direct Node.js PostgreSQL Backend (Port 5000)
 echo "[2/4] Starting Local Node.js Backend on port 5000..."
 pm2 delete bjl-backend 2>/dev/null || true
-pm2 start "$ROOT_DIR/backend/server.ts" --name "bjl-backend" --interpreter tsx
+pm2 start "$ROOT_DIR/backend/server.ts" --name "bjl-backend" --interpreter "$ROOT_DIR/node_modules/.bin/tsx"
 
 # 3. Start PostgREST (Maps local bjcl_db directly to REST API on Port 8000)
 echo "[3/4] Starting local database API bridge on port 8000..."
@@ -44,7 +44,7 @@ echo "======================================================================"
 echo " SUCCESS: Everything is running LOCALLY from your PostgreSQL (bjcl_db)!"
 echo "======================================================================"
 echo " • Web App Frontend:         http://192.168.1.6:3000 (or http://115.187.60.183:3000)"
-echo " • Local Node.js Backend:    http://192.168.1.6:5000"
+echo " • Local Node.js Backend:    http://127.0.0.1:5000"
 echo " • Local Database REST API:  http://192.168.1.6:8000"
 echo " • Local PostgreSQL:         localhost:5432 (database: bjcl_db)"
 echo "======================================================================"

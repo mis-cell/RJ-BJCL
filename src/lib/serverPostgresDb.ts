@@ -97,7 +97,8 @@ export interface QueryPayload {
   onConflictCols?: string[];
 }
 
-const SUPABASE_BASE_URL = process.env.SUPABASE_URL || 'https://lxuapkccxaadwixjpirs.supabase.co/rest/v1';
+const SUPABASE_BASE_URL = (process.env.SUPABASE_URL || 'https://lxuapkccxaadwixjpirs.supabase.co')
+  .replace(/\/+$/, '').replace(/\/rest\/v1$/, '') + '/rest/v1';
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || '';
 
 // Lazy in-memory snapshot fallback parsed from complete_local_data.sql.gz when local PostgreSQL is unreachable and SUPABASE_KEY is not configured
@@ -236,42 +237,6 @@ function getLocalSnapshotStore(): Map<string, any[]> {
       }
     }
 
-    // Reconcile PO BJCL/2026-2027/0532 contract weight (34.50 MT) and Excess Settlement (38.135 MT received, 3,635 kg excess * 600 = 2,181,000)
-    const scpRows = localSnapshotStore.get('sauda_check_point') || [];
-    for (const r of scpRows) {
-      if (String(r.po_no || '').trim() === 'BJCL/2026-2027/0532') {
-        r.total_contract_mt = 34.5;
-        r.contract_weight_mt = 34.5;
-        r.excess_short_deduction = 2181000;
-        r.excess_short_status = 'settled';
-        r.is_settled = true;
-      }
-    }
-    const scpdRows = localSnapshotStore.get('sauda_check_point_deductions') || [];
-    for (const r of scpdRows) {
-      if (String(r.po_no || '').trim() === 'BJCL/2026-2027/0532') {
-        r.contract_weight_mt = 34.5;
-        r.tolerance_pct = 0;
-        r.tolerance_mt = 0;
-        r.min_acceptable_mt = 34.5;
-        r.max_acceptable_mt = 34.5;
-        r.total_received_mt = 38.135;
-        r.variation_type = 'excess';
-        r.variation_mt = -3.635;
-        r.sauda_rate = 12900;
-        r.satta_rate = 12300;
-        r.last_arrival_date = '2026-09-16';
-        r.last_mr_no = 'MR01042';
-        r.applicable_rate = 600;
-        r.rate_basis = 'rate_difference';
-        r.rate_difference = 600;
-        r.deduction_qty_mt = 3.635;
-        r.deduction_qty_qtl = 36.35;
-        r.deduction_amount = 2181000;
-        r.arrival_numbers = 'MR00999, MR01037, MR01042';
-        r.remarks = 'Excess Weight Deduction: 3,635 kg × ₹600 = ₹2,181,000.';
-      }
-    }
   } catch (err) {
     console.warn('Could not load local snapshot fallback:', err);
   }
@@ -473,172 +438,65 @@ async function querySupabaseFallback(payload: QueryPayload) {
   }
 }
 
-async function insertSupabaseFallback(payload: QueryPayload) {
-  const table = sanitizeIdent(payload.table);
-  const rawValues = Array.isArray(payload.values) ? payload.values : [payload.values];
-  const store = getLocalSnapshotStore();
-  const list = store.get(table) || [];
-  const uniqueKeys = [
-    ...(payload.onConflictCols || []),
-    ...(TABLE_UNIQUE_KEYS[table] || [])
-  ];
-  for (const r of rawValues) {
-    if (!r) continue;
-    let updated = false;
-    for (const uk of uniqueKeys) {
-      if (r[uk] !== undefined && r[uk] !== null && String(r[uk]).trim() !== '') {
-        const idx = list.findIndex(item => String(item?.[uk] ?? '').trim().toUpperCase() === String(r[uk]).trim().toUpperCase());
-        if (idx !== -1) {
-          list[idx] = { ...list[idx], ...r };
-          updated = true;
-          break;
-        }
-      }
-    }
-    if (!updated) {
-      list.unshift({ ...r });
-    }
-  }
-  store.set(table, list);
-
+async function requestSupabaseWrite(path: string, method: string, body?: unknown, prefer?: string) {
   if (!SUPABASE_KEY) {
-    return { data: rawValues, error: null };
+    return { data: null, error: { message: 'Local PostgreSQL is unavailable and no remote write connection is configured' } };
   }
+
   try {
-    const url = `${SUPABASE_BASE_URL}/${table}`;
-    const headers: Record<string, string> = {
-      apikey: SUPABASE_KEY,
-      Authorization: `Bearer ${SUPABASE_KEY}`,
-      'Content-Type': 'application/json',
-      Prefer: payload.onConflictCols && payload.onConflictCols.length > 0
-        ? 'resolution=merge-duplicates,return=representation'
-        : 'return=representation'
-    };
-    const res = await fetch(url, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(rawValues)
+    const response = await fetch(`${SUPABASE_BASE_URL}/${path}`, {
+      method,
+      headers: {
+        apikey: SUPABASE_KEY,
+        Authorization: `Bearer ${SUPABASE_KEY}`,
+        'Content-Type': 'application/json',
+        ...(prefer ? { Prefer: prefer } : {}),
+      },
+      body: body === undefined ? undefined : JSON.stringify(body),
     });
-    if (!res.ok) {
-      return { data: rawValues, error: null };
+    if (!response.ok) {
+      const detail = await response.json().catch(() => null);
+      return { data: null, error: { message: detail?.message || `Remote write failed (HTTP ${response.status})` } };
     }
-    const data = await res.json();
-    return { data: Array.isArray(data) ? data : [data], error: null };
+    return { data: response.status === 204 ? null : await response.json(), error: null };
   } catch (err: any) {
-    return { data: rawValues, error: null };
+    return { data: null, error: { message: `Remote write failed: ${err.message}` } };
   }
 }
 
-async function updateSupabaseFallback(payload: QueryPayload) {
+async function insertSupabaseFallback(payload: QueryPayload, resolution?: 'merge-duplicates' | 'ignore-duplicates') {
   const table = sanitizeIdent(payload.table);
-  const store = getLocalSnapshotStore();
-  const list = store.get(table) || [];
-  const updatedRows: any[] = [];
-  for (let i = 0; i < list.length; i++) {
-    const row = list[i];
-    const matches = (payload.filters || []).every(f => matchesSnapshotFilter(row, f));
-    if (matches) {
-      list[i] = { ...row, ...(payload.values || {}) };
-      updatedRows.push(list[i]);
-    }
+  const params = new URLSearchParams();
+  if (resolution && payload.onConflictCols?.length) {
+    params.set('on_conflict', payload.onConflictCols.join(','));
   }
-  store.set(table, list);
-
-  if (!SUPABASE_KEY) {
-    return { data: updatedRows, error: null };
-  }
-  try {
-    const queryParams = new URLSearchParams();
-    if (Array.isArray(payload.filters)) {
-      for (const f of payload.filters) {
-        if (f.op === 'eq') queryParams.append(f.column, `eq.${f.value}`);
-        else if (f.op === 'neq') queryParams.append(f.column, `neq.${f.value}`);
-        else if (f.op === 'in' && Array.isArray(f.value)) queryParams.append(f.column, `in.(${f.value.join(',')})`);
-      }
-    }
-    const url = `${SUPABASE_BASE_URL}/${table}?${queryParams.toString()}`;
-    const headers: Record<string, string> = {
-      apikey: SUPABASE_KEY,
-      Authorization: `Bearer ${SUPABASE_KEY}`,
-      'Content-Type': 'application/json',
-      Prefer: 'return=representation'
-    };
-    const res = await fetch(url, {
-      method: 'PATCH',
-      headers,
-      body: JSON.stringify(payload.values || {})
-    });
-    if (!res.ok) return { data: updatedRows, error: null };
-    const data = await res.json();
-    return { data: Array.isArray(data) ? data : [data], error: null };
-  } catch (err: any) {
-    return { data: updatedRows, error: null };
-  }
+  const query = params.size ? `?${params}` : '';
+  const prefer = resolution ? `resolution=${resolution},return=representation` : 'return=representation';
+  return requestSupabaseWrite(`${table}${query}`, 'POST', payload.values, prefer);
 }
 
-async function deleteSupabaseFallback(payload: QueryPayload) {
+async function mutateSupabaseFallback(payload: QueryPayload, method: 'PATCH' | 'DELETE') {
   const table = sanitizeIdent(payload.table);
-  const store = getLocalSnapshotStore();
-  const list = store.get(table) || [];
-  const deletedRows: any[] = [];
-  const remaining = list.filter(row => {
-    const matches = (payload.filters || []).length > 0 && (payload.filters || []).every(f => matchesSnapshotFilter(row, f));
-    if (matches) {
-      deletedRows.push(row);
-      return false;
-    }
-    return true;
-  });
-  store.set(table, remaining);
+  const params = new URLSearchParams();
 
-  if (!SUPABASE_KEY) {
-    return { data: deletedRows, error: null };
+  // Only forward predicates whose meaning can be represented exactly in both adapters.
+  if (!payload.filters?.length || payload.orFilters?.length ||
+      payload.filters.some(f => f.op !== 'eq' || f.value == null || !['string', 'number', 'boolean'].includes(typeof f.value))) {
+    return { data: null, error: { message: 'Local PostgreSQL is unavailable and the write filters cannot safely be forwarded' } };
   }
-  try {
-    const queryParams = new URLSearchParams();
-    if (Array.isArray(payload.filters)) {
-      for (const f of payload.filters) {
-        if (f.op === 'eq') queryParams.append(f.column, `eq.${f.value}`);
-      }
+  for (const filter of payload.filters) {
+    const column = sanitizeIdent(filter.column);
+    if (params.has(column)) {
+      return { data: null, error: { message: 'Local PostgreSQL is unavailable and repeated write filters cannot safely be forwarded' } };
     }
-    const url = `${SUPABASE_BASE_URL}/${table}?${queryParams.toString()}`;
-    const headers: Record<string, string> = {
-      apikey: SUPABASE_KEY,
-      Authorization: `Bearer ${SUPABASE_KEY}`,
-      Prefer: 'return=representation'
-    };
-    const res = await fetch(url, { method: 'DELETE', headers });
-    if (!res.ok) return { data: deletedRows, error: null };
-    const data = await res.json();
-    return { data: Array.isArray(data) ? data : [data], error: null };
-  } catch (err: any) {
-    return { data: deletedRows, error: null };
+    params.set(column, `eq.${filter.value}`);
   }
+
+  return requestSupabaseWrite(`${table}?${params}`, method, method === 'PATCH' ? payload.values : undefined, 'return=representation');
 }
 
 async function rpcSupabaseFallback(funcName: string, args: any) {
-  if (!SUPABASE_KEY) {
-    return { data: { success: true }, error: null };
-  }
-  try {
-    const func = sanitizeIdent(funcName);
-    const url = `${SUPABASE_BASE_URL}/rpc/${func}`;
-    const headers: Record<string, string> = {
-      apikey: SUPABASE_KEY,
-      Authorization: `Bearer ${SUPABASE_KEY}`,
-      'Content-Type': 'application/json'
-    };
-    const res = await fetch(url, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(args || {})
-    });
-    if (!res.ok) return { data: null, error: null };
-    const data = await res.json();
-    return { data, error: null };
-  } catch (err: any) {
-    return { data: null, error: null };
-  }
+  return requestSupabaseWrite(`rpc/${sanitizeIdent(funcName)}`, 'POST', args || {});
 }
 
 export async function executeSelect(payload: QueryPayload) {
@@ -1167,19 +1025,18 @@ async function ensureDatabaseIntegrity() {
     `).catch(() => {});
 
     // 7. Backfill top-level challan_gross_wt and final_receipt_wt on material_inspection from grid_details JSONB array
-    // and ensure PO BJCL/2026-2027/0532 has accurate contract & excess settlement values
     await pool.query(`
       UPDATE "material_inspection" m
       SET
-        "challan_gross_wt" = sub.sum_gross,
-        "receipt_gross_wt" = sub.sum_gross,
-        "gross_weight" = sub.sum_gross,
-        "final_receipt_wt" = sub.sum_net,
-        "total_final_receipt_wt" = sub.sum_net,
-        "reduced_weight" = sub.sum_net
+        "challan_gross_wt" = CASE WHEN COALESCE(m.challan_gross_wt, 0) <= 0 AND sub.sum_gross > 0 THEN sub.sum_gross ELSE m.challan_gross_wt END,
+        "receipt_gross_wt" = CASE WHEN COALESCE(m.receipt_gross_wt, 0) <= 0 AND sub.sum_gross > 0 THEN sub.sum_gross ELSE m.receipt_gross_wt END,
+        "gross_weight" = CASE WHEN COALESCE(m.gross_weight, 0) <= 0 AND sub.sum_gross > 0 THEN sub.sum_gross ELSE m.gross_weight END,
+        "final_receipt_wt" = CASE WHEN COALESCE(m.final_receipt_wt, 0) <= 0 AND sub.sum_net > 0 THEN sub.sum_net ELSE m.final_receipt_wt END,
+        "total_final_receipt_wt" = CASE WHEN COALESCE(m.total_final_receipt_wt, 0) <= 0 AND sub.sum_net > 0 THEN sub.sum_net ELSE m.total_final_receipt_wt END,
+        "reduced_weight" = CASE WHEN COALESCE(m.reduced_weight, 0) <= 0 AND sub.sum_net > 0 THEN sub.sum_net ELSE m.reduced_weight END
       FROM (
         SELECT
-          i.mr_no,
+          i.ctid AS row_id,
           ROUND(COALESCE(SUM(NULLIF(regexp_replace(COALESCE(elem->>'challan_gross_wt', elem->>'receipt_gross_wt', '0'), '[^0-9.-]', '', 'g'), '')::numeric), 0), 3) AS sum_gross,
           ROUND(COALESCE(SUM(NULLIF(regexp_replace(COALESCE(elem->>'final_receipt_wt', elem->>'reduced_weight', '0'), '[^0-9.-]', '', 'g'), '')::numeric), 0), 3) AS sum_net
         FROM "material_inspection" i,
@@ -1191,56 +1048,11 @@ async function ensureDatabaseIntegrity() {
           END
         ) AS elem
         WHERE COALESCE(i.challan_gross_wt, 0) <= 0 OR COALESCE(i.final_receipt_wt, 0) <= 0
-        GROUP BY i.mr_no
+        GROUP BY i.ctid
       ) sub
-      WHERE m.mr_no = sub.mr_no
+      WHERE m.ctid = sub.row_id
         AND (sub.sum_gross > 0 OR sub.sum_net > 0);
 
-      UPDATE "material_inspection"
-      SET "challan_gross_wt" = 12.920, "receipt_gross_wt" = 12.920, "gross_weight" = 12.920,
-          "final_receipt_wt" = 12.662, "total_final_receipt_wt" = 12.662, "reduced_weight" = 12.662
-      WHERE TRIM(UPPER("mr_no")) IN ('MR00999', 'MR0999');
-
-      UPDATE "material_inspection"
-      SET "challan_gross_wt" = 13.870, "receipt_gross_wt" = 13.870, "gross_weight" = 13.870,
-          "final_receipt_wt" = 13.593, "total_final_receipt_wt" = 13.593, "reduced_weight" = 13.593
-      WHERE TRIM(UPPER("mr_no")) = 'MR01037';
-
-      UPDATE "material_inspection"
-      SET "challan_gross_wt" = 11.880, "receipt_gross_wt" = 11.880, "gross_weight" = 11.880,
-          "final_receipt_wt" = 11.761, "total_final_receipt_wt" = 11.761, "reduced_weight" = 11.761
-      WHERE TRIM(UPPER("mr_no")) = 'MR01042';
-
-      UPDATE "sauda_check_point"
-      SET "total_contract_mt" = 34.500,
-          "contract_weight_mt" = 34.500,
-          "excess_short_deduction" = 2181000,
-          "excess_short_status" = 'settled',
-          "is_settled" = TRUE
-      WHERE TRIM(UPPER("po_no")) = 'BJCL/2026-2027/0532';
-
-      UPDATE "sauda_check_point_deductions"
-      SET "contract_weight_mt" = 34.500,
-          "tolerance_pct" = 0,
-          "tolerance_mt" = 0,
-          "min_acceptable_mt" = 34.500,
-          "max_acceptable_mt" = 34.500,
-          "total_received_mt" = 38.135,
-          "variation_type" = 'excess',
-          "variation_mt" = -3.635,
-          "sauda_rate" = 12900,
-          "satta_rate" = 12300,
-          "last_arrival_date" = '2026-09-16',
-          "last_mr_no" = 'MR01042',
-          "applicable_rate" = 600,
-          "rate_basis" = 'rate_difference',
-          "rate_difference" = 600,
-          "deduction_qty_mt" = 3.635,
-          "deduction_qty_qtl" = 36.35,
-          "deduction_amount" = 2181000,
-          "arrival_numbers" = 'MR00999, MR01037, MR01042',
-          "remarks" = 'Excess Weight Deduction: 3,635 kg × ₹600 = ₹2,181,000.'
-      WHERE TRIM(UPPER("po_no")) = 'BJCL/2026-2027/0532';
     `).catch(() => {});
   } catch (_) {}
 }
@@ -1623,15 +1435,33 @@ function buildWhereClause(
   payload: QueryPayload,
   params: any[],
   validCols?: Set<string>,
-  colTypes?: Map<string, string>
+  colTypes?: Map<string, string>,
+  requireFilter = false
 ): string {
   const whereClauses: string[] = [];
+
+  if (requireFilter && (
+    (payload.filters !== undefined && !Array.isArray(payload.filters)) ||
+    (payload.orFilters !== undefined && !Array.isArray(payload.orFilters))
+  )) {
+    throw new Error('Invalid mutation filter list');
+  }
 
   if (Array.isArray(payload.filters)) {
     for (const f of payload.filters) {
       const col = sanitizeIdent(f.column);
-      if (!col) continue;
-      if (validCols && validCols.size > 0 && !validCols.has(col)) continue;
+      if (!col || (validCols?.size && !validCols.has(col))) {
+        if (requireFilter) throw new Error('Invalid mutation filter column');
+        continue;
+      }
+      if (requireFilter && (
+        !/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(f.column) ||
+        !['eq', 'neq', 'gt', 'gte', 'lt', 'lte', 'like', 'ilike', 'is', 'in'].includes(f.op) ||
+        (f.op === 'is' && f.value !== null && typeof f.value !== 'boolean') ||
+        (f.op === 'in' && !Array.isArray(f.value))
+      )) {
+        throw new Error('Invalid mutation filter');
+      }
 
       const cType = (colTypes?.get(col) || '').toLowerCase();
 
@@ -1694,13 +1524,21 @@ function buildWhereClause(
         const [c, op, ...rest] = part.split('.');
         const val = rest.join('.');
         const col = sanitizeIdent(c);
-        if (!col) continue;
-        if (validCols && validCols.size > 0 && !validCols.has(col)) continue;
+        if (!col || (validCols?.size && !validCols.has(col)) || !['like', 'ilike', 'eq'].includes(op)) {
+          if (requireFilter) throw new Error('Invalid mutation OR filter');
+          continue;
+        }
+        if (requireFilter && (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(c) || rest.length === 0)) {
+          throw new Error('Invalid mutation OR filter');
+        }
 
-        const cleanVal = val.replace(/^[%(]+|[%)]+$/g, '');
+        const cleanVal = requireFilter
+          ? val.replace(/^"(.*)"$/, '$1')
+          : val.replace(/^[%(]+|[%)]+$/g, '');
         if (op === 'ilike' || op === 'like') {
-          params.push(`%${cleanVal}%`);
-          subClauses.push(`CAST("${col}" AS TEXT) ILIKE $${params.length}`);
+          params.push(requireFilter ? cleanVal.replace(/\*/g, '%') : `%${cleanVal}%`);
+          const operator = requireFilter && op === 'like' ? 'LIKE' : 'ILIKE';
+          subClauses.push(`CAST("${col}" AS TEXT) ${operator} $${params.length}`);
         } else if (op === 'eq') {
           params.push(cleanVal);
           subClauses.push(`CAST("${col}" AS TEXT) = $${params.length}`);
@@ -1712,6 +1550,9 @@ function buildWhereClause(
     }
   }
 
+  if (requireFilter && whereClauses.length === 0) {
+    throw new Error('An update or delete requires a filter');
+  }
   return whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
 }
 
@@ -1808,22 +1649,29 @@ async function tryUpdateExistingRowInPlace(
   return updRes.rows.length > 0 ? updRes.rows : null;
 }
 
-export async function executeInsert(payload: QueryPayload) {
+export async function executeInsert(payload: QueryPayload, ignoreDuplicates = false) {
   const table = sanitizeIdent(payload.table);
   const rawValues = Array.isArray(payload.values) ? payload.values : [payload.values];
   if (rawValues.length === 0) return { data: [], error: null };
 
   // If this table is a master/header table with unique business keys (or conflict cols were provided),
   // route through executeUpsert so editing/re-saving never creates a duplicate row!
-  if (
+  if (!ignoreDuplicates && (
     (Array.isArray(payload.onConflictCols) && payload.onConflictCols.length > 0) ||
     TABLE_UNIQUE_KEYS[table] ||
     TABLE_COMPOSITE_KEYS[table]
-  ) {
+  )) {
     return executeUpsert(payload);
   }
 
   const validCols = await getValidTableColumns(table);
+  const conflictCols = payload.onConflictCols || [];
+  if (ignoreDuplicates && conflictCols.some(column =>
+    !/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(column) || (validCols.size > 0 && !validCols.has(column))
+  )) {
+    return { data: [], error: { message: 'Invalid conflict column' } };
+  }
+  const conflictTarget = conflictCols.length ? ` (${conflictCols.map(column => `"${column}"`).join(', ')})` : '';
   const cleanedRows = rawValues.map(r => filterRowByValidColumns(r, validCols, table));
 
   const sample = cleanedRows[0];
@@ -1850,6 +1698,7 @@ export async function executeInsert(payload: QueryPayload) {
   const insertSql = `
     INSERT INTO "${table}" (${colsSql})
     VALUES ${valueRows.join(', ')}
+    ${ignoreDuplicates ? `ON CONFLICT${conflictTarget} DO NOTHING` : ''}
     RETURNING *
   `;
 
@@ -1860,7 +1709,7 @@ export async function executeInsert(payload: QueryPayload) {
     tableColumnsCache.delete(table);
     tableColumnTypesCache.delete(table);
     if (isConnectionError(err)) {
-      return insertSupabaseFallback(payload);
+      return insertSupabaseFallback(payload, ignoreDuplicates ? 'ignore-duplicates' : undefined);
     }
     console.warn(`[Local DB Insert Notice on table ${table}]:`, err.message);
     return { data: [], error: { message: err.message } };
@@ -1921,7 +1770,7 @@ export async function executeUpsert(payload: QueryPayload) {
     tableColumnsCache.delete(table);
     tableColumnTypesCache.delete(table);
     if (isConnectionError(err)) {
-      return insertSupabaseFallback(payload);
+      return insertSupabaseFallback(payload, 'merge-duplicates');
     }
     console.warn(`[Local DB Upsert Notice on table ${table}]:`, err.message);
     return { data: [], error: { message: err.message } };
@@ -1950,18 +1799,16 @@ export async function executeUpdate(payload: QueryPayload) {
     setClauses.push(`"${sanitizeIdent(k)}" = $${params.length}`);
   }
 
-  const whereSql = buildWhereClause(payload, params, validCols, colTypes);
-  const updateSql = `UPDATE "${table}" SET ${setClauses.join(', ')} ${whereSql} RETURNING *`;
-
   try {
+    const whereSql = buildWhereClause(payload, params, validCols, colTypes, true);
+    const updateSql = `UPDATE "${table}" SET ${setClauses.join(', ')} ${whereSql} RETURNING *`;
     const result = await pool.query(updateSql, params);
     if (result.rows.length > 0) {
       return { data: result.rows, error: null };
     }
 
-    // Fallback: if exact filter matched 0 rows (e.g., due to case/whitespace or wrong PK column name in Admin Desk),
-    // try matching via case-insensitive trimmed filter or via the row's unique keys!
-    if (Array.isArray(payload.filters) && payload.filters.length === 1 && payload.filters[0].op === 'eq') {
+    // Preserve case-insensitive lookup for a single equality filter.
+    if (!payload.orFilters?.length && payload.filters?.length === 1 && payload.filters[0].op === 'eq') {
       const fCol = sanitizeIdent(payload.filters[0].column);
       const fVal = payload.filters[0].value;
       if (fCol && validCols.has(fCol) && fVal !== undefined && fVal !== null && String(fVal).trim() !== '') {
@@ -1975,17 +1822,12 @@ export async function executeUpdate(payload: QueryPayload) {
       }
     }
 
-    const fallbackUpdated = await tryUpdateExistingRowInPlace(table, values, validCols);
-    if (fallbackUpdated && fallbackUpdated.length > 0) {
-      return { data: fallbackUpdated, error: null };
-    }
-
     return { data: [], error: null };
   } catch (err: any) {
     tableColumnsCache.delete(table);
     tableColumnTypesCache.delete(table);
     if (isConnectionError(err)) {
-      return updateSupabaseFallback(payload);
+      return mutateSupabaseFallback(payload, 'PATCH');
     }
     console.warn(`[Local DB Update Notice on table ${table}]:`, err.message);
     return { data: [], error: { message: err.message } };
@@ -1997,23 +1839,87 @@ export async function executeDelete(payload: QueryPayload) {
   const validCols = await getValidTableColumns(table);
   const colTypes = tableColumnTypesCache.get(table);
   const params: any[] = [];
-  const whereSql = buildWhereClause(payload, params, validCols, colTypes);
-  const deleteSql = `DELETE FROM "${table}" ${whereSql} RETURNING *`;
-
   try {
+    const whereSql = buildWhereClause(payload, params, validCols, colTypes, true);
+    const deleteSql = `DELETE FROM "${table}" ${whereSql} RETURNING *`;
     const result = await pool.query(deleteSql, params);
     return { data: result.rows, error: null };
   } catch (err: any) {
     if (isConnectionError(err)) {
-      return deleteSupabaseFallback(payload);
+      return mutateSupabaseFallback(payload, 'DELETE');
     }
     console.warn(`[Local DB Delete Notice on table ${table}]:`, err.message);
     return { data: [], error: { message: err.message } };
   }
 }
 
+async function saveMillInspection(args: any) {
+  const mrNo = typeof args?.master?.mr_no === 'string' ? args.master.mr_no.trim() : '';
+  const validRows = (rows: unknown) => Array.isArray(rows) &&
+    rows.every(row => row && typeof row === 'object' && !Array.isArray(row));
+  if (!mrNo || !validRows(args?.details) || (args.deductions !== undefined && !validRows(args.deductions))) {
+    return { data: null, error: { message: 'An MR number and valid inspection rows are required' } };
+  }
+
+  const masterTable = 'material_inspection';
+  const detailTable = 'material_inspection_details';
+  const deductionTable = 'material_inspection_deductions';
+  const tables = args.deductions === undefined ? [masterTable, detailTable] : [masterTable, detailTable, deductionTable];
+  const schemas = await Promise.all(tables.map(getValidTableColumns));
+  const [masterColumns, detailColumns, deductionColumns] = schemas;
+  if (schemas.some(columns => !columns.has('mr_no'))) {
+    return { data: null, error: { message: 'The local inspection schema is unavailable' } };
+  }
+
+  const prepare = (row: Record<string, any>, columns: Set<string>, table: string) =>
+    filterRowByValidColumns({ ...row, mr_no: mrNo }, columns, table);
+  const master = prepare(args.master, masterColumns, masterTable);
+  const details = args.details.map(row => prepare(row, detailColumns, detailTable));
+  const deductions = args.deductions?.map(row => prepare(row, deductionColumns, deductionTable));
+
+  const client = await pool.connect();
+  try {
+    const insert = async (table: string, row: Record<string, any>, updateMaster = false) => {
+      const columns = Object.keys(row);
+      const values = Object.values(row).map(value =>
+        value !== null && typeof value === 'object' && !(value instanceof Date) ? JSON.stringify(value) : value
+      );
+      const quoted = columns.map(column => `"${column.replace(/"/g, '""')}"`);
+      const placeholders = columns.map((_, index) => `$${index + 1}`);
+      const assignments = quoted.filter(column => column !== '"mr_no"').map(column => `${column} = EXCLUDED.${column}`);
+      const conflict = updateMaster
+        ? `ON CONFLICT ("mr_no") DO ${assignments.length ? `UPDATE SET ${assignments.join(', ')}` : 'NOTHING'}`
+        : '';
+      await client.query(`INSERT INTO "${table}" (${quoted.join(', ')}) VALUES (${placeholders.join(', ')}) ${conflict}`, values);
+    };
+
+    await client.query('BEGIN');
+    await insert(masterTable, master, true);
+    await client.query('DELETE FROM "material_inspection_details" WHERE "mr_no" = $1', [mrNo]);
+    for (const detail of details) await insert(detailTable, detail);
+    if (deductions) {
+      await client.query('DELETE FROM "material_inspection_deductions" WHERE "mr_no" = $1', [mrNo]);
+      for (const deduction of deductions) await insert(deductionTable, deduction);
+    }
+    await client.query('COMMIT');
+    return { data: { success: true }, error: null };
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
 export async function executeRpc(funcName: string, args: any) {
   const func = sanitizeIdent(funcName);
+  if (func === 'save_mill_inspection') {
+    try {
+      return await saveMillInspection(args);
+    } catch (err: any) {
+      return { data: null, error: { message: err.message } };
+    }
+  }
   try {
     // 1. Direct execution for exec_sql and exec_sql_return
     if (func === 'exec_sql' || func === 'exec_sql_return') {

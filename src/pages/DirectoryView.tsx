@@ -46,14 +46,13 @@ export default function DirectoryView({ title, type, onClose }: DirectoryViewPro
     setLoading(true);
     try {
       if (type === 'vyapari') {
-        // In this system, vyapari are stored in user_master with role 'VYAPARI' or simply all users
-        const users = await dbModule.fetchAll('user_master');
-        const mapped: DirectoryItem[] = users.map((u: any) => ({
-          id: u.user_id.toString(),
-          name: u.username || 'UNNAMED',
-          subtext: u.role || 'Member',
-          village: 'Main Station',
-          mobile: '91-000-000'
+        const suppliers = await dbModule.fetchAll('supply_master', 'supp_name', true);
+        const mapped: DirectoryItem[] = suppliers.map((supplier: any) => ({
+          id: String(supplier.id ?? supplier.supp_code),
+          name: String(supplier.supp_name || 'UNNAMED'),
+          subtext: String(supplier.supplier_group || supplier.supp_code || ''),
+          village: String(supplier.supp_city || ''),
+          mobile: String(supplier.supp_cell_no || supplier.supp_ph_no || ''),
         }));
         setItems(mapped);
       } else {

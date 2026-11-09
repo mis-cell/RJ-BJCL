@@ -1,5 +1,6 @@
 import { supabase } from "../../lib/supabase";
 import { dbModule } from "../../services/dbModule";
+import { savePrimaryInspection } from "./inspectionSaveService";
 import { comparePoInspection } from "../../lib/poMatch";
 import { InspectionMaster, InspectionDetailRow } from "../../types/inspection.types";
 import { checkAndProcessReturnLorryOnInspection } from "../../services/returnLorryService";
@@ -274,46 +275,25 @@ export async function saveMaterialInspection({
       };
     });
 
-  const sqlVal = (v: any) => {
-    if (v === null || v === undefined) return 'NULL';
-    if (typeof v === 'number') return isFinite(v) ? String(v) : '0';
-    if (typeof v === 'boolean') return v ? 'TRUE' : 'FALSE';
-    if (typeof v === 'object') return `'${JSON.stringify(v).replace(/'/g, "''")}'::jsonb`;
-    return `'${String(v).replace(/'/g, "''")}'`;
-  };
+  await savePrimaryInspection(masterPayload, validRowsToWrite);
 
+  // Keep legacy mirror tables in sync where available.
   try {
-    await dbModule.upsert("material_inspection", masterPayload, "mr_no");
     await dbModule.upsert("mill_inspection_master", {
       ...masterPayload,
       inspection_no: masterData.mr_no,
       supplier: masterPayload.supplier_name,
       broker: masterPayload.broker_name,
       lorry_no: masterPayload.lorry_number,
-    }, "mr_no").catch(() => {});
+    }, "mr_no");
+  } catch (error) {
+    console.warn("Could not update legacy inspection master:", error);
+  }
 
-    await supabase.from("inspection_details").delete().eq("mr_no", masterData.mr_no).then(() => {}, () => {});
-    await supabase.from("inspection_checklist_details").delete().eq("mr_no", masterData.mr_no).then(() => {}, () => {});
-    await supabase.from("mill_inspection_detail").delete().eq("mr_no", masterData.mr_no).then(() => {}, () => {});
-    await supabase.from("material_inspection_details").delete().eq("mr_no", masterData.mr_no).then(() => {}, () => {});
-    if (validRowsToWrite.length > 0) {
-      await supabase.from("inspection_details").insert(validRowsToWrite).then(() => {}, () => {});
-      await supabase.from("inspection_checklist_details").insert(validRowsToWrite).then(() => {}, () => {});
-      await supabase.from("mill_inspection_detail").insert(validRowsToWrite).then(() => {}, () => {});
-      await supabase.from("material_inspection_details").insert(validRowsToWrite).then(() => {}, () => {});
-    }
-  } catch (_txErr) {
-    const { error: mErr } = await supabase.from("material_inspection").upsert(masterPayload, { onConflict: "mr_no" });
-    if (mErr) throw mErr;
-    await supabase.from("inspection_details").delete().eq("mr_no", masterData.mr_no).then(() => {}, () => {});
-    await supabase.from("inspection_checklist_details").delete().eq("mr_no", masterData.mr_no).then(() => {}, () => {});
-    await supabase.from("mill_inspection_detail").delete().eq("mr_no", masterData.mr_no).then(() => {}, () => {});
-    await supabase.from("material_inspection_details").delete().eq("mr_no", masterData.mr_no).then(() => {}, () => {});
-    if (validRowsToWrite.length > 0) {
-      await supabase.from("inspection_details").insert(validRowsToWrite).then(() => {}, () => {});
-      await supabase.from("inspection_checklist_details").insert(validRowsToWrite).then(() => {}, () => {});
-      await supabase.from("mill_inspection_detail").insert(validRowsToWrite).then(() => {}, () => {});
-      await supabase.from("material_inspection_details").insert(validRowsToWrite).then(() => {}, () => {});
+  for (const table of ["inspection_details", "inspection_checklist_details", "mill_inspection_detail"]) {
+    const { error } = await supabase.from(table).delete().eq("mr_no", masterData.mr_no);
+    if (!error && validRowsToWrite.length > 0) {
+      await supabase.from(table).insert(validRowsToWrite);
     }
   }
 

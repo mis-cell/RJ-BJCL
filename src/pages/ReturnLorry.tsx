@@ -53,12 +53,6 @@ export default function ReturnLorry({ onClose }: ReturnLorryProps) {
     try {
       const list = await fetchAllReturnLorries();
       setRecords(list);
-      if (activeRecord) {
-        const updatedActive = list.find((r) => r.mr_no === activeRecord.mr_no);
-        if (updatedActive) {
-          setActiveRecord(updatedActive);
-        }
-      }
     } catch (err) {
       console.error('Failed to load Return Lorry records:', err);
     } finally {
@@ -70,9 +64,10 @@ export default function ReturnLorry({ onClose }: ReturnLorryProps) {
     loadRecords(true);
   }, []);
 
-  useLiveAutoRefresh(() => {
-    loadRecords(false);
-  }, ['return_lorry', 'material_inspection', 'sauda_check_point']);
+  useLiveAutoRefresh(() => loadRecords(false), [], {
+    tables: ['return_lorry', 'return_lorry_details', 'material_inspection', 'material_inspection_details', 'sauda_check_point'],
+    skipInitialLoad: true,
+  });
 
   const handleManualSync = async () => {
     setSyncing(true);

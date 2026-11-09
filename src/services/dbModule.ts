@@ -102,41 +102,12 @@ function sanitizePayload(data: Record<string, any>): Record<string, any> {
   const payload = { ...data };
   delete payload._offline_queued;
   delete payload._stripped_columns;
-  delete payload.signature_url;
-  delete payload.digital_signature;
   Object.keys(payload).forEach((k) => {
     if (payload[k] === undefined) {
       delete payload[k];
     }
   });
   return payload;
-}
-
-async function executeWithSchemaRetry(
-  table: string,
-  mutationFn: (activePayload: any) => Promise<{ data: any; error: any }>,
-  payload: any
-) {
-  let currentPayload = { ...payload };
-  for (let attempt = 0; attempt < 10; attempt++) {
-    const res = await mutationFn(currentPayload);
-    if (!res.error) return res;
-
-    const errMsg = res.error.message || '';
-    if (errMsg.includes('schema cache') || errMsg.includes('Could not find') || errMsg.includes('column')) {
-      const match = errMsg.match(/['"]([a-zA-Z0-9_]+)['"]\s+column/i) || errMsg.match(/column\s+['"]([a-zA-Z0-9_]+)['"]/i) || errMsg.match(/Could not find the '([a-zA-Z0-9_]+)' column/i);
-      if (match && match[1]) {
-        const missingCol = match[1];
-        if (currentPayload[missingCol] !== undefined) {
-          delete currentPayload[missingCol];
-          console.warn(`[dbModule] Removed missing schema cache column "${missingCol}" from "${table}" payload and retrying...`);
-          continue;
-        }
-      }
-    }
-    return res;
-  }
-  return mutationFn(currentPayload);
 }
 
 export const dbModule = {
@@ -398,14 +369,7 @@ export const dbModule = {
     await assertSaudaBaseRateApprovedForTable(table);
     const payload = sanitizePayload(data);
 
-    const { data: insertedRows, error } = await executeWithSchemaRetry(
-      table,
-      async (pl) => {
-        const res = await supabase!.from(table).insert([pl]).select();
-        return { data: res.data, error: res.error };
-      },
-      payload
-    );
+    const { data: insertedRows, error } = await supabase!.from(table).insert([payload]).select();
 
     if (error) {
       throw new Error(`Insert into "${table}" failed: ${error.message}`);
@@ -449,14 +413,7 @@ export const dbModule = {
     const payload = sanitizePayload(data);
 
     const options = onConflictColumn ? { onConflict: onConflictColumn } : undefined;
-    const { data: upsertedRows, error } = await executeWithSchemaRetry(
-      table,
-      async (pl) => {
-        const res = await supabase!.from(table).upsert([pl], options).select();
-        return { data: res.data, error: res.error };
-      },
-      payload
-    );
+    const { data: upsertedRows, error } = await supabase!.from(table).upsert([payload], options).select();
 
     if (error) {
       throw new Error(
@@ -517,14 +474,7 @@ export const dbModule = {
     }
 
     const payload = sanitizePayload(data);
-    const { data: updatedRows, error } = await executeWithSchemaRetry(
-      table,
-      async (pl) => {
-        const res = await supabase!.from(table).update(pl).eq(idColumn, idValue).select();
-        return { data: res.data, error: res.error };
-      },
-      payload
-    );
+    const { data: updatedRows, error } = await supabase!.from(table).update(payload).eq(idColumn, idValue).select();
 
     if (error) {
       throw new Error(

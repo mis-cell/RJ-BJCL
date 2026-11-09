@@ -1,5 +1,5 @@
 import { supabase } from "../../lib/supabase";
-import { dbModule } from "../../services/dbModule";
+import { dbModule, notifyDataChanged } from "../../services/dbModule";
 import { getCurrentUserContext } from "../../lib/permissions";
 import { logChange } from "../../services/auditLogService";
 import {
@@ -14,6 +14,22 @@ export interface SaveInspectionResult {
   success: boolean;
   message?: string;
   returnCheck?: any;
+}
+
+export async function savePrimaryInspection(
+  master: Record<string, unknown>,
+  details: Record<string, unknown>[],
+  deductions?: Record<string, unknown>[],
+) {
+  const { data, error } = await supabase.rpc("save_mill_inspection", { master, details, deductions });
+  if (error) throw new Error(error.message);
+  if (!data?.success) throw new Error("The inspection save was not confirmed.");
+  const tables = ["material_inspection", "material_inspection_details"];
+  if (deductions) tables.push("material_inspection_deductions");
+  for (const table of tables) {
+    dbModule.invalidateCache(table);
+    notifyDataChanged(table);
+  }
 }
 
 export async function saveInspectionRecordToDb(
@@ -322,130 +338,29 @@ export async function saveInspectionRecordToDb(
     created_at: new Date().toISOString(),
   }));
 
-  const sqlVal = (v: any) => {
-    if (v === null || v === undefined) return "NULL";
-    if (typeof v === "number") return isFinite(v) ? String(v) : "0";
-    if (typeof v === "boolean") return v ? "TRUE" : "FALSE";
-    return `'${String(v).replace(/'/g, "''")}'`;
-  };
+  if (!supabase) throw new Error("Inspection database connection is unavailable.");
 
+  await savePrimaryInspection(masterPayload, detailInserts, dedInserts);
+
+  // Some deployments still use the legacy mirror tables.
   try {
-    await dbModule.upsert("material_inspection", masterPayload, "mr_no");
-    await dbModule.upsert(
-      "mill_inspection_master",
-      {
-        ...masterPayload,
-        inspection_no: cleanMrNo,
-        supplier: masterPayload.supplier_name,
-        broker: masterPayload.broker_name,
-        lorry_no: masterPayload.lorry_number,
-      },
-      "mr_no"
-    ).catch(() => {});
-
-    if (supabase) {
-      await Promise.all([
-        Promise.resolve(
-          supabase.from("material_inspection_details").delete().eq("mr_no", cleanMrNo)
-        ),
-        Promise.resolve(
-          supabase.from("mill_inspection_detail").delete().eq("mr_no", cleanMrNo)
-        ).catch(() => ({})),
-        Promise.resolve(
-          supabase.from("material_inspection_deductions").delete().eq("mr_no", cleanMrNo)
-        ),
-        Promise.resolve(
-          supabase.from("mill_inspection_deduction").delete().eq("mr_no", cleanMrNo)
-        ).catch(() => ({})),
-      ]);
-
-      if (detailInserts.length > 0) {
-        await Promise.all([
-          Promise.resolve(
-            supabase.from("material_inspection_details").insert(detailInserts)
-          ),
-          Promise.resolve(
-            supabase.from("mill_inspection_detail").insert(detailInserts)
-          ).catch(() => ({})),
-        ]);
-      }
-
-      if (dedInserts.length > 0) {
-        await Promise.all([
-          Promise.resolve(
-            supabase.from("material_inspection_deductions").insert(dedInserts)
-          ),
-          Promise.resolve(
-            supabase.from("mill_inspection_deduction").insert(dedInserts)
-          ).catch(() => ({})),
-        ]);
-      }
+    await dbModule.upsert("mill_inspection_master", {
+      ...masterPayload,
+      inspection_no: cleanMrNo,
+      supplier: masterPayload.supplier_name,
+      broker: masterPayload.broker_name,
+      lorry_no: masterPayload.lorry_number,
+    }, "mr_no");
+    const mirrorDetails = await supabase.from("mill_inspection_detail").delete().eq("mr_no", cleanMrNo);
+    if (!mirrorDetails.error && detailInserts.length > 0) {
+      await supabase.from("mill_inspection_detail").insert(detailInserts);
     }
-  } catch (_txErr) {
-    if (supabase) {
-      await Promise.all([
-        Promise.resolve(
-          supabase
-            .from("material_inspection")
-            .upsert(masterPayload, { onConflict: "mr_no" })
-        ),
-        Promise.resolve(
-          supabase.from("mill_inspection_master").upsert(
-            {
-              ...masterPayload,
-              inspection_no: cleanMrNo,
-              supplier: masterPayload.supplier_name,
-              broker: masterPayload.broker_name,
-              lorry_no: masterPayload.lorry_number,
-            },
-            { onConflict: "mr_no" }
-          )
-        ).catch(() => ({})),
-      ]);
-
-      await Promise.all([
-        Promise.resolve(
-          supabase.from("material_inspection_details").delete().eq("mr_no", cleanMrNo)
-        ),
-        Promise.resolve(
-          supabase.from("mill_inspection_detail").delete().eq("mr_no", cleanMrNo)
-        ).catch(() => ({})),
-      ]);
-
-      if (detailInserts.length > 0) {
-        await Promise.all([
-          Promise.resolve(
-            supabase.from("material_inspection_details").insert(detailInserts)
-          ),
-          Promise.resolve(
-            supabase.from("mill_inspection_detail").insert(detailInserts)
-          ).catch(() => ({})),
-        ]);
-      }
-
-      await Promise.all([
-        Promise.resolve(
-          supabase
-            .from("material_inspection_deductions")
-            .delete()
-            .eq("mr_no", cleanMrNo)
-        ),
-        Promise.resolve(
-          supabase.from("mill_inspection_deduction").delete().eq("mr_no", cleanMrNo)
-        ).catch(() => ({})),
-      ]);
-
-      if (dedInserts.length > 0) {
-        await Promise.all([
-          Promise.resolve(
-            supabase.from("material_inspection_deductions").insert(dedInserts)
-          ),
-          Promise.resolve(
-            supabase.from("mill_inspection_deduction").insert(dedInserts)
-          ).catch(() => ({})),
-        ]);
-      }
+    const mirrorDeductions = await supabase.from("mill_inspection_deduction").delete().eq("mr_no", cleanMrNo);
+    if (!mirrorDeductions.error && dedInserts.length > 0) {
+      await supabase.from("mill_inspection_deduction").insert(dedInserts);
     }
+  } catch (error) {
+    console.warn("Could not update legacy inspection mirror:", error);
   }
 
   // Record in Universal Change Log

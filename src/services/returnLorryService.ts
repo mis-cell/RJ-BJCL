@@ -1032,6 +1032,15 @@ export async function checkAndProcessReturnLorryOnInspection(params: {
 
   const cached = getLocalCachedReturnLorries();
   const existingCached = cached.find((r) => normalizeStr(r.mr_no) === cleanMr);
+  if (existingCached?.saved_to_sauda_checkpoint) {
+    return {
+      isReturnLorry: true,
+      weightMt: existingCached.received_weight_mt,
+      newPoNo: existingCached.new_po_no,
+      referencePoNo: existingCached.reference_po_no,
+      record: existingCached,
+    };
+  }
 
   const referencePoNo = existingCached?.reference_po_no || cleanPo || String(headerForm?.mill_po_no || '').trim() || cleanMr;
   const fy = String(headerForm?.financial_year || '2026-2027').trim();
@@ -1149,7 +1158,7 @@ export async function syncAllReturnLorriesFromInspections(): Promise<ReturnLorry
       }
     };
 
-    for (const rl of [... getLocalCachedReturnLorries(), ...existingDbReturnLorries]) {
+    for (const rl of [...existingDbReturnLorries, ...getLocalCachedReturnLorries()]) {
       const mKey = normalizeStr(rl.mr_no || rl.final_arrival_no);
       if (mKey && !existingByMr.has(mKey)) {
         existingByMr.set(mKey, rl);
@@ -1163,6 +1172,15 @@ export async function syncAllReturnLorriesFromInspections(): Promise<ReturnLorry
 
     const resultRecords: ReturnLorryRecord[] = [];
     const processedMrSet = new Set<string>();
+
+    // A saved return PO is a snapshot of what was posted to Sauda Check Point.
+    for (const [mrKey, record] of existingByMr) {
+      if (!record.saved_to_sauda_checkpoint) continue;
+      const poKey = normalizeStr(record.new_po_no || record.po_no);
+      const savedDetails = existingDbRlDetails.filter(row => normalizeStr(row.return_po_no) === poKey);
+      resultRecords.push({ ...record, items: savedDetails.length ? savedDetails : record.items || [] });
+      processedMrSet.add(mrKey);
+    }
 
     for (const insp of rawInspections) {
       const mrKey = normalizeStr(insp.mr_no);
@@ -1213,10 +1231,6 @@ export async function syncAllReturnLorriesFromInspections(): Promise<ReturnLorry
             (d) => normalizeStr(d.return_po_no) === normalizeStr(resolvedNewPoNo)
           );
 
-      const isAlreadySavedToScp = Boolean(
-        existingRl?.saved_to_sauda_checkpoint === true && Number(existingRl?.b_rate || 0) > 0
-      );
-
       const recordFromInspection = buildCombinedReturnLorryRecord({
         newPoNo: resolvedNewPoNo,
         referencePoNo,
@@ -1226,7 +1240,6 @@ export async function syncAllReturnLorriesFromInspections(): Promise<ReturnLorry
         lorrySeqNo: 1,
         existingSavedRl: existingRl,
         existingSavedRlDetails: savedDetails,
-        isSavedToScp: isAlreadySavedToScp,
       });
 
       resultRecords.push(recordFromInspection);

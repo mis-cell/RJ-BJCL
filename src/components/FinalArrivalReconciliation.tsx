@@ -118,19 +118,32 @@ export default function FinalArrivalReconciliation({ onBack, onSelectInspectionF
               newlyCreatedCount++;
 
               if (supabase) {
-                supabase.from('material_mismatch').upsert({
-                  mismatch_id: mismatchId,
-                  po_no: item.arrival_po || item.inspection_po || null,
-                  arrival_no: item.final_arrival_no || null,
-                  supplier: item.arrival_supplier || item.inspection_supplier || null,
-                  lorry_number: item.lorry_number || null,
-                  issue_description: newMismatch.issueDescription,
-                  expected_value: newMismatch.expectedValue,
-                  actual_value: newMismatch.actualValue,
-                  difference: newMismatch.difference,
-                  severity: newMismatch.severity,
-                  status: 'pending'
-                }, { onConflict: 'mismatch_id' }).then(() => {});
+                const client = supabase;
+                void (async () => {
+                  const { data, error } = await client.from('material_mismatch')
+                    .select('id').eq('mismatch_id', mismatchId).limit(1);
+                  if (error) throw error;
+                  if (data?.length) return;
+
+                  const { error: insertError } = await client.from('material_mismatch').insert({
+                    mismatch_id: mismatchId,
+                    po_no: item.arrival_po || item.inspection_po || null,
+                    arrival_no: item.final_arrival_no || null,
+                    supplier: item.arrival_supplier || item.inspection_supplier || null,
+                    lorry_number: item.lorry_number || null,
+                    issue_description: newMismatch.issueDescription,
+                    expected_value: newMismatch.expectedValue,
+                    actual_value: newMismatch.actualValue,
+                    difference: newMismatch.difference,
+                    severity: newMismatch.severity,
+                    status: 'pending',
+                  });
+                  if (insertError) throw insertError;
+                })().catch(error => {
+                  inMemoryCustomMismatchesRef.current = inMemoryCustomMismatchesRef.current
+                    .filter(mismatch => mismatch.id !== mismatchId);
+                  console.warn('Unable to register arrival variance:', error);
+                });
               }
             }
 
@@ -150,7 +163,7 @@ export default function FinalArrivalReconciliation({ onBack, onSelectInspectionF
                   `Expected (Lab Inspection Detail): ${expectedQty.toFixed(1)} Bales | ${expectedWt.toFixed(2)} MT\n` +
                   `Actual Received (Physical Weighbridge): ${actualQty.toFixed(1)} Bales | ${actualWt.toFixed(2)} MT\n\n` +
                   `Variance exceeds safety threshold of ${thresholdPercent}%.\n` +
-                  `A formal 'Mismatch Case' audit record (#${mismatchId}) has been dynamically generated for compliance desk review.`
+                  `Mismatch case reference: #${mismatchId}.`
                 );
               }, 400);
             }

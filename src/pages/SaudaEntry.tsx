@@ -192,22 +192,18 @@ export default function SaudaEntry({
     };
   };
 
-  const [formData, setFormData] = useState<Sauda>(() => {
-    if (!hasValidInitialData) {
-      screenDraftService.clearDraft('sauda_entry_form');
-    }
-    return getInitialFormData();
-  });
+  const [formData, setFormData] = useState<Sauda>(() =>
+    hasValidInitialData ? getInitialFormData() : screenDraftService.getDraft('sauda_entry_form', getInitialFormData())
+  );
 
   useEffect(() => {
-    if (!hasValidInitialData) {
-      screenDraftService.clearDraft('sauda_entry_form');
-    }
-    setFormData(getInitialFormData());
+    setFormData(hasValidInitialData
+      ? getInitialFormData()
+      : screenDraftService.getDraft('sauda_entry_form', getInitialFormData()));
   }, [initialData]);
 
   useEffect(() => {
-    if (!initialData && formData) {
+    if (!hasValidInitialData && formData) {
       screenDraftService.saveDraft('sauda_entry_form', formData);
     }
   }, [formData, initialData]);
@@ -215,7 +211,7 @@ export default function SaudaEntry({
   const formContainerRef = useRef<HTMLDivElement>(null);
   useKeyboardNavigation(formContainerRef);
 
-  async function loadMasterData() {
+  async function loadMasterData(initializeForm = false) {
     try {
         const [brokData, suppData, areaData, agcData, gradeData, markaData, allSaudas, sattaBaseRates, sattaDiffs] = await Promise.all([
           dbModule.fetchAll('broker_master'),
@@ -250,7 +246,7 @@ export default function SaudaEntry({
           const sorted = [...sattaBaseRates].sort((a: any, b: any) => (b.start_date || '').localeCompare(a.start_date || ''));
           const targetDt = formData.b_date || formData.date || today;
           const eff = sorted.find((r: any) => r.start_date <= targetDt) || sorted[sorted.length - 1];
-          if (eff && eff.base_rate) {
+          if (initializeForm && !hasValidInitialData && eff?.base_rate) {
             const activeBase = Number(eff.base_rate);
             setFormData(prev => ({
               ...prev,
@@ -261,7 +257,7 @@ export default function SaudaEntry({
         if (sattaDiffs) setDbDiffsList(sattaDiffs);
 
         // Auto-generate next Order No. if creating new Sauda
-        if (!initialData && allSaudas && allSaudas.length > 0) {
+        if (initializeForm && !hasValidInitialData && allSaudas?.length) {
           const numbers = allSaudas.map((s: any) => {
             const str = String(s.sauda_no || '');
             const match = str.match(/\d+$/);
@@ -270,12 +266,9 @@ export default function SaudaEntry({
           });
           const maxNo = Math.max(...numbers, 152);
           const nextNoStr = String(maxNo + 1).padStart(4, '0');
-          const currentSession = formData.session || '2026-2027';
-          setFormData(prev => ({
-            ...prev,
-            sauda_no: `BJCL/${currentSession}/${nextNoStr}`,
-            session: currentSession
-          }));
+          setFormData(prev => prev.sauda_no === 'BJCL/2026-2027/0153'
+            ? { ...prev, sauda_no: `BJCL/${prev.session || '2026-2027'}/${nextNoStr}` }
+            : prev);
         }
       } catch (err) {
         console.error("Error loading master data:", err);
@@ -283,10 +276,10 @@ export default function SaudaEntry({
   }
 
   useEffect(() => {
-    loadMasterData();
+    loadMasterData(true);
   }, [initialData]);
 
-  useLiveAutoRefresh(loadMasterData, [initialData], { tables: ['sauda_master', 'broker_master', 'supply_master', 'area_master', 'agency_master', 'grade_master', 'marka_master', 'satta_base_rates', 'satta_differentials'] });
+  useLiveAutoRefresh(() => loadMasterData(), [initialData], { skipInitialLoad: true, tables: ['sauda_master', 'broker_master', 'supply_master', 'area_master', 'agency_master', 'grade_master', 'marka_master', 'satta_base_rates', 'satta_differentials'] });
 
   // Recalculate Satta rate for a quality row based on Date, Area, Grade
   const recalculateRowRate = (date: string, area: string, grade: string) => {

@@ -1,13 +1,14 @@
 import express from "express";
 import path from "path";
 import fs from "fs";
+import { randomUUID } from "node:crypto";
 import { createServer as createViteServer } from "vite";
 import dotenv from "dotenv";
 import aiGatewayRouter from "./src/lib/ai-gateway.ts";
 import nodemailer from "nodemailer";
 import imaps from 'imap-simple';
 import { simpleParser } from 'mailparser';
-import { serverLocalDb, executeSelect, executeInsert, executeUpsert, executeUpdate, executeDelete, executeRpc, syncPendingDataToLocalPostgres } from "./src/lib/serverPostgresDb.ts";
+import { pool, serverLocalDb, executeSelect, executeInsert, executeUpsert, executeUpdate, executeDelete, executeRpc, syncPendingDataToLocalPostgres } from "./src/lib/serverPostgresDb.ts";
 
 // Pure Local PostgreSQL database instance (No Supabase connection or dependency)
 const supabase = serverLocalDb;
@@ -239,9 +240,7 @@ const ALLOWED_CORS_ORIGINS = (process.env.ALLOWED_ORIGINS || "")
   .filter(Boolean);
 
 function isAllowedOrigin(origin?: string): boolean {
-  if (!origin) return true;
-  // Always permit static IP, localhost, custom domains, and LAN origins
-  return true;
+  return !origin || ALLOWED_CORS_ORIGINS.length === 0 || ALLOWED_CORS_ORIGINS.includes(origin);
 }
 
 
@@ -251,7 +250,7 @@ async function startServer() {
 
   // 1. Restricted CORS & Context-Aware Caching middleware
   app.use((req, res, next) => {
-    if (req.path.startsWith('/api') || req.path.includes('/auth') || req.path.includes('/sync')) {
+    if (/^\/(?:Jute-Purchase-Automation\/)?(?:api|rest\/v1)(?:\/|$)/.test(req.path)) {
       res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0");
       res.setHeader("Pragma", "no-cache");
       res.setHeader("Expires", "0");
@@ -261,7 +260,11 @@ async function startServer() {
     }
 
     const origin = req.headers.origin;
-    if (origin && isAllowedOrigin(origin)) {
+    res.vary("Origin");
+    if (origin && !isAllowedOrigin(origin)) {
+      return res.status(403).json({ error: "Origin not allowed" });
+    }
+    if (origin) {
       res.setHeader("Access-Control-Allow-Origin", origin);
       res.setHeader("Access-Control-Allow-Credentials", "true");
     } else {
@@ -276,11 +279,24 @@ async function startServer() {
     next();
   });
 
+  // Authenticate database requests before accepting their payloads.
+  app.use(["/api/db", "/rest/v1"], (req, res, next) => {
+    const authorization = String(req.headers.authorization || "");
+    const token = String(req.headers["x-session-token"] || "").trim() ||
+      (authorization.startsWith("Bearer ") ? authorization.slice(7).trim() : "");
+    const session = activeSessionTokens.get(token);
+    if (!session || session.expiresAt <= Date.now()) {
+      if (session) activeSessionTokens.delete(token);
+      return res.status(401).json({ error: { message: "Sign in to access the database API" } });
+    }
+    next();
+  });
+
   // 2. Body Parser
   app.use(express.json({ limit: "50mb" }));
 
   // Helper to parse PostgREST query string filters (for Android / Supabase SDK compatibility)
-  function parsePostgrestQuery(query: Record<string, any>) {
+  function parsePostgrestQuery(query: Record<string, any>, mutation = false) {
     const filters: Array<{ column: string; op: 'eq' | 'neq' | 'gt' | 'gte' | 'lt' | 'lte' | 'like' | 'ilike' | 'is' | 'in'; value: any }> = [];
     const orFilters: string[] = [];
     const orders: Array<{ column: string; ascending: boolean }> = [];
@@ -291,6 +307,9 @@ async function startServer() {
 
     for (const [key, rawVal] of Object.entries(query)) {
       if (rawVal === undefined) continue;
+      if (mutation && typeof rawVal !== "string") {
+        throw new Error("Expected a single value for each mutation parameter");
+      }
       const valStr = Array.isArray(rawVal) ? String(rawVal[rawVal.length - 1]) : String(rawVal);
 
       if (key === "select") {
@@ -316,6 +335,7 @@ async function startServer() {
         }
       } else if (key === "or") {
         const cleaned = valStr.replace(/^\(/, "").replace(/\)$/, "");
+        if (mutation && !cleaned) throw new Error("Empty mutation OR filter");
         if (cleaned) orFilters.push(cleaned);
       } else {
         const dotIdx = valStr.indexOf(".");
@@ -327,6 +347,9 @@ async function startServer() {
           } else if (op === "ilike" || op === "like") {
             filters.push({ op: op as any, column: key, value: operand.replace(/\*/g, "%") });
           } else if (op === "is") {
+            if (mutation && !["null", "true", "false"].includes(operand.toLowerCase())) {
+              throw new Error("Invalid IS filter");
+            }
             filters.push({
               op: "is",
               column: key,
@@ -338,6 +361,8 @@ async function startServer() {
               ? inner.split(",").map((s) => s.trim().replace(/^"(.*)"$/, "$1"))
               : [];
             filters.push({ op: "in", column: key, value: list });
+          } else if (mutation) {
+            throw new Error("Unsupported mutation filter operator");
           }
         } else {
           filters.push({ op: "eq", column: key, value: valStr });
@@ -366,7 +391,12 @@ async function startServer() {
     const prefer = String(req.headers["prefer"] || "");
     const accept = String(req.headers["accept"] || "");
     const wantsSingleObject = accept.includes("application/vnd.pgrst.object+json");
-    const parsed = parsePostgrestQuery(req.query as Record<string, any>);
+    let parsed: ReturnType<typeof parsePostgrestQuery>;
+    try {
+      parsed = parsePostgrestQuery(req.query, ["PATCH", "PUT", "DELETE"].includes(req.method));
+    } catch (err: any) {
+      return res.status(400).json({ message: err.message });
+    }
 
     try {
       if (req.method === "GET" || req.method === "HEAD") {
@@ -396,21 +426,19 @@ async function startServer() {
       }
 
       if (req.method === "POST") {
+        const ignoreDuplicates = prefer.includes("resolution=ignore-duplicates");
         const isUpsert =
           prefer.includes("resolution=merge-duplicates") ||
-          prefer.includes("resolution=ignore-duplicates") ||
           Boolean(parsed.onConflictCols && parsed.onConflictCols.length > 0) ||
           table === "lorry_weighments";
-        const result = isUpsert
-          ? await executeUpsert({
-              table,
-              values: req.body,
-              onConflictCols: parsed.onConflictCols || (table === "lorry_weighments" ? ["gate_pass"] : undefined)
-            })
-          : await executeInsert({
-              table,
-              values: req.body
-            });
+        const payload = {
+          table,
+          values: req.body,
+          onConflictCols: parsed.onConflictCols || (table === "lorry_weighments" && !ignoreDuplicates ? ["gate_pass"] : undefined)
+        };
+        const result = isUpsert && !ignoreDuplicates
+          ? await executeUpsert(payload)
+          : await executeInsert(payload, ignoreDuplicates);
         if (result.error) {
           return res.status(400).json({ message: result.error.message });
         }
@@ -518,9 +546,12 @@ async function startServer() {
 
   // 3. Session Token Issuing, Verification, Revocation & Login Rate-Limiting Routes
   app.post(["/api/auth/session", "/api/auth/login", "/Jute-Purchase-Automation/api/auth/session", "/Jute-Purchase-Automation/api/auth/login"], async (req, res) => {
-    const clientIp = String(req.headers["x-forwarded-for"] || req.socket.remoteAddress || "local");
+    const clientIp = req.ip || req.socket.remoteAddress || "local";
     const now = Date.now();
-    const attempt = loginAttemptTracker.get(clientIp) || { count: 0, lockUntil: 0 };
+    const previousAttempt = loginAttemptTracker.get(clientIp);
+    const attempt = previousAttempt?.lockUntil && previousAttempt.lockUntil <= now
+      ? { count: 0, lockUntil: 0 }
+      : previousAttempt || { count: 0, lockUntil: 0 };
 
     if (attempt.lockUntil > now) {
       return res.status(429).json({
@@ -529,60 +560,46 @@ async function startServer() {
       });
     }
 
-    const { userId, username, password, role, level, modules } = req.body || {};
+    const { userId, username, password } = req.body || {};
     const targetUser = String(username || userId || '').trim();
-
-    if (!targetUser) {
+    const rejectCredentials = () => {
       attempt.count += 1;
       if (attempt.count >= 10) attempt.lockUntil = now + 5 * 60 * 1000;
       loginAttemptTracker.set(clientIp, attempt);
-      return res.status(400).json({ success: false, error: "Missing username or user_id" });
+      return res.status(401).json({ success: false, error: "Invalid credentials" });
+    };
+    if (!targetUser || typeof password !== "string" || !password.trim()) return rejectCredentials();
+
+    let dbUser;
+    try {
+      const { rows } = await pool.query(
+        `SELECT user_id, username, password, role, level, allowed_modules, status
+         FROM user_master
+         WHERE LOWER(TRIM(user_id::text)) = LOWER($1) OR LOWER(TRIM(username)) = LOWER($1)
+         ORDER BY (LOWER(TRIM(user_id::text)) = LOWER($1)) DESC
+         LIMIT 1`,
+        [targetUser],
+      );
+      dbUser = rows[0];
+    } catch (err) {
+      console.warn("Could not verify login against user_master:", err);
+      return res.status(503).json({ success: false, error: "Login service is unavailable" });
     }
-
-    let verifiedRole = String(role || "USER").toUpperCase();
-    let verifiedLevel = String(level || "L1").toUpperCase();
-    let verifiedModules = Array.isArray(modules) ? modules : ["*"];
-    let verifiedUserId = String(userId || targetUser);
-
-    // If password or database connection exists, verify credentials against user_master
-    if (password || supabase) {
-      const { data: dbUser } = await supabase
-        .from("user_master")
-        .select("user_id, username, password, role, level, allowed_modules, status")
-        .or(`username.ilike.${targetUser},user_id.ilike.${targetUser}`)
-        .limit(1)
-        .maybeSingle();
-
-      if (dbUser) {
-        if (dbUser.status && String(dbUser.status).toLowerCase() !== "active") {
-          return res.status(403).json({ success: false, error: "Account is inactive. Please contact administrator." });
-        }
-        if (password && String(dbUser.password || '').trim() !== String(password).trim()) {
-          attempt.count += 1;
-          if (attempt.count >= 10) attempt.lockUntil = now + 5 * 60 * 1000;
-          loginAttemptTracker.set(clientIp, attempt);
-          return res.status(401).json({ success: false, error: "Invalid credentials" });
-        }
-        verifiedUserId = dbUser.user_id || verifiedUserId;
-        verifiedRole = String(dbUser.role || "USER").toUpperCase();
-        verifiedLevel = String(dbUser.level || "L1").toUpperCase();
-        if (dbUser.allowed_modules) {
-          verifiedModules = String(dbUser.allowed_modules).split(',').map((x: string) => x.trim()).filter(Boolean);
-        }
-      } else if (password) {
-        attempt.count += 1;
-        if (attempt.count >= 10) attempt.lockUntil = now + 5 * 60 * 1000;
-        loginAttemptTracker.set(clientIp, attempt);
-        return res.status(401).json({ success: false, error: "Invalid credentials" });
-      }
+    if (!dbUser || String(dbUser.password || '').trim() !== password.trim()) return rejectCredentials();
+    if (dbUser.status && String(dbUser.status).trim().toLowerCase() !== "active") {
+      return res.status(403).json({ success: false, error: "Account is inactive. Please contact administrator." });
     }
+    const verifiedUserId = String(dbUser.user_id || targetUser);
+    const verifiedRole = String(dbUser.role || "USER").toUpperCase();
+    const verifiedLevel = String(dbUser.level || "L1").toUpperCase();
+    const verifiedModules = String(dbUser.allowed_modules || '*').split(',').map(value => value.trim()).filter(Boolean);
 
     loginAttemptTracker.delete(clientIp);
-    const token = `bjl_sess_${now}_${Math.random().toString(36).substring(2, 15)}`;
+    const token = `bjl_sess_${randomUUID()}`;
     const sessionRecord: ServerSessionRecord = {
       token,
       userId: verifiedUserId,
-      username: targetUser.toUpperCase(),
+      username: String(dbUser.username || targetUser),
       role: verifiedRole,
       level: verifiedLevel,
       modules: verifiedModules,
@@ -599,7 +616,7 @@ async function startServer() {
     });
   });
 
-  app.post(["/api/auth/verify", "/Jute-Purchase-Automation/api/auth/verify"], (req, res) => {
+  app.post(["/api/auth/verify", "/Jute-Purchase-Automation/api/auth/verify"], async (req, res) => {
     const authHeader = String(req.headers.authorization || "");
     const token =
       (authHeader.startsWith("Bearer ") ? authHeader.slice(7).trim() : "") ||
@@ -610,12 +627,31 @@ async function startServer() {
     }
 
     const record = activeSessionTokens.get(token);
-    if (!record || record.expiresAt < Date.now()) {
+    if (!record || record.expiresAt <= Date.now()) {
       activeSessionTokens.delete(token);
       return res.status(401).json({ valid: false, error: "Session token expired or invalid" });
     }
 
-    return res.json({ valid: true, session: record });
+    try {
+      const { rows } = await pool.query(
+        'SELECT username, role, level, allowed_modules, status FROM user_master WHERE user_id::text = $1',
+        [record.userId],
+      );
+      const account = rows[0];
+      if (!account || (account.status && String(account.status).trim().toLowerCase() !== 'active') ||
+          activeSessionTokens.get(token) !== record || record.expiresAt <= Date.now()) {
+        activeSessionTokens.delete(token);
+        return res.status(401).json({ valid: false, error: "Session token expired or invalid" });
+      }
+      record.username = String(account.username || record.userId);
+      record.role = String(account.role || "USER").toUpperCase();
+      record.level = String(account.level || "L1").toUpperCase();
+      record.modules = String(account.allowed_modules || '*').split(',').map(value => value.trim()).filter(Boolean);
+      return res.json({ valid: true, session: record });
+    } catch (err) {
+      console.warn("Could not verify session against user_master:", err);
+      return res.status(503).json({ valid: false, error: "Login service is unavailable" });
+    }
   });
 
   app.post(["/api/auth/logout", "/Jute-Purchase-Automation/api/auth/logout"], (req, res) => {
@@ -638,8 +674,11 @@ async function startServer() {
       const token =
         (authHeader.startsWith("Bearer ") ? authHeader.slice(7).trim() : "") ||
         String(req.headers["x-session-token"] || "").trim();
-      if (token && activeSessionTokens.has(token)) {
-        (req as any).userSession = activeSessionTokens.get(token);
+      const session = token ? activeSessionTokens.get(token) : undefined;
+      if (session && session.expiresAt <= Date.now()) {
+        activeSessionTokens.delete(token);
+      } else if (session) {
+        (req as any).userSession = session;
       }
     }
     next();

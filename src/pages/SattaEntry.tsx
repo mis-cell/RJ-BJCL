@@ -181,10 +181,10 @@ export default function SattaEntry({ initialData, onSave, onCancel }: { initialD
      handleSave();
   });
 
-  async function loadData() {
+  async function loadData(initializeForm = false) {
     try {
         // Pro-active Schema Check: Ensure Satta tables and columns exist in the live Supabase DB
-        if (supabase) {
+        if (initializeForm && supabase) {
           try {
             await supabase.rpc("exec_sql", {
               query: `
@@ -290,22 +290,10 @@ export default function SattaEntry({ initialData, onSave, onCancel }: { initialD
           const sorted = [...finalBaseRates].sort((a: any, b: any) => (b.start_date || '').localeCompare(a.start_date || ''));
           const targetDt = formData.b_date || formData.date || today;
           const eff = sorted.find((r: any) => r.start_date <= targetDt) || sorted[0];
-          if (eff && eff.base_rate) {
+          if (initializeForm && !initialData && eff?.base_rate) {
             setFormData(prev => ({
               ...prev,
               b_rate: prev.b_rate && prev.b_rate > 0 ? prev.b_rate : Number(eff.base_rate)
-            }));
-          }
-        }
-        if (finalBaseRates && finalBaseRates.length > 0) {
-          const sorted = [...finalBaseRates].sort((a: any, b: any) => (b.start_date || '').localeCompare(a.start_date || ''));
-          const targetDt = formData.b_date || formData.date || today;
-          const eff = sorted.find((r: any) => r.start_date <= targetDt) || sorted[sorted.length - 1];
-          if (eff && eff.base_rate) {
-            const activeBase = Number(eff.base_rate);
-            setFormData(prev => ({
-              ...prev,
-              b_rate: prev.b_rate && prev.b_rate > 0 ? prev.b_rate : activeBase
             }));
           }
         }
@@ -314,22 +302,20 @@ export default function SattaEntry({ initialData, onSave, onCancel }: { initialD
         }
 
         // Dynamic auto-increment for a new Satta entry
-        if (!initialData && allSattas && allSattas.length > 0) {
+        if (initializeForm && !initialData && allSattas?.length) {
           let lastNum = 152;
           allSattas.forEach((s: any) => {
             const sn = s.satta_no || '';
-            const num = parseInt(sn.replace(/[^0-9]/g, ''), 10);
+            const num = Number(String(sn).match(/\d+$/)?.[0] || 0);
             if (!isNaN(num) && num > lastNum) {
               lastNum = num;
             }
           });
           const nextNum = lastNum + 1;
           const formattedNum = String(nextNum).padStart(4, '0');
-          setFormData(prev => ({
-            ...prev,
-            satta_no: formattedNum,
-            session: `BJCL/2026-2027/${formattedNum}`
-          }));
+          setFormData(prev => prev.satta_no === '0152'
+            ? { ...prev, satta_no: formattedNum, session: `BJCL/2026-2027/${formattedNum}` }
+            : prev);
         }
       } catch(e) {
         console.error("Error loading Satta masters:", e);
@@ -337,10 +323,10 @@ export default function SattaEntry({ initialData, onSave, onCancel }: { initialD
   }
 
   useEffect(() => {
-    loadData();
-  }, []);
+    loadData(true);
+  }, [initialData]);
 
-  useLiveAutoRefresh(loadData, [], { tables: ['satta_master', 'satta_base_rates', 'satta_differentials', 'satta_calculated_rates'] });
+  useLiveAutoRefresh(() => loadData(), [], { skipInitialLoad: true, tables: ['satta_master', 'satta_base_rates', 'satta_differentials', 'satta_calculated_rates'] });
 
   const recalculateRowRate = (date: string, area: string, grade: string) => {
     if (!date || !area || !grade) return null;

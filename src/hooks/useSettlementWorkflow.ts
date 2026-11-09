@@ -2788,9 +2788,13 @@ export function useSettlementWorkflow({ onClose, onLogEvent }: { onClose?: () =>
     const cleanTarget = targetPo.trim().replace(/^#/, '');
     if (selectedPoData && String(selectedPoData.po_no || '').trim().replace(/^#/, '') === cleanTarget) return;
 
+    let cancelled = false;
     fetchPoAndItemDetails(cleanTarget, gradeMasterList, agencyMasterList).then(({ poData }) => {
-      if (poData) setSelectedPoData(poData);
+      if (!cancelled && poData) setSelectedPoData(poData);
+    }).catch(error => {
+      if (!cancelled) console.warn('Could not load settlement purchase order:', error);
     });
+    return () => { cancelled = true; };
   }, [masterData.po_no, selectedPoNo]);
 
   // Live Auto Calculations based on inputs

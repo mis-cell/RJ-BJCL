@@ -1,9 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
 import { pool } from './db.ts';
-import dotenv from 'dotenv';
-import path from 'path';
-
-dotenv.config({ path: path.resolve(__dirname, '../.env') });
 
 const SUPABASE_CLOUD_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || 'https://lxuapkccxaadwixjpirs.supabase.co';
 const SUPABASE_CLOUD_KEY = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY || '';

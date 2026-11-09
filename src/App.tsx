@@ -156,57 +156,26 @@ export default function App() {
         if (rawSession) {
           const sess = JSON.parse(rawSession);
           if (sess && sess.username) {
-            let verifiedRole = String(sess.role || "L1").toUpperCase();
-            let verifiedLevel = String(sess.level || "L1").toUpperCase();
-            let rawMods = sess.allowed_modules;
-
-            // Verify against backend session endpoint or authoritative user_master table
-            if (sess.token) {
-              try {
-                const verifyRes = await fetch(getApiUrl("/api/auth/verify"), {
-                  method: "POST",
-                  headers: {
-                    "Content-Type": "application/json",
-                    Authorization: `Bearer ${sess.token}`,
-                  },
-                  body: JSON.stringify({ token: sess.token }),
-                });
-                if (verifyRes.ok) {
-                  const vData = await verifyRes.json();
-                  if (vData?.valid && vData?.session) {
-                    verifiedRole = String(vData.session.role || verifiedRole).toUpperCase();
-                    verifiedLevel = String(vData.session.level || verifiedLevel).toUpperCase();
-                  }
-                }
-              } catch (_verifyErr) {}
+            const verifyRes = sess.token ? await fetch(getApiUrl("/api/auth/verify"), {
+              method: "POST",
+              headers: { Authorization: `Bearer ${sess.token}` },
+            }) : null;
+            if (verifyRes && verifyRes.status >= 500) throw new Error("Login service is unavailable");
+            const verified = verifyRes?.ok ? await verifyRes.json() : null;
+            if (!verified?.valid || !verified.session) {
+              await clearAuthSessionSelective();
+              if (isMounted) setSessionStatus("ready");
+              return;
             }
 
-            let verifiedUserId = String(sess.userId || sess.user_id || "").trim();
-            let verifiedUsername = String(sess.username || sess.userName || "").trim();
-
-            if (supabase && sess.username && sess.username.toUpperCase() !== "ADMIN") {
-              const { data: dbUser } = await supabase
-                .from("user_master")
-                .select("user_id, username, role, level, allowed_modules, status")
-                .or(`user_id.ilike.${sess.userId || sess.username},username.ilike.${sess.username}`)
-                .limit(1)
-                .maybeSingle();
-
-              if (dbUser) {
-                if (dbUser.status && String(dbUser.status).toLowerCase() !== "active") {
-                  await clearAuthSessionSelective();
-                  if (isMounted) setSessionStatus("ready");
-                  return;
-                }
-                verifiedUserId = String(dbUser.user_id || verifiedUserId).trim();
-                verifiedUsername = String(dbUser.username || verifiedUsername).trim();
-                verifiedRole = String(dbUser.role || verifiedRole).toUpperCase();
-                verifiedLevel = String(dbUser.level || verifiedLevel).toUpperCase();
-                rawMods = dbUser.allowed_modules ?? rawMods;
-              }
-            }
+            const verifiedRole = String(verified.session.role || "USER").toUpperCase();
+            const verifiedLevel = String(verified.session.level || "L1").toUpperCase();
+            const verifiedUserId = String(verified.session.userId || "").trim();
+            const verifiedUsername = String(verified.session.username || verifiedUserId).trim();
+            const rawMods = verified.session.modules;
 
             if (!isMounted) return;
+            localStorage.setItem("bally_session_token", sess.token);
             const isAdminUser =
               verifiedRole === "ADMIN" ||
               verifiedRole === "ADMINISTRATOR" ||
@@ -748,175 +717,50 @@ export default function App() {
     }
 
     try {
-      let data: any = null;
-
-      // 1. Try querying user_master in Supabase
-      if (supabase) {
-        const { data: remoteData, error } = await supabase
-          .from("user_master")
-          .select("*")
-          .or(`user_id.ilike.${trimmedUser},username.ilike.${trimmedUser}`)
-          .limit(1)
-          .maybeSingle();
-
-        if (!error && remoteData) {
-          data = remoteData;
-        }
+      const response = await fetch(getApiUrl("/api/auth/session"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: trimmedUser, password: cleanPass }),
+      });
+      const result = await response.json();
+      if (!response.ok || !result.session || !result.token) {
+        alert(result.error || "Could not verify credentials.");
+        return;
       }
 
-      // 2. Try querying local client dbModule if not found in Supabase
-      if (!data) {
-        try {
-          const localUsers = await dbModule.fetchAll('user_master');
-          if (Array.isArray(localUsers)) {
-            data = localUsers.find((u: any) => 
-              String(u.user_id || '').trim().toLowerCase() === trimmedUser.toLowerCase() ||
-              String(u.username || '').trim().toLowerCase() === trimmedUser.toLowerCase()
-            );
-          }
-        } catch (e) {}
+      const { userId, username, role, level, modules } = result.session;
+      const isAdminUser = role === "ADMIN" || role === "ADMINISTRATOR" || level === "L5" || level === "ADMIN";
+      const allowed = normalizeAllowedModules(modules);
+      const finalMods = allowed.length ? allowed : ["*"];
+
+      setIsAdmin(isAdminUser);
+      setUserRole(role);
+      setUserLevel(level);
+      setCurrentUserContext({
+        userId,
+        username,
+        userName: username,
+        userRole: role,
+        userLevel: level,
+        allowedModules: finalMods,
+      });
+      setAllowedModules(finalMods);
+      setIsLoggedIn(true);
+      setSelectedYear(year);
+      setCurrentPage(getFirstAllowedPage(finalMods, isAdminUser) as Page);
+
+      try {
+        localStorage.setItem("bally_session_token", result.token);
+        localStorage.setItem("bally_auth_session", JSON.stringify({
+          userId, username, role, level, allowed_modules: finalMods, year, token: result.token,
+        }));
+      } catch {}
+
+      if (supabase && userId) {
+        supabase.from('user_master').update({ last_login: new Date().toISOString() }).eq('user_id', userId).then(() => {});
       }
-
-      // 3. If user found in database (user_master), check database password
-      if (data) {
-        if (data.status && data.status.toLowerCase() !== "active") {
-          alert("Access denied: Your account is currently inactive. Please contact Administrator.");
-          return;
-        }
-
-        if (String(data.password || '') === cleanPass) {
-          const isAdminUser =
-            data.role?.toUpperCase() === "ADMIN" ||
-            data.role?.toUpperCase() === "ADMINISTRATOR" ||
-            data.level?.toUpperCase() === "L5" ||
-            data.level?.toUpperCase() === "ADMIN";
-
-          setIsAdmin(isAdminUser);
-          setUserRole(data.role?.toUpperCase() || "L1");
-          setUserLevel(data.level?.toUpperCase() || "L1");
-          const rawMods = data.allowed_modules;
-          const modules = (rawMods !== undefined && rawMods !== null && String(rawMods).trim() !== "" && String(rawMods).trim() !== "[]")
-            ? normalizeAllowedModules(rawMods)
-            : ["*"];
-          const finalMods = modules.length === 0 ? ["*"] : modules;
-
-          setCurrentUserContext({
-            userId: data.user_id || data.username,
-            username: data.username || data.user_id,
-            userName: data.username || data.user_id,
-            userRole: data.role?.toUpperCase() || "L1",
-            userLevel: data.level?.toUpperCase() || "L1",
-            allowedModules: finalMods,
-          });
-
-          setAllowedModules(finalMods);
-          setIsLoggedIn(true);
-          setSelectedYear(year);
-
-          const firstLanding = getFirstAllowedPage(finalMods, isAdminUser) as Page;
-          setCurrentPage(firstLanding);
-
-          // Issue backend session token and persist session
-          let issuedToken = "";
-          try {
-            const sessRes = await fetch(getApiUrl("/api/auth/session"), {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                userId: data.user_id,
-                username: data.username,
-                role: data.role?.toUpperCase() || "L1",
-                level: data.level?.toUpperCase() || "L1",
-                modules: finalMods,
-              }),
-            });
-            if (sessRes.ok) {
-              const sJson = await sessRes.json();
-              issuedToken = sJson?.token || "";
-            }
-          } catch (_e) {}
-
-          try {
-            if (issuedToken) localStorage.setItem("bally_session_token", issuedToken);
-            localStorage.setItem("bally_auth_session", JSON.stringify({
-              userId: data.user_id,
-              username: data.username,
-              role: data.role?.toUpperCase() || "L1",
-              level: data.level?.toUpperCase() || "L1",
-              allowed_modules: data.allowed_modules || "*",
-              year: year,
-              token: issuedToken,
-            }));
-          } catch (e) {}
-
-          // Update last login timestamp in database
-          if (supabase && data.user_id) {
-            supabase.from('user_master').update({ last_login: new Date().toISOString() }).eq('user_id', data.user_id).then(() => {});
-          }
-          
-          logEvent(
-            "LOGIN_HISTORY",
-            `Operator account: ${data.username} [Role: ${data.role || "USER"}] successfully logged in under session year: ${year}`,
-          );
-          setSessionStatus('ready');
-          return;
-        } else {
-          alert("Access denied: Invalid password entered for " + (data.username || trimmedUser) + ".");
-          return;
-        }
-      }
-
-      // 4. Master Admin Fallback (only if user not found in database)
-      if (trimmedUser.toLowerCase() === "admin") {
-        if (cleanPass === "Admin@4321" || cleanPass === "Admin@1234" || cleanPass === "ADMIN") {
-          setIsAdmin(true);
-          setUserRole("ADMIN");
-          setUserLevel("ADMIN");
-          setIsLoggedIn(true);
-          setSelectedYear(year);
-          setAllowedModules(["*"]);
-          setCurrentPage("dashboard");
-          setCurrentUserContext({ userId: "admin", username: "ADMIN", userName: "ADMIN", userRole: "ADMIN", userLevel: "ADMIN", allowedModules: ["*"] });
-          let issuedToken = "";
-          try {
-            const sessRes = await fetch(getApiUrl("/api/auth/session"), {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                userId: "admin",
-                username: "ADMIN",
-                role: "ADMIN",
-                level: "ADMIN",
-                modules: ["*"],
-              }),
-            });
-            if (sessRes.ok) {
-              const sJson = await sessRes.json();
-              issuedToken = sJson?.token || "";
-            }
-          } catch (_e) {}
-          try {
-            if (issuedToken) localStorage.setItem("bally_session_token", issuedToken);
-            localStorage.setItem("bally_auth_session", JSON.stringify({
-              userId: "admin",
-              username: "ADMIN",
-              role: "ADMIN",
-              level: "ADMIN",
-              allowed_modules: "*",
-              year: year,
-              token: issuedToken,
-            }));
-          } catch (e) {}
-          logEvent(
-            "LOGIN_HISTORY",
-            `Administrator fallback login verified under session year: ${year}`,
-          );
-          setSessionStatus('ready');
-          return;
-        }
-      }
-
-      alert("Invalid system credentials. User not found.");
+      logEvent("LOGIN_HISTORY", `Operator account: ${username} [Role: ${role}] logged in under session year: ${year}`);
+      setSessionStatus('ready');
     } catch (err) {
       console.error("Login fault:", err);
       alert("Internal security fault. Verify DB connection.");

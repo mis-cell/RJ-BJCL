@@ -59,18 +59,21 @@ async function runRegressionTests() {
   });
 
   // Points 7-11: Transactional saves for PO, Sauda, Satta, Inspection, Payment, Material Issue
-  check('REG-03', '7-11', 'PO, Sauda, Satta, Inspection, Payment, and MaterialIssue use executeTransaction', () => {
+  check('REG-03', '7-11', 'PO, Sauda, Satta, Inspection, Payment, and Material Issue have transactional save paths', () => {
     const poSrc = readSource('src/services/poService.ts');
     const saudaSrc = readSource('src/pages/SaudaEntry.tsx');
     const sattaSrc = readSource('src/pages/SattaEntry.tsx');
-    const inspSrc = readSource('src/components/inspection/useInspectionLogic.ts');
+    const inspSrc = readSource('src/components/inspection/inspectionSaveService.ts');
+    const dbSrc = readSource('src/lib/serverPostgresDb.ts');
+    const inspectionTransaction = dbSrc.slice(dbSrc.indexOf('async function saveMillInspection'), dbSrc.indexOf('export async function executeRpc'));
     const paySrc = readSource('src/components/payment/usePaymentData.ts');
     const issueSrc = readSource('src/pages/MaterialIssue.tsx');
     return (
       poSrc.includes('executeTransaction') &&
       saudaSrc.includes('executeTransaction') &&
       sattaSrc.includes('executeTransaction') &&
-      inspSrc.includes('executeTransaction') &&
+      inspSrc.includes('rpc("save_mill_inspection"') &&
+      ['BEGIN', 'COMMIT', 'ROLLBACK'].every(command => inspectionTransaction.includes(`client.query('${command}')`)) &&
       paySrc.includes('executeTransaction') &&
       issueSrc.includes('executeTransaction')
     );
@@ -99,7 +102,10 @@ async function runRegressionTests() {
   // Point 13: Payment deletion atomic + status recomputation
   check('REG-05', '13', 'Payment deletion uses atomic transaction and recomputes linked MR/PO payment status', () => {
     const paySrc = readSource('src/components/payment/usePaymentData.ts');
-    return paySrc.includes('DELETE FROM payment_details WHERE voucher_no =') && paySrc.includes('recomputed');
+    const deletion = paySrc.slice(paySrc.indexOf('const handleDeletePayment'), paySrc.indexOf('const handleEditPayment'));
+    return /await dbModule\.executeTransaction\(\[[\s\S]*DELETE FROM payment_details[\s\S]*DELETE FROM payment_master/.test(deletion) &&
+      deletion.includes('payment_status: newMrStatus') &&
+      deletion.includes('payment_status: newPoStatus');
   });
 
   // Point 14: Exact MR matching in MrSettlement
@@ -139,8 +145,8 @@ async function runRegressionTests() {
   // Points 19-21: Print weights, financial year preservation, ClosingStockEntry navigation isolation
   check('REG-10', '19-21', 'PO PDF generator uses explicit weights, forms preserve financial_year, and ClosingStockEntry has isolated tab state', () => {
     const pdfSrc = readSource('src/utils/purchaseOrderPdfGenerator.ts');
-    const appSrc = readSource('src/App.tsx');
-    return !pdfSrc.includes('* 0.18') && appSrc.includes("case 'closing_stock_entry':");
+    const routerSrc = readSource('src/components/layout/AppPageRouter.tsx');
+    return !pdfSrc.includes('* 0.18') && /case ["']closing_stock_entry["']:/.test(routerSrc);
   });
 
   // Point 22: Restricted canEditOrDelete
@@ -179,12 +185,14 @@ async function runRegressionTests() {
   // Points 34-40, 43-45: Accurate reports, real ConfigGuide sync, TredeReport directory, TolerancePolicy zero-tolerance & strict save, Reports Blob CSV
   check('REG-14', '34-40,43-45', 'Reports deduplicate aliases, ConfigGuide runs real DB sync, TredeReport is Trader Directory, TolerancePolicy preserves 0%, Reports uses exportToCSV', () => {
     const cfgSrc = readSource('src/pages/ConfigGuide.tsx');
-    const tredeSrc = readSource('src/pages/TredeReport.tsx');
+    const directorySrc = readSource('src/pages/DirectoryView.tsx');
+    const routerSrc = readSource('src/components/layout/AppPageRouter.tsx');
     const tolSrc = readSource('src/services/tolerancePolicyService.ts');
     const repSrc = readSource('src/pages/Reports.tsx');
     return (
       !cfgSrc.includes('BENGAL BALING CO.') &&
-      tredeSrc.includes('supply_master') &&
+      directorySrc.includes("fetchAll('supply_master'") &&
+      routerSrc.includes('type="vyapari"') &&
       !tolSrc.includes('Number(d.tolerance_pct) || 5.0') &&
       repSrc.includes('exportToCSV(')
     );

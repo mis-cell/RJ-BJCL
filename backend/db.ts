@@ -1,12 +1,12 @@
 import pg from 'pg';
 import dotenv from 'dotenv';
-import path from 'path';
+import { fileURLToPath } from 'node:url';
 
 // Force node-postgres to return DATE (1082) and TIMESTAMP (1114) as raw strings
 pg.types.setTypeParser(1082, (val: string) => val);
 pg.types.setTypeParser(1114, (val: string) => val);
 
-dotenv.config({ path: path.resolve(__dirname, '../.env') });
+dotenv.config({ path: fileURLToPath(new URL('../.env', import.meta.url)) });
 
 const { Pool } = pg;
 
@@ -17,6 +17,10 @@ export const pool = new Pool({
   database: process.env.PGDATABASE || 'bjcl_db',
   user: process.env.PGUSER || 'postgres',
   password: process.env.PGPASSWORD || '',
+});
+
+pool.on('error', (err) => {
+  console.error('[Local PostgreSQL] Idle connection error:', err.message);
 });
 
 // Test local database connection on startup

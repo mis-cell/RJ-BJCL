@@ -38,3 +38,12 @@ export const formatDisplayDate = (dStr: any): string => {
   }
   return String(dStr);
 };
+
+export const parseSavedInspectionRows = (breakdown: unknown): any[] => {
+  try {
+    const rows = typeof breakdown === 'string' ? JSON.parse(breakdown) : breakdown;
+    return Array.isArray(rows) ? rows.filter(row => row && typeof row === 'object') : [];
+  } catch {
+    return [];
+  }
+};

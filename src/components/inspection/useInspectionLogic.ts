@@ -21,7 +21,6 @@ import {
 } from "../../utils/inspectionCalculations";
 import { parseMonthKey } from "../common/MonthWiseCardsRibbon";
 import {
-  checkAndProcessReturnLorryOnInspection,
   calculateInspectionWeightMt,
   fetchAllReturnLorries,
 } from "../../services/returnLorryService";
@@ -605,7 +604,7 @@ export function useInspectionLogic() {
         return rec;
       });
 
-      // Enrich with saved Return Lorry (4000 series) records & auto-sync any new < 5 MT lorries
+      // Enrich with Return Lorry records without changing them during register refresh
       try {
         const returnLorries = await fetchAllReturnLorries();
         const rlByMr = new Map<string, any>();
@@ -624,31 +623,7 @@ export function useInspectionLogic() {
             if (!Number((rec as any).received_weight_mt) && Number(matchedRl.received_weight_mt) > 0) {
               (rec as any).received_weight_mt = Number(matchedRl.received_weight_mt);
             }
-          } else if ((rec as any).is_return_lorry && rec.po_no && k) {
-            // Auto-process in background so 4000-series P.O. is created in return_lorry
-            checkAndProcessReturnLorryOnInspection({
-              mrNo: k,
-              poNo: rec.po_no,
-              arrivalNo: rec.arrival_no || k,
-              lorryNo: rec.lorry_number,
-              inspectionDate: rec.mr_date || rec.arrival_date,
-              headerForm: rec,
-            }).then(res => {
-              if (res.isReturnLorry && res.newPoNo) {
-                setRecords(prev =>
-                  prev.map(r =>
-                    String(r.mr_no || "").trim().toUpperCase() === k
-                      ? ({
-                          ...r,
-                          is_return_lorry: true,
-                          return_po_no: res.newPoNo,
-                          reference_po_no: res.referencePoNo || r.po_no,
-                        } as any)
-                      : r
-                  )
-                );
-              }
-            }).catch(() => {});
+
           }
         }
       } catch (e) {}

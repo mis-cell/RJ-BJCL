@@ -80,8 +80,7 @@ export function useLiveAutoRefresh(
   const callbackRef = useRef(refreshCallback);
   const debounceTimerRef = useRef<any>(null);
   const isExecutingRef = useRef<boolean>(false);
-  const hasPendingExecutionRef = useRef<boolean>(false);
-  const generationRef = useRef<number>(0);
+  const pendingExecutionRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     callbackRef.current = refreshCallback;
@@ -94,33 +93,28 @@ export function useLiveAutoRefresh(
     initGlobalRealtimeMultiplexer();
 
     let isSubscribed = true;
-    generationRef.current += 1;
-    const currentGen = generationRef.current;
-
     const executeCallback = async (payload?: any) => {
-      if (!isSubscribed || currentGen !== generationRef.current) return;
+      if (!isSubscribed) return;
       if (isExecutingRef.current) {
-        hasPendingExecutionRef.current = true;
+        pendingExecutionRef.current = () => { void executeCallback(payload); };
         return;
       }
 
       isExecutingRef.current = true;
-      hasPendingExecutionRef.current = false;
       try {
         await callbackRef.current(payload);
       } catch (e) {
         console.warn('[Realtime Auto Refresh] Error executing callback:', e);
       } finally {
         isExecutingRef.current = false;
-        if (isSubscribed && currentGen === generationRef.current && hasPendingExecutionRef.current) {
-          hasPendingExecutionRef.current = false;
-          executeCallback();
-        }
+        const pending = pendingExecutionRef.current;
+        pendingExecutionRef.current = null;
+        pending?.();
       }
     };
 
     const triggerDebounced = (payload?: any) => {
-      if (!isSubscribed || currentGen !== generationRef.current) return;
+      if (!isSubscribed) return;
       if (debounceTimerRef.current) {
         clearTimeout(debounceTimerRef.current);
       }
@@ -172,6 +166,6 @@ export function useLiveAutoRefresh(
       window.removeEventListener('app-data-updated', handleCustomEvent);
       window.removeEventListener('app:data-updated', handleCustomEvent);
     };
-  }, [enabled, JSON.stringify(tables), debounceMs, ...deps]);
+  }, [enabled, JSON.stringify(tables), debounceMs, skipInitialLoad, ...deps]);
 }
 

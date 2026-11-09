@@ -1,3 +1,4 @@
+import { differenceInCalendarDays } from 'date-fns';
 import { PaymentDetailColumn, emptyDetailColumn } from '../types/payment.types';
 import { calculateSattaDeduction } from '../services/sattaCalculation';
 export { calculateSattaDeduction };
@@ -27,13 +28,14 @@ export const calculateDeliveryDelayDays = (
   const parseToMidnight = (dStr: string): Date | null => {
     const clean = String(dStr).trim();
     if (!clean) return null;
-    if (/^\d{4}-\d{2}-\d{2}/.test(clean)) {
-      const [y, m, d] = clean.split('T')[0].split('-').map(Number);
-      return new Date(y, m - 1, d);
-    }
+    const iso = clean.match(/^(\d{4})-(\d{2})-(\d{2})(?:$|[T ])/);
     const dmy = clean.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})/);
-    if (dmy) {
-      return new Date(Number(dmy[3]), Number(dmy[2]) - 1, Number(dmy[1]));
+    if (iso || dmy) {
+      const [year, month, day] = (iso ? iso.slice(1) : dmy!.slice(1).reverse()).map(Number);
+      const date = new Date(year, month - 1, day);
+      return date.getFullYear() === year && date.getMonth() === month - 1 && date.getDate() === day
+        ? date
+        : null;
     }
     const d = new Date(clean);
     if (isNaN(d.getTime())) return null;
@@ -44,9 +46,7 @@ export const calculateDeliveryDelayDays = (
   const arr = parseToMidnight(arrivalDate);
   if (!due || !arr) return 0;
 
-  const diffMs = arr.getTime() - due.getTime();
-  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-  return diffDays > 0 ? diffDays : 0;
+  return Math.max(0, differenceInCalendarDays(arr, due));
 };
 
 export const calculateDeliveryClaimPenalty = (

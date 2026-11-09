@@ -4,6 +4,15 @@
  * Dispatches queries to Express backend /api/db which executes parameterized SQL on PostgreSQL.
  */
 
+export function getDatabaseSessionHeaders(): Record<string, string> {
+  try {
+    const token = typeof window !== 'undefined' ? window.localStorage.getItem('bally_session_token') : null;
+    return token ? { 'X-Session-Token': token } : {};
+  } catch {
+    return {};
+  }
+}
+
 export interface FilterCondition {
   column: string;
   op: 'eq' | 'neq' | 'gt' | 'gte' | 'lt' | 'lte' | 'like' | 'ilike' | 'is' | 'in';
@@ -182,6 +191,7 @@ export class LocalQueryBuilder<T = any> implements PromiseLike<{ data: T[] | nul
       const res = await fetch(endpoint, {
         method: 'POST',
         headers: {
+          ...getDatabaseSessionHeaders(),
           'Content-Type': 'application/json',
           'Accept': 'application/json'
         },
@@ -254,7 +264,7 @@ export class LocalPostgresClient {
     try {
       const res = await fetch('/api/db/rpc', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { ...getDatabaseSessionHeaders(), 'Content-Type': 'application/json' },
         body: JSON.stringify({ func: funcName, args })
       });
       if (!res.ok) {

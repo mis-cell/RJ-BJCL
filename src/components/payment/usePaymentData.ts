@@ -1474,6 +1474,7 @@ export function usePaymentData(onSaveSuccess?: () => void) {
     if (!window.confirm(`Are you sure you want to delete Payment Voucher ${voucherNo}?`)) return;
 
     setLoading(true);
+    let deleted = false;
     try {
       const targetVoucher = String(voucherNo || '').trim();
       const targetPayment = paymentList.find(
@@ -1483,63 +1484,23 @@ export function usePaymentData(onSaveSuccess?: () => void) {
       const linkedMrNo = String(targetPayment?.mr_no || targetPayment?.arrival_no || '').trim();
       const linkedPoNo = String(targetPayment?.po_no || '').trim();
 
-      // 1. Invalidate caches upfront so queries don't return stale data
-      dbModule.invalidateCache('payment_master');
-      dbModule.invalidateCache('payment_details');
+      if (!targetVoucher) throw new Error('Payment voucher number is required');
 
-      // 2. Direct Supabase Deletion for payment_details & payment_master by payment_id & voucher_no
-      if (supabase) {
-        if (paymentId) {
-          await supabase.from('payment_details').delete().eq('payment_id', paymentId);
-          await supabase.from('payment_master').delete().eq('payment_id', paymentId);
-        }
-        await supabase
-          .from('payment_details')
-          .delete()
-          .or(`voucher_no.eq.${targetVoucher},voucher_no.ilike.${targetVoucher}`);
+      const esc = (value: string) => `'${value.replace(/'/g, "''")}'`;
+      const voucherFilter = `LOWER(TRIM(voucher_no)) = LOWER(TRIM(${esc(targetVoucher)}))`;
+      const filter = paymentId ? `payment_id = ${esc(paymentId)} OR ${voucherFilter}` : voucherFilter;
+      await dbModule.executeTransaction([
+        `DELETE FROM payment_details WHERE ${filter};`,
+        `DELETE FROM payment_master WHERE ${filter};`,
+      ]);
+      deleted = true;
 
-        await supabase
-          .from('payment_master')
-          .delete()
-          .or(`voucher_no.eq.${targetVoucher},voucher_no.ilike.${targetVoucher}`);
-      }
-
-      // 3. Fallback SQL Transaction via exec_sql RPC
-      try {
-        const esc = (v: string) => `'${v.replace(/'/g, "''")}'`;
-        const sqls: string[] = [];
-        if (paymentId) {
-          sqls.push(`DELETE FROM payment_details WHERE payment_id = ${esc(paymentId)};`);
-          sqls.push(`DELETE FROM payment_master WHERE payment_id = ${esc(paymentId)};`);
-        }
-        sqls.push(`DELETE FROM payment_details WHERE LOWER(TRIM(voucher_no)) = LOWER(TRIM(${esc(targetVoucher)}));`);
-        sqls.push(`DELETE FROM payment_master WHERE LOWER(TRIM(voucher_no)) = LOWER(TRIM(${esc(targetVoucher)}));`);
-
-        await dbModule.executeTransaction(sqls);
-      } catch (e) {
-        console.warn("SQL transaction fallback deletion notice:", e);
-      }
-
-      // 4. Invalidate caches again and clear dataCache
-      dbModule.invalidateCache('payment_master');
-      dbModule.invalidateCache('payment_details');
-      dbModule.invalidateCache();
-
-      // 5. Optimistically update local React state
-      setPaymentList((prev) =>
-        prev.filter((p) => {
-          const vStr = String(p.voucher_no || '').trim().toUpperCase();
-          const pId = p.payment_id;
-          if (paymentId && pId && pId === paymentId) return false;
-          return vStr !== targetVoucher.toUpperCase();
-        })
-      );
-
-      // 6. Recompute linked MR & PO payment status from remaining active payments
+      // Recompute linked MR and PO status from the remaining active payments.
       if (supabase && (linkedMrNo || linkedPoNo)) {
-        const { data: remainingPayments } = await supabase
+        const { data: remainingPayments, error: remainingPaymentsError } = await supabase
           .from('payment_master')
-          .select('voucher_no, mr_no, arrival_no, po_no, paid_amount, payable_amt, total_amount, status');
+          .select('payment_id, voucher_no, mr_no, arrival_no, po_no, paid_amount, payable_amt, total_amount, status');
+        if (remainingPaymentsError) throw new Error(remainingPaymentsError.message);
 
         const activeRemaining = (remainingPayments || []).filter((p: any) => {
           const st = String(p.status || '').trim().toLowerCase();
@@ -1565,7 +1526,8 @@ export function usePaymentData(onSaveSuccess?: () => void) {
               : mrPayable > 0 && mrPaidSum >= mrPayable
               ? 'Paid'
               : 'Partially Paid';
-          await supabase.from('final_arrival').update({ payment_status: newMrStatus }).eq('mr_no', linkedMrNo);
+          const { error } = await supabase.from('final_arrival').update({ payment_status: newMrStatus }).eq('mr_no', linkedMrNo);
+          if (error) throw new Error(error.message);
         }
 
         if (linkedPoNo) {
@@ -1580,14 +1542,20 @@ export function usePaymentData(onSaveSuccess?: () => void) {
               : poPayable > 0 && poPaidSum >= poPayable
               ? 'Paid'
               : 'Partially Paid';
-          await supabase.from('purchase_master').update({ payment_status: newPoStatus }).eq('po_no', linkedPoNo);
+          const { error } = await supabase.from('purchase_master').update({ payment_status: newPoStatus }).eq('po_no', linkedPoNo);
+          if (error) throw new Error(error.message);
         }
       }
 
       setSuccessMessage(`Payment Voucher ${voucherNo} deleted from Database.`);
       await initPage();
     } catch (e: any) {
-      setErrorMessage(e.message || "Failed to delete payment.");
+      if (deleted) {
+        await initPage();
+        setErrorMessage(`Payment was deleted, but linked payment status could not be refreshed: ${e.message}`);
+      } else {
+        setErrorMessage(e.message || "Failed to delete payment.");
+      }
     } finally {
       setLoading(false);
     }
