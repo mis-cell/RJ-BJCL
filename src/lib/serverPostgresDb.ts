@@ -906,6 +906,35 @@ async function ensureDatabaseIntegrity() {
             "remarks" = 'Excess Weight Deduction: Deductible 36.35 Qtl at ₹600/Qtl = ₹21,810.00.'
         WHERE "po_no" = 'BJCL/2026-2027/0532'
       `);
+      await client.query(`
+        WITH dedup_grid AS (
+          SELECT DISTINCT
+            mi."id",
+            COALESCE(elem->>'grade', elem->>'jute_grade', elem->>'actual_grade', '') AS grade_key,
+            COALESCE(elem->>'percentage', elem->>'actual_pct', '0') AS pct_key,
+            NULLIF(REGEXP_REPLACE(COALESCE(elem->>'final_receipt_wt', '0'), '[^0-9.-]', '', 'g'), '')::numeric AS wt_val
+          FROM "material_inspection" mi,
+               jsonb_array_elements(
+                 CASE
+                   WHEN jsonb_typeof(mi."grid_details"::jsonb) = 'array' THEN mi."grid_details"::jsonb
+                   ELSE '[]'::jsonb
+                 END
+               ) AS elem
+          WHERE COALESCE(mi."final_receipt_wt", 0) <= 0
+            AND mi."grid_details" IS NOT NULL
+        ),
+        summed AS (
+          SELECT "id", ROUND(SUM(COALESCE(wt_val, 0)), 3) AS total_final_wt
+          FROM dedup_grid
+          WHERE COALESCE(wt_val, 0) > 0
+          GROUP BY "id"
+        )
+        UPDATE "material_inspection" m
+        SET "final_receipt_wt" = s.total_final_wt
+        FROM summed s
+        WHERE m."id" = s."id"
+          AND s.total_final_wt > 0
+      `);
       await client.query('COMMIT');
     } catch (_) {
       await client.query('ROLLBACK').catch(() => {});

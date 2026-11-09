@@ -634,11 +634,87 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
           return diffDays > 0 ? diffDays : 0;
         };
 
-        const getArrivalWeightQtl = (...records: any[]): number => {
-          for (const rec of records) {
+        const toQtlFromRawWt = (val: any): number => {
+          const w = Number(val || 0);
+          if (!Number.isFinite(w) || w <= 0) return 0;
+          if (w > 500) return Number((w / 100).toFixed(2)); // kg -> Qtl
+          if (w <= 50) return Number((w * 10).toFixed(2));  // MT -> Qtl
+          return Number(w.toFixed(2));                      // already Qtl
+        };
+
+        const getMaterialInspectionFinalReceiptQtl = (
+          miRecord: any,
+          mrNoStr?: string,
+          ...fallbackRecords: any[]
+        ): number => {
+          const coreDig = extractCoreDigits(mrNoStr || miRecord?.mr_no || miRecord?.arrival_no);
+          const insp =
+            miRecord ||
+            rawMatInsp.find((m: any) => {
+              if (mrNoStr && String(m.mr_no || '').trim().toUpperCase() === mrNoStr.toUpperCase()) return true;
+              if (coreDig && extractCoreDigits(m.mr_no || m.arrival_no) === coreDig) return true;
+              return false;
+            });
+
+          if (insp) {
+            // 1. Check top-level final_receipt_wt from material_inspection
+            const topFinalQtl = toQtlFromRawWt(insp.final_receipt_wt ?? insp.total_final_receipt_wt);
+
+            // 2. Also sum final_receipt_wt from embedded grid_details / material_inspection_details for this MR
+            let gridItems: any[] = [];
+            if (insp.grid_details) {
+              try {
+                const parsed = typeof insp.grid_details === 'string' ? JSON.parse(insp.grid_details) : insp.grid_details;
+                if (Array.isArray(parsed)) gridItems = parsed;
+              } catch (_) {}
+            }
+            if (gridItems.length === 0 && insp.details) {
+              try {
+                const parsed = typeof insp.details === 'string' ? JSON.parse(insp.details) : insp.details;
+                if (Array.isArray(parsed)) gridItems = parsed;
+              } catch (_) {}
+            }
+            if (gridItems.length === 0 && coreDig) {
+              gridItems = rawMillInspDetails.filter(
+                (d: any) => extractCoreDigits(d.mr_no) === coreDig
+              );
+            }
+
+            let sumGridFinalQtl = 0;
+            if (gridItems.length > 0) {
+              const seenSrl = new Set<string>();
+              gridItems.forEach((it: any, idx: number) => {
+                if (!it || typeof it !== 'object') return;
+                if (coreDig && it.mr_no && extractCoreDigits(it.mr_no) !== coreDig) return;
+                const itemFinalQtl = toQtlFromRawWt(it.final_receipt_wt ?? it.reduced_weight ?? it.netto_pnto ?? 0);
+                if (itemFinalQtl <= 0) return;
+                const srl =
+                  it.srl_no !== undefined && it.srl_no !== null && String(it.srl_no).trim() !== ''
+                    ? `SRL_${String(it.srl_no).trim()}`
+                    : `ROW_${idx}_${itemFinalQtl}`;
+                if (seenSrl.has(srl)) return;
+                seenSrl.add(srl);
+                sumGridFinalQtl += itemFinalQtl;
+              });
+              sumGridFinalQtl = Number(sumGridFinalQtl.toFixed(2));
+            }
+
+            if (topFinalQtl > 0 && (sumGridFinalQtl <= 0 || Math.abs(topFinalQtl - sumGridFinalQtl) <= 0.5)) {
+              return topFinalQtl;
+            }
+            if (sumGridFinalQtl > 0) {
+              return sumGridFinalQtl;
+            }
+            if (topFinalQtl > 0) {
+              return topFinalQtl;
+            }
+          }
+
+          // Fallback only if material_inspection record has no final_receipt_wt yet
+          for (const rec of [insp, ...fallbackRecords]) {
             if (!rec) continue;
-            const qtl = Number(rec.weight_qtl || 0);
-            if (qtl > 0) return Number(qtl.toFixed(2));
+            const fQtl = toQtlFromRawWt(rec.final_receipt_wt ?? rec.reduced_weight ?? rec.weight_qtl);
+            if (fQtl > 0) return fQtl;
             const rawWt = Number(
               rec.electronic_net_weight ||
               rec.supplier_net_weight ||
@@ -649,11 +725,8 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
               ((Number(rec.actual_gross_weight) || 0) - (Number(rec.actual_tare_weight) || 0)) ||
               0
             );
-            if (rawWt > 0) {
-              if (rawWt > 500) return Number((rawWt / 100).toFixed(2));
-              if (rawWt <= 50) return Number((rawWt * 10).toFixed(2));
-              return Number(rawWt.toFixed(2));
-            }
+            const fallbackQtl = toQtlFromRawWt(rawWt);
+            if (fallbackQtl > 0) return fallbackQtl;
           }
           return 0;
         };
@@ -689,11 +762,15 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
 
           // Match against Mill Inspection / Settlement by core digits if not already MR series
           const coreDigits = extractCoreDigits(resolvedMrNo);
-          if (!isMrSeries(resolvedMrNo) && coreDigits) {
+          let resolvedMi = mi;
+          if (coreDigits) {
             const matchedInsp = rawMatInsp.find((m: any) => isMrSeries(m.mr_no) && extractCoreDigits(m.mr_no) === coreDigits);
             const matchedSett = rawSettlements.find((s: any) => isMrSeries(s.mr_no) && extractCoreDigits(s.mr_no) === coreDigits);
-            if (matchedInsp?.mr_no) resolvedMrNo = matchedInsp.mr_no;
-            else if (matchedSett?.mr_no) resolvedMrNo = matchedSett.mr_no;
+            if (!resolvedMi && matchedInsp) resolvedMi = matchedInsp;
+            if (!isMrSeries(resolvedMrNo)) {
+              if (matchedInsp?.mr_no) resolvedMrNo = matchedInsp.mr_no;
+              else if (matchedSett?.mr_no) resolvedMrNo = matchedSett.mr_no;
+            }
           }
 
           // Convert any remaining AR prefix to Mill Inspection Number (MR prefix)
@@ -705,7 +782,7 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
           const rawPoNo = String(
             tmr?.po_no ||
             fa?.po_no ||
-            mi?.po_no ||
+            resolvedMi?.po_no ||
             sett?.po_no ||
             ''
           ).trim();
@@ -719,7 +796,7 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
             tmr?.arrival_date ||
             fa?.date ||
             fa?.arrival_date ||
-            mi?.arrival_date ||
+            resolvedMi?.arrival_date ||
             sett?.arrival_date ||
             sett?.mr_date ||
             ''
@@ -728,24 +805,25 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
           const deliveryToDate = String(
             poInfo?.deliveryTo ||
             fa?.delivery_to ||
-            mi?.delivery_to ||
+            resolvedMi?.delivery_to ||
             ''
           ).split('T')[0];
 
           const poDate = String(
             poInfo?.poDate ||
             fa?.po_date ||
-            mi?.po_date ||
+            resolvedMi?.po_date ||
             sett?.po_date ||
             ''
           ).split('T')[0];
 
           const penaltyRate = Number(poInfo?.deliveryPenaltyRate || 0);
-          const weightQtl = getArrivalWeightQtl(tmr, fa, mi, sett);
+          // Weight (in Quintal) taken from table "material_inspection" and field "final_receipt_wt"
+          const weightQtl = getMaterialInspectionFinalReceiptQtl(resolvedMi, resolvedMrNo, fa, tmr, sett);
 
           let detentionDays = calcDelayDays(deliveryToDate, tempArrivalDate);
           if (detentionDays === 0 && !deliveryToDate) {
-            detentionDays = Number(sett?.detention_days || fa?.detention_days || mi?.detention_days || 0);
+            detentionDays = Number(sett?.detention_days || fa?.detention_days || resolvedMi?.detention_days || 0);
           }
 
           const calculatedClaimAmt = (detentionDays > 0 && penaltyRate > 0 && weightQtl > 0)

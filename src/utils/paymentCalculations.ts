@@ -586,18 +586,76 @@ export async function resolvePaymentDeductionsForPoAndMr(params: {
     }
   }
 
-  // Resolve weight in Quintals
+  // Resolve weight in Quintals — prioritize material_inspection.final_receipt_wt
+  const toQtlFromRawWt = (val: any): number => {
+    const num = Number(val || 0);
+    if (!Number.isFinite(num) || num <= 0) return 0;
+    if (num > 500) return Math.round((num / 100) * 100) / 100; // kg -> Qtl
+    if (num > 30) return Math.round(num * 100) / 100;          // already Qtl
+    return Math.round(num * 10 * 100) / 100;                   // MT -> Qtl
+  };
+
+  const extractFinalReceiptQtlFromInsp = (inspObj: any): number => {
+    if (!inspObj) return 0;
+    const directQtl = toQtlFromRawWt(inspObj.final_receipt_wt);
+    if (directQtl > 0) return directQtl;
+    let gridArr: any[] = [];
+    if (Array.isArray(inspObj.grid_details)) {
+      gridArr = inspObj.grid_details;
+    } else if (typeof inspObj.grid_details === 'string' && inspObj.grid_details.trim().startsWith('[')) {
+      try {
+        gridArr = JSON.parse(inspObj.grid_details);
+      } catch {
+        gridArr = [];
+      }
+    }
+    if (gridArr.length > 0) {
+      const seenKeys = new Set<string>();
+      let gridSumQtl = 0;
+      for (const g of gridArr) {
+        const gQtl = toQtlFromRawWt(g?.final_receipt_wt);
+        if (gQtl > 0) {
+          const dedupKey = `${String(g?.grade || g?.jute_grade || g?.actual_grade || '').trim().toUpperCase()}_${Number(g?.percentage || g?.actual_pct || 0)}_${gQtl}`;
+          if (!seenKeys.has(dedupKey)) {
+            seenKeys.add(dedupKey);
+            gridSumQtl += gQtl;
+          }
+        }
+      }
+      if (gridSumQtl > 0) return Math.round(gridSumQtl * 100) / 100;
+    }
+    return 0;
+  };
+
+  let weightQtl = extractFinalReceiptQtlFromInsp(liveInspMaster) || extractFinalReceiptQtlFromInsp(arrival);
+  if (weightQtl <= 0 && mrCandidateKeys.length > 0 && supabase) {
+    try {
+      const inspOrClauses = mrCandidateKeys
+        .flatMap(k => [`mill_inspection_no.eq.${k}`, `final_arrival_no.eq.${k}`, `arrival_no.eq.${k}`, `mr_no.eq.${k}`])
+        .join(',');
+      const { data: miRow } = await supabase
+        .from('material_inspection')
+        .select('final_receipt_wt, grid_details')
+        .or(inspOrClauses)
+        .limit(1)
+        .maybeSingle();
+      if (miRow) {
+        weightQtl = extractFinalReceiptQtlFromInsp(miRow);
+      }
+    } catch (_) {}
+  }
+
   const colsWtMt = cols.reduce((sum, c) => sum + getColWtMt(c), 0);
-  let weightQtl = 0;
-  if (colsWtMt > 0) {
+  if (weightQtl <= 0 && colsWtMt > 0) {
     weightQtl = Math.round(colsWtMt * 10 * 100) / 100;
-  } else if (arrival || liveInspMaster) {
+  } else if (weightQtl <= 0 && (arrival || liveInspMaster)) {
     const src = arrival || liveInspMaster;
     const rawQtl = Number(src.weight_qtl || 0);
     if (rawQtl > 0) {
       weightQtl = Math.round(rawQtl * 100) / 100;
     } else {
       const rawWt = Number(
+        src.final_receipt_wt ||
         src.electronic_net_weight ||
         src.challan_material_weight ||
         src.supplier_net_weight ||
@@ -606,10 +664,7 @@ export async function resolvePaymentDeductionsForPoAndMr(params: {
         0
       );
       if (rawWt > 0) {
-        let mt = rawWt;
-        if (rawWt > 500) mt = rawWt / 1000;
-        else if (rawWt > 50) mt = rawWt / 10;
-        weightQtl = Math.round(mt * 10 * 100) / 100;
+        weightQtl = toQtlFromRawWt(rawWt);
       }
     }
   }
