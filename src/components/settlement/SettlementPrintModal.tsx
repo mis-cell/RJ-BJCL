@@ -165,10 +165,10 @@ export const SettlementPrintModal: React.FC<SettlementPrintModalProps> = ({
   const targetPrintNum = persistedPrintCount + 1;
   const printCountWord = countToEnglishWord(targetPrintNum);
 
-  const mrDateDisplay = formatDateDdMmYyyyHyphen(master.mr_date || master.sett_date);
-  const poDateDisplay = formatDateDdMmYyyyHyphen(master.po_date || master.mr_date);
+  const mrDateDisplay = formatDateDdMmYyyyHyphen(master.arrival_date || master.mr_date || master.sett_date);
+  const poDateDisplay = formatDateDdMmYyyyHyphen(master.po_date || master.arrival_date || master.mr_date);
   const partyBillDateDisplay = formatDateDdMmYySlash(
-    master.payable_bill_date || master.mr_date || master.sett_date
+    master.payable_bill_date || master.arrival_date || master.mr_date || master.sett_date
   );
 
   const firstActiveCol = activeDetails[0] || details[0];

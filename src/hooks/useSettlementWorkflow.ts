@@ -818,10 +818,28 @@ export function useSettlementWorkflow({ onClose, onLogEvent }: { onClose?: () =>
         inspMaster: inspRecord
       }).catch(() => Number(activeMaster.arival_apmc_fees || 0));
 
+      const currentScreenArrivalDate =
+        cleanTargetMr.toUpperCase() === String(masterData.mr_no || '').trim().toUpperCase() && masterData.arrival_date
+          ? masterData.arrival_date
+          : '';
+      const resolvedPrintArrivalDate =
+        currentScreenArrivalDate ||
+        inspRecord?.arrival_date ||
+        activeMaster.arrival_date ||
+        faRecord?.arrival_date ||
+        faRecord?.final_arrival_date ||
+        faRecord?.date ||
+        activeMaster.mr_date ||
+        activeMaster.sett_date ||
+        inspRecord?.mr_date ||
+        inspRecord?.date ||
+        '';
+
       setViewModalData({
         master: {
           ...activeMaster,
-          mr_date: inspRecord?.mr_date || inspRecord?.date || activeMaster.mr_date || faRecord?.date || faRecord?.mr_date || inspRecord?.arrival_date || activeMaster.arrival_date || activeMaster.sett_date,
+          arrival_date: resolvedPrintArrivalDate,
+          mr_date: resolvedPrintArrivalDate,
           po_date: activeMaster.po_date || viewPoData?.po_date || viewPoData?.s_date || inspRecord?.po_date || faRecord?.po_date || '',
           supplier_address: supplierAddress || faRecord?.supplier_address || '',
           consign_no: faRecord?.challan_rr_no || faRecord?.challan_railway_receipt_no || activeMaster.consign_no || faRecord?.challan_no || '',

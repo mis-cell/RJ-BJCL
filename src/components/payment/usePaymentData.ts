@@ -57,14 +57,116 @@ export function usePaymentData(onSaveSuccess?: () => void) {
   const [areaMasterList, setAreaMasterList] = useState<any[]>([]);
   const [sattaDiffsList, setSattaDiffsList] = useState<any[]>([]);
 
+  // Pre-index paid MR numbers and paid PO numbers in O(N) once per paymentList update
+  const { paidMrSet, paidPoSet, arrivalsByPoSuffixMap } = useMemo(() => {
+    const mrSet = new Set<string>();
+    const poSet = new Set<string>();
+    const currVoucher = isEdit && masterData.voucher_no ? String(masterData.voucher_no).trim().toUpperCase() : '';
+
+    for (const p of paymentList) {
+      if (currVoucher && String(p.voucher_no || '').trim().toUpperCase() === currVoucher) continue;
+      const st = String(p.status || '').toLowerCase().trim();
+      if (st === 'cancelled' || st === 'rejected') continue;
+
+      const pMr = String(p.mr_no || p.arrival_no || '').trim().toUpperCase();
+      if (pMr && pMr !== 'N/A') {
+        mrSet.add(pMr);
+      }
+
+      const pPo = String(p.po_no || '').trim().toUpperCase().replace(/^#+/, '').replace(/\(PTF\)/gi, '').trim();
+      if (pPo && pPo !== 'N/A') {
+        poSet.add(pPo);
+        const suf = pPo.split('/').pop()?.trim() || '';
+        if (suf.length >= 3) poSet.add(`SUFFIX_${suf}`);
+      }
+    }
+
+    // Pre-index verifiedArrivals by normalized PO keys & suffixes in O(M)
+    const byPoMap = new Map<string, any[]>();
+    const addToMap = (key: string, arr: any) => {
+      if (!key) return;
+      let list = byPoMap.get(key);
+      if (!list) {
+        list = [];
+        byPoMap.set(key, list);
+      }
+      if (!list.includes(arr)) list.push(arr);
+    };
+
+    for (const arr of verifiedArrivals) {
+      const cands = [
+        arr.po_no,
+        arr.mill_po_no,
+        arr.contract_po_no,
+        arr.sauda_no,
+        arr.po_contract,
+        arr.return_po_no
+      ];
+      for (const raw of cands) {
+        if (!raw) continue;
+        const clean = String(raw).trim().toUpperCase().replace(/^#+/, '').trim();
+        if (!clean || clean === 'N/A') continue;
+        const noPtf = clean.replace(/\(PTF\)/gi, '').trim();
+        addToMap(clean, arr);
+        if (noPtf && noPtf !== clean) addToMap(noPtf, arr);
+        const suf = noPtf.split('/').pop()?.trim() || '';
+        if (suf.length >= 3) addToMap(`SUFFIX_${suf}`, arr);
+      }
+    }
+
+    return { paidMrSet: mrSet, paidPoSet: poSet, arrivalsByPoSuffixMap: byPoMap };
+  }, [paymentList, verifiedArrivals, isEdit, masterData.voucher_no]);
+
   const isPoEligibleForPaymentLocal = useCallback((po: any): boolean => {
-    return isPoEligibleForPayment(
-      po,
-      verifiedArrivals,
-      paymentList,
-      isEdit ? masterData.voucher_no : undefined
+    if (!po) return false;
+    const isReturnLorryPo = Boolean(po.is_return_lorry || po.source_table === 'return_lorry' || String(po.status || '').toUpperCase() === 'RETURN_LORRY');
+    const statusStr = String(po.status || '').toLowerCase().trim();
+    const passMismatchStr = String(po.pass_mismatch || po.pass_status || po.mismatch_status || po.quality_status || '').toUpperCase().trim();
+
+    const isCompleted = isReturnLorryPo || (
+      statusStr === 'completed' ||
+      statusStr === 'closed' ||
+      statusStr === 'final' ||
+      statusStr === 'moved_to_final' ||
+      statusStr === 'settled' ||
+      statusStr === 'active' ||
+      Boolean(po.ptf_no && String(po.ptf_no).trim() && String(po.ptf_no).trim() !== 'N/A')
     );
-  }, [verifiedArrivals, paymentList, isEdit, masterData.voucher_no]);
+
+    let isPass = isReturnLorryPo;
+    if (passMismatchStr === 'PASS') isPass = true;
+    else if (po.mismatch_cleared === true || String(po.mismatch_cleared) === 'true') isPass = true;
+    else if (po.satta_dispute_approved === true || String(po.satta_dispute_approved) === 'true') isPass = true;
+    else if (statusStr === 'final' || statusStr === 'moved_to_final' || statusStr === 'completed' || statusStr === 'settled') isPass = true;
+    else if (po.ptf_no && String(po.ptf_no).trim() && String(po.ptf_no).trim() !== 'N/A') isPass = true;
+    else if (statusStr !== 'mismatch' && statusStr !== 'dispute' && po.mismatch_cleared !== false) isPass = true;
+
+    if (!isCompleted || !isPass) return false;
+
+    const rawPoNo = String(po.po_no || po.new_po_no || po.ptf_no || po.sauda_no || po.contract_po_no || '').trim().toUpperCase().replace(/^#+/, '').trim();
+    if (!rawPoNo || rawPoNo === 'N/A') return false;
+    const noPtf = rawPoNo.replace(/\(PTF\)/gi, '').trim();
+    const suf = noPtf.split('/').pop()?.trim() || '';
+
+    const linkedMrs =
+      arrivalsByPoSuffixMap.get(rawPoNo) ||
+      arrivalsByPoSuffixMap.get(noPtf) ||
+      (suf.length >= 3 ? arrivalsByPoSuffixMap.get(`SUFFIX_${suf}`) : undefined) ||
+      [];
+
+    if (linkedMrs.length > 0) {
+      return linkedMrs.some((mr: any) => {
+        const mrKey = String(mr.mr_no || mr.final_arrival_no || mr.arrival_no || mr.temporary_arrival_no || '').trim().toUpperCase();
+        return mrKey && !paidMrSet.has(mrKey);
+      });
+    }
+
+    if (paidPoSet.has(rawPoNo) || paidPoSet.has(noPtf) || (suf.length >= 3 && paidPoSet.has(`SUFFIX_${suf}`))) {
+      return false;
+    }
+
+    return true;
+  }, [arrivalsByPoSuffixMap, paidMrSet, paidPoSet]);
 
   const findMatchingPo = useCallback((targetPoNo: string, poArray: any[]) => {
     if (!targetPoNo || !poArray || poArray.length === 0) return null;
@@ -90,143 +192,20 @@ export function usePaymentData(onSaveSuccess?: () => void) {
 
   const availableArrivals = useMemo(() => {
     return verifiedArrivals.filter(arr => {
-      const { isPaid } = isMrAlreadyProcessed(
-        arr,
-        paymentList,
-        isEdit ? masterData.voucher_no : undefined,
-        selectedPoNo
-      );
-      return !isPaid;
+      const mrKey = String(arr.mr_no || arr.final_arrival_no || arr.arrival_no || arr.temporary_arrival_no || '').trim().toUpperCase();
+      if (!mrKey || mrKey === 'N/A') return true;
+      return !paidMrSet.has(mrKey);
     });
-  }, [verifiedArrivals, paymentList, isEdit, masterData.voucher_no, selectedPoNo]);
+  }, [verifiedArrivals, paidMrSet]);
 
   const eligiblePos = useMemo(() => {
     return purchaseOrders.filter(po => isPoEligibleForPaymentLocal(po));
   }, [purchaseOrders, isPoEligibleForPaymentLocal]);
 
-  const ensurePaymentTablesExist = async () => {
-    if (!supabase) return;
-    try {
-      await supabase.rpc('exec_sql', {
-        query: `
-          CREATE TABLE IF NOT EXISTS payment_master (
-            payment_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-            voucher_no TEXT UNIQUE NOT NULL,
-            payment_date DATE,
-            mr_no TEXT,
-            po_no TEXT,
-            po_date DATE,
-            sett_date DATE,
-            po_type TEXT,
-            broker TEXT,
-            supplier TEXT,
-            party_id TEXT,
-            party_name TEXT,
-            chn_supplier TEXT,
-            lorry_number TEXT,
-            arrival_no TEXT,
-            arrival_date DATE,
-            arival_apmc_fees NUMERIC DEFAULT 0,
-            payable_amt NUMERIC DEFAULT 0,
-            payable_bill_no TEXT,
-            payable_bill_date DATE,
-            total_amount NUMERIC DEFAULT 0,
-            paid_amount NUMERIC DEFAULT 0,
-            payment_mode TEXT,
-            bank_name TEXT,
-            reference_no TEXT,
-            remarks TEXT,
-            status TEXT DEFAULT 'completed',
-            payment_status TEXT DEFAULT 'Paid',
-            advance_payment_done TEXT DEFAULT 'No',
-            advance_payment_from TEXT Default '1',
-            advance_payment_financier TEXT Default '',
-            payment_settlementdate DATE,
-            tenor TEXT DEFAULT 0,
-            repayment_date DATE,
-            created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-          );
-          ALTER TABLE IF EXISTS payment_master DISABLE ROW LEVEL SECURITY;
-          ALTER TABLE IF EXISTS payment_master ADD COLUMN IF NOT EXISTS advance_payment_done TEXT DEFAULT 'No';
-          ALTER TABLE IF EXISTS payment_master ADD COLUMN IF NOT EXISTS advance_payment_from TEXT DEFAULT '1';
-          ALTER TABLE IF EXISTS payment_master ADD COLUMN IF NOT EXISTS advance_payment_financier TEXT DEFAULT '1';
-          ALTER TABLE IF EXISTS payment_master ADD COLUMN IF NOT EXISTS payment_settlementdate DATE;
-          ALTER TABLE IF EXISTS payment_master ADD COLUMN IF NOT EXISTS tenor TEXT DEFAULT '';
-          ALTER TABLE IF EXISTS payment_master ADD COLUMN IF NOT EXISTS repayment_date DATE;
-
-          CREATE TABLE IF NOT EXISTS payment_details (
-            detail_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-            payment_id UUID,
-            voucher_no TEXT,
-            mr_no TEXT,
-            col_index INT,
-            grade TEXT,
-            area TEXT,
-            agency TEXT,
-            marka_crop TEXT,
-            quantity NUMERIC DEFAULT 0,
-            arr_qty_wt NUMERIC DEFAULT 0,
-            min_qty_wt NUMERIC DEFAULT 0,
-            wt_phota NUMERIC DEFAULT 0,
-            wt_quantity NUMERIC DEFAULT 0,
-            rate_value NUMERIC DEFAULT 0,
-            premium NUMERIC DEFAULT 0,
-            gd_claim NUMERIC DEFAULT 0,
-            gd_sett NUMERIC DEFAULT 0,
-            gd_rev NUMERIC DEFAULT 0,
-            gd_final NUMERIC DEFAULT 0,
-            moist_claim NUMERIC DEFAULT 0,
-            moist_sett NUMERIC DEFAULT 0,
-            moist_rev NUMERIC DEFAULT 0,
-            moist_final NUMERIC DEFAULT 0,
-            dust_claim NUMERIC DEFAULT 0,
-            dust_sett NUMERIC DEFAULT 0,
-            dust_rev NUMERIC DEFAULT 0,
-            dust_final NUMERIC DEFAULT 0,
-            ncv_claim NUMERIC DEFAULT 0,
-            ncv_sett NUMERIC DEFAULT 0,
-            ncv_rev NUMERIC DEFAULT 0,
-            ncv_final NUMERIC DEFAULT 0,
-            po_grade_claim NUMERIC DEFAULT 0,
-            po_grade_sett NUMERIC DEFAULT 0,
-            po_grade_rev NUMERIC DEFAULT 0,
-            po_grade_final NUMERIC DEFAULT 0,
-            adjust_type TEXT,
-            remark TEXT,
-            claim_settlement NUMERIC DEFAULT 0,
-            sett_pct NUMERIC DEFAULT 0,
-            deduction_rate NUMERIC DEFAULT 0,
-            sett_rate NUMERIC DEFAULT 0,
-            quantity_qtl NUMERIC DEFAULT 0,
-            amount NUMERIC DEFAULT 0,
-            bill_no TEXT,
-            bill_date DATE,
-            bill_amount NUMERIC(15,2),
-            paid_amount NUMERIC(15,2),
-            balance_amount NUMERIC(15,2),
-            created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-          );
-          ALTER TABLE IF EXISTS payment_details DISABLE ROW LEVEL SECURITY;
-          ALTER TABLE IF EXISTS payment_details ADD COLUMN IF NOT EXISTS premium NUMERIC DEFAULT 0;
-          ALTER TABLE IF EXISTS payment_details ADD COLUMN IF NOT EXISTS sett_pct NUMERIC DEFAULT 0;
-          ALTER TABLE IF EXISTS payment_details ADD COLUMN IF NOT EXISTS deduction_rate NUMERIC DEFAULT 0;
-          ALTER TABLE IF EXISTS payment_details ADD COLUMN IF NOT EXISTS sett_rate NUMERIC DEFAULT 0;
-          ALTER TABLE IF EXISTS payment_details ADD COLUMN IF NOT EXISTS quantity_qtl NUMERIC DEFAULT 0;
-          ALTER TABLE IF EXISTS payment_details ADD COLUMN IF NOT EXISTS amount NUMERIC DEFAULT 0;
-          NOTIFY pgrst, 'reload schema';
-        `
-      });
-    } catch (err) {
-      console.warn("Auto-creation of payment tables notice:", err);
-    }
-  };
-
   const initPage = useCallback(async () => {
     setLoading(true);
     setErrorMessage('');
     try {
-      await ensurePaymentTablesExist();
-
       let gData: any[] = [];
       let agData: any[] = [];
       let mDataList: any[] = [];
@@ -235,53 +214,59 @@ export function usePaymentData(onSaveSuccess?: () => void) {
       let poList: any[] = [];
       let scpList: any[] = [];
       let arrList: any[] = [];
+      let returnLorries: any[] = [];
 
       if (supabase) {
-        const [gRes, agRes, mRes, aRes, sattaRes] = await Promise.all([
+        // Execute all queries in a single parallel batch for fast loading
+        const [
+          gRes,
+          agRes,
+          mRes,
+          aRes,
+          sattaRes,
+          pRes,
+          pdRes,
+          poRes,
+          scpRes,
+          faRes,
+          miRes,
+          mimRes,
+          tmrRes,
+          rlRes
+        ] = await Promise.all([
           supabase.from('grade_master').select('*').then(r => r.data || [], () => []),
           supabase.from('agency_master').select('*').then(r => r.data || [], () => []),
           supabase.from('marka_master').select('*').then(r => r.data || [], () => []),
           supabase.from('area_master').select('*').then(r => r.data || [], () => []),
-          supabase.from('satta_differentials').select('*').then(r => r.data || [], () => [])
+          supabase.from('satta_differentials').select('*').then(r => r.data || [], () => []),
+          supabase.from('payment_master').select('*').order('created_at', { ascending: false }).then(r => r.data || [], () => []),
+          supabase.from('payment_details').select('*').then(r => r.data || [], () => []),
+          supabase.from('purchase_master').select('*').order('created_at', { ascending: false }).then(r => r.data || [], () => []),
+          supabase.from('sauda_check_point').select('*').then(r => r.data || [], () => []),
+          supabase.from('final_arrival').select('*').order('created_at', { ascending: false }).then(r => r.data || [], () => []),
+          supabase.from('material_inspection').select('*').order('created_at', { ascending: false }).then(r => r.data || [], () => []),
+          supabase.from('mill_inspection_master').select('*').order('created_at', { ascending: false }).then(r => r.data || [], () => []),
+          supabase.from('temporary_material_received').select('*').order('created_at', { ascending: false }).then(r => r.data || [], () => []),
+          supabase.from('return_lorry').select('*').then(r => r.data || [], () => [])
         ]);
+
         gData = gRes;
         agData = agRes;
         mDataList = mRes;
         aData = aRes;
+        payData = pRes;
+        poList = poRes;
+        scpList = scpRes;
+        returnLorries = rlRes;
+
         if (sattaRes && sattaRes.length > 0) {
           setSattaDiffsList(sattaRes);
           setCachedSattaDiffs(sattaRes);
         }
 
-        let payDetailsData: any[] = [];
-        try {
-          // Fetch complete payment_master and payment_details records without PostgREST 1000-row limit
-          const [pAll, pdAll] = await Promise.all([
-            dbModule.fetchAll('payment_master', { maxRows: 50000, pageSize: 1000 }).catch(async () => {
-              const { data } = await supabase.from('payment_master').select('*').order('created_at', { ascending: false });
-              return data || [];
-            }),
-            dbModule.fetchAll('payment_details', { maxRows: 50000, pageSize: 1000 }).catch(async () => {
-              const { data } = await supabase.from('payment_details').select('*');
-              return data || [];
-            })
-          ]);
-          if (pAll && pAll.length > 0) {
-            payData = pAll;
-          } else {
-            const { data: pDataPlain } = await supabase.from('payment_master').select('*');
-            if (pDataPlain) payData = pDataPlain;
-          }
-          if (pdAll && pdAll.length > 0) {
-            payDetailsData = pdAll;
-          }
-        } catch (err) {
-          console.warn("Supabase payment_master fetch error:", err);
-        }
-
-        if (payDetailsData.length > 0) {
+        if (pdRes && pdRes.length > 0) {
           const detailsMap = new Map<string, any[]>();
-          payDetailsData.forEach((d: any) => {
+          pdRes.forEach((d: any) => {
             const keys = [
               d.voucher_no,
               d.payment_id,
@@ -318,228 +303,76 @@ export function usePaymentData(onSaveSuccess?: () => void) {
           });
         }
 
-        try {
-          const { data: pList, error: pErr } = await supabase
-            .from('purchase_master')
-            .select('*')
-            .order('created_at', { ascending: false });
-          if (!pErr && pList) {
-            poList = pList;
-          } else {
-            const { data: pListPlain } = await supabase.from('purchase_master').select('*');
-            if (pListPlain) poList = pListPlain;
-          }
-        } catch (err) {
-          console.warn("Supabase purchase_master fetch error:", err);
-        }
+        const combinedMap = new Map<string, any>();
 
-        try {
-          const { data: sList } = await supabase.from('sauda_check_point').select('*');
-          if (sList) scpList = sList;
-        } catch (err) {
-          console.warn("Supabase sauda_check_point fetch error:", err);
-        }
-
-        try {
-          const [aRes, miRes, mimRes, tmrRes] = await Promise.all([
-            supabase.from('final_arrival').select('*').order('created_at', { ascending: false }).then(r => r.data || [], () => []),
-            supabase.from('material_inspection').select('*').order('created_at', { ascending: false }).then(r => r.data || [], () => []),
-            supabase.from('mill_inspection_master').select('*').order('created_at', { ascending: false }).then(r => r.data || [], () => []),
-            supabase.from('temporary_material_received').select('*').order('created_at', { ascending: false }).then(r => r.data || [], () => [])
-          ]);
-
-          const combinedMap = new Map<string, any>();
-
-          (tmrRes || []).forEach((t: any) => {
-            const key = t.temporary_arrival_no || t.amad_no || t.arrival_no || t.mr_no;
-            if (key) {
-              combinedMap.set(key, {
-                ...t,
-                mr_no: key,
-                arrival_no: key,
-                supplier: t.supplier || t.supplier_name || t.party_name,
-                broker: t.broker || t.broker_name,
-                po_no: t.po_no || t.mill_po_no,
-                source_module: 'temporary_material_received'
-              });
-            }
-          });
-
-          (aRes || []).forEach((item: any) => {
-            const key = item.mr_no || item.final_arrival_no || item.arrival_no || item.temporary_arrival_no;
-            if (key) {
-              const existing = combinedMap.get(key) || {};
-              combinedMap.set(key, {
-                ...existing,
-                ...item,
-                mr_no: key,
-                arrival_no: key,
-                supplier: item.supplier || item.supplier_name || item.party_name || existing.supplier,
-                broker: item.broker || item.broker_name || existing.broker,
-                po_no: item.po_no || item.mill_po_no || existing.po_no,
-                source_module: 'final_arrival'
-              });
-            }
-          });
-
-          (mimRes || []).forEach((item: any) => {
-            const key = item.mr_no || item.arrival_no;
-            if (key) {
-              const existing = combinedMap.get(key) || {};
-              combinedMap.set(key, {
-                ...existing,
-                ...item,
-                mr_no: key,
-                arrival_no: key,
-                supplier: item.supplier_name || item.supplier || existing.supplier,
-                broker: item.broker_name || item.broker || existing.broker,
-                po_no: item.po_no || item.mill_po_no || existing.po_no,
-                source_module: 'mill_inspection_master'
-              });
-            }
-          });
-
-          (miRes || []).forEach((item: any) => {
-            const key = item.mr_no || item.arrival_no || item.final_arrival_no;
-            if (key) {
-              const existing = combinedMap.get(key) || {};
-              combinedMap.set(key, {
-                ...existing,
-                ...item,
-                mr_no: key,
-                arrival_no: key,
-                supplier: item.supplier_name || item.supplier || existing.supplier,
-                broker: item.broker_name || item.broker || existing.broker,
-                po_no: item.po_no || item.mill_po_no || existing.po_no,
-                source_module: 'material_inspection'
-              });
-            }
-          });
-
-          arrList = Array.from(combinedMap.values());
-        } catch (err) {
-          console.warn("Supabase final_arrival/inspection fetch error:", err);
-        }
-      }
-
-      try {
-        const localPay = await dbModule.fetchAll('payment_master', { maxRows: 50000, pageSize: 1000 }).catch(() => []);
-        if (localPay && localPay.length > 0) {
-          const map = new Map<string, any>();
-          payData.forEach((p: any) => { if (p.voucher_no) map.set(p.voucher_no, p); });
-          localPay.forEach((p: any) => { 
-            if (p.voucher_no && !map.has(p.voucher_no)) {
-              map.set(p.voucher_no, p);
-            } 
-          });
-          payData = Array.from(map.values());
-        }
-
-        if (poList.length === 0) {
-          poList = await dbModule.fetchAll('purchase_master').catch(() => []);
-        }
-
-        const [localArr, localInsp, localMillInsp, localTempArr] = await Promise.all([
-          dbModule.fetchAll('final_arrival').catch(() => []),
-          dbModule.fetchAll('material_inspection').catch(() => []),
-          dbModule.fetchAll('mill_inspection_master').catch(() => []),
-          dbModule.fetchAll('temporary_material_received').catch(() => [])
-        ]);
-
-        const mergedMap = new Map<string, any>();
-        
-        // 1. Temporary Material Received (Base baseline)
-        (localTempArr || []).forEach((t: any) => {
-          const k = t.temporary_arrival_no || t.amad_no || t.arrival_no;
-          if (k) {
-            mergedMap.set(k, {
+        (tmrRes || []).forEach((t: any) => {
+          const key = t.temporary_arrival_no || t.amad_no || t.arrival_no || t.mr_no;
+          if (key) {
+            combinedMap.set(key, {
               ...t,
-              mr_no: k,
-              arrival_no: k,
+              mr_no: key,
+              arrival_no: key,
+              supplier: t.supplier || t.supplier_name || t.party_name,
+              broker: t.broker || t.broker_name,
+              po_no: t.po_no || t.mill_po_no,
               source_module: 'temporary_material_received'
             });
           }
         });
 
-        // 2. Final Arrival (Higher priority)
-        (localArr || []).forEach((a: any) => {
-          const k = a.mr_no || a.final_arrival_no || a.arrival_no;
-          if (k) {
-            const existing = mergedMap.get(k) || {};
-            mergedMap.set(k, {
+        (faRes || []).forEach((item: any) => {
+          const key = item.mr_no || item.final_arrival_no || item.arrival_no || item.temporary_arrival_no;
+          if (key) {
+            const existing = combinedMap.get(key) || {};
+            combinedMap.set(key, {
               ...existing,
-              ...a,
-              mr_no: k,
+              ...item,
+              mr_no: key,
+              arrival_no: key,
+              supplier: item.supplier || item.supplier_name || item.party_name || existing.supplier,
+              broker: item.broker || item.broker_name || existing.broker,
+              po_no: item.po_no || item.mill_po_no || existing.po_no,
               source_module: 'final_arrival'
             });
           }
         });
 
-        // 3. Mill Inspection Master
-        (localMillInsp || []).forEach((a: any) => {
-          const k = a.mr_no || a.arrival_no;
-          if (k) {
-            const existing = mergedMap.get(k) || {};
-            mergedMap.set(k, {
+        (mimRes || []).forEach((item: any) => {
+          const key = item.mr_no || item.arrival_no;
+          if (key) {
+            const existing = combinedMap.get(key) || {};
+            combinedMap.set(key, {
               ...existing,
-              ...a,
-              mr_no: k,
-              supplier: a.supplier_name || a.supplier || existing.supplier,
-              broker: a.broker_name || a.broker || existing.broker,
-              po_no: a.po_no || a.mill_po_no || existing.po_no
+              ...item,
+              mr_no: key,
+              arrival_no: key,
+              supplier: item.supplier_name || item.supplier || existing.supplier,
+              broker: item.broker_name || item.broker || existing.broker,
+              po_no: item.po_no || item.mill_po_no || existing.po_no,
+              source_module: 'mill_inspection_master'
             });
           }
         });
 
-        // 4. Material Inspection (Highest priority for live inspection records)
-        (localInsp || []).forEach((a: any) => {
-          const k = a.mr_no || a.arrival_no;
-          if (k) {
-            const existing = mergedMap.get(k) || {};
-            mergedMap.set(k, {
+        (miRes || []).forEach((item: any) => {
+          const key = item.mr_no || item.arrival_no || item.final_arrival_no;
+          if (key) {
+            const existing = combinedMap.get(key) || {};
+            combinedMap.set(key, {
               ...existing,
-              ...a,
-              mr_no: k,
-              supplier: a.supplier_name || a.supplier || existing.supplier,
-              broker: a.broker_name || a.broker || existing.broker,
-              po_no: a.po_no || a.mill_po_no || existing.po_no,
+              ...item,
+              mr_no: key,
+              arrival_no: key,
+              supplier: item.supplier_name || item.supplier || existing.supplier,
+              broker: item.broker_name || item.broker || existing.broker,
+              po_no: item.po_no || item.mill_po_no || existing.po_no,
               source_module: 'material_inspection'
             });
           }
         });
 
-        // 5. Supabase Real-Time Overrides (Highest priority)
-        (arrList || []).forEach((a: any) => {
-          const k = a.mr_no || a.final_arrival_no || a.arrival_no || a.temporary_arrival_no;
-          if (k) {
-            const existing = mergedMap.get(k) || {};
-            mergedMap.set(k, {
-              ...existing,
-              ...a,
-              mr_no: k,
-              arrival_no: k,
-              supplier: a.supplier || a.supplier_name || a.party_name || existing.supplier,
-              broker: a.broker || a.broker_name || existing.broker,
-              po_no: a.po_no || a.mill_po_no || existing.po_no
-            });
-          }
-        });
-
-        arrList = Array.from(mergedMap.values());
-      } catch (err) {
-        console.warn("dbModule fallback fetch error:", err);
+        arrList = Array.from(combinedMap.values());
       }
-
-      let returnLorries: any[] = [];
-      try {
-        if (supabase) {
-          const { data: rlData } = await supabase.from('return_lorry').select('*');
-          if (rlData) returnLorries = rlData;
-        }
-        if (returnLorries.length === 0) {
-          returnLorries = await dbModule.fetchAll('return_lorry').catch(() => []);
-        }
-      } catch (e) {}
 
       const rlByMrMap = new Map<string, any>();
       (returnLorries || []).forEach((rl: any) => {
@@ -606,11 +439,6 @@ export function usePaymentData(onSaveSuccess?: () => void) {
         });
       setVerifiedArrivals(verified);
 
-      if (gData.length === 0) gData = await dbModule.fetchAll('grade_master').catch(() => []);
-      if (agData.length === 0) agData = await dbModule.fetchAll('agency_master').catch(() => []);
-      if (mDataList.length === 0) mDataList = await dbModule.fetchAll('marka_master').catch(() => []);
-      if (aData.length === 0) aData = await dbModule.fetchAll('area_master').catch(() => []);
-
       setGradeMasterList(gData);
       setAgencyMasterList(agData);
       setMarkaMasterList(mDataList);
@@ -643,10 +471,6 @@ export function usePaymentData(onSaveSuccess?: () => void) {
       'satta_differentials'
     ]
   });
-
-  useEffect(() => {
-    initPage();
-  }, [initPage]);
 
   const getPoItemDetails = async (po: any): Promise<any[]> => {
     if (!po) return [];
@@ -1242,8 +1066,6 @@ export function usePaymentData(onSaveSuccess?: () => void) {
 
     try {
       if (!supabase) throw new Error("Supabase client not connected.");
-
-      await ensurePaymentTablesExist();
 
       if (checkMr && checkMr !== 'N/A') {
         try {
