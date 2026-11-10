@@ -2417,6 +2417,7 @@ export function useSettlementWorkflow({ onClose, onLogEvent }: { onClose?: () =>
             lorry_number: isStaleExistingIdentity
               ? (expectedLorry || existingMaster.lorry_number || '')
               : (existingMaster.lorry_number || expectedLorry || ''),
+            detention_days: Number(inspMaster?.detention_days ?? faMaster?.detention_days ?? 0) || 0,
             arrival_no: isStaleExistingIdentity
               ? (expectedArrNo || existingMaster.arrival_no || '')
               : (existingMaster.arrival_no || expectedArrNo || ''),
@@ -2613,7 +2614,7 @@ export function useSettlementWorkflow({ onClose, onLogEvent }: { onClose?: () =>
           po_date: inspMaster?.po_date || payMasterRec?.po_date || faMaster?.po_date || poData?.po_date || '',
           rate_qntl: Number(poData?.rate_qntl || poData?.rate_mt || poData?.b_rate || payMasterRec?.rate_qntl || 0),
           lorry_number: inspMaster?.lorry_number || inspMaster?.lorry_no || payMasterRec?.lorry_number || payMasterRec?.lorry_no || faMaster?.lorry_number || faMaster?.lorry_no || inspMaster?.arrival_no || faMaster?.final_arrival_no || '',
-          detention_days: Number(inspMaster?.detention_days || faMaster?.detention_days || payMasterRec?.detention_days || 0),
+          detention_days: Number(inspMaster?.detention_days ?? faMaster?.detention_days ?? 0) || 0,
           arrival_no: inspMaster?.arrival_no || payMasterRec?.arrival_no || faMaster?.final_arrival_no || faMaster?.arrival_no || resolvedMrNo || '',
           arrival_date: resolvedInspectionArrivalDate,
           remarks: inspMaster?.remarks || payMasterRec?.remarks || faMaster?.remarks || '',
@@ -2720,7 +2721,7 @@ export function useSettlementWorkflow({ onClose, onLogEvent }: { onClose?: () =>
         po_date: inspMaster.po_date || '',
         rate_qntl: Number(poData?.rate_qntl || poData?.rate_mt || poData?.b_rate || 0),
         lorry_number: inspMaster.lorry_number || inspMaster.lorry_no || inspMaster.arrival_no || '',
-        detention_days: inspMaster.detention_days || 0,
+        detention_days: Number(inspMaster.detention_days) || 0,
         arrival_no: inspMaster.arrival_no || '',
         arrival_date: resolvedInspectionArrivalDate,
         remarks: inspMaster.remarks || '',
@@ -3000,10 +3001,6 @@ export function useSettlementWorkflow({ onClose, onLogEvent }: { onClose?: () =>
             ? Number(prev.summary_delivery_claim)
             : autoDeliveryClaimAmt);
 
-      const targetDetentionDays = (Number(prev.detention_days) || 0) > 0
-        ? Number(prev.detention_days)
-        : deliveryDelayDays;
-
       if (
         prev.summary_material_value !== calculatedMaterialValue ||
         prev.val_material_value !== calculatedMaterialValue ||
@@ -3014,7 +3011,6 @@ export function useSettlementWorkflow({ onClose, onLogEvent }: { onClose?: () =>
         prev.summary_rate_aff_cd_cl !== targetRateAffCdCl ||
         prev.val_premium_amt !== calculatedPremiumAmount ||
         prev.summary_delivery_claim !== targetDeliveryClaim ||
-        prev.detention_days !== targetDetentionDays ||
         prev.actual_apmc_fees !== nextActualApmcFees ||
         (calculatedRatePerMt > 0 && (prev.summary_rate_qtel !== nextRatePerMt || prev.rate_qntl !== nextRatePerMt))
       ) {
@@ -3033,8 +3029,7 @@ export function useSettlementWorkflow({ onClose, onLogEvent }: { onClose?: () =>
           summary_rate_aff_cd_cl: targetRateAffCdCl,
           summary_rate_wt_claim: calculatedRateWtClaim,
           val_premium_amt: calculatedPremiumAmount,
-          summary_delivery_claim: targetDeliveryClaim,
-          detention_days: targetDetentionDays
+          summary_delivery_claim: targetDeliveryClaim
         };
       }
       return prev;

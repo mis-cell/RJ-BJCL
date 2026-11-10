@@ -322,7 +322,7 @@ export const SettlementMasterHeaderCard: React.FC<SettlementMasterHeaderCardProp
               readOnly
               disabled
               className="bg-slate-100 border border-gray-400 p-1 font-mono text-center cursor-not-allowed"
-              value={masterData.detention_days}
+              value={Number(masterData.detention_days) || 0}
             />
           </div>
 

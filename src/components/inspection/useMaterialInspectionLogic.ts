@@ -919,26 +919,11 @@ export function useMaterialInspectionLogic(onLogEvent?: (event: string, details:
 
   useEffect(() => {
     const autoClaim = calculateDeliveryClaimVal();
-    let computedLateDays = 0;
-    if (selectedPoData?.delivery_to) {
-      const deliveryToObj = parseDateOnly(selectedPoData.delivery_to);
-      const receiptDateObj = parseDateOnly(masterData.unloading_date || masterData.arrival_date || masterData.mr_date);
-      if (deliveryToObj && receiptDateObj && receiptDateObj.getTime() > deliveryToObj.getTime()) {
-        const rawLate = Math.round((receiptDateObj.getTime() - deliveryToObj.getTime()) / (1000 * 60 * 60 * 24));
-        const grace = Number(selectedPoData.grace_days || 0);
-        computedLateDays = rawLate > grace ? rawLate : 0;
-      }
-    }
-
     setMasterData((prev) => {
       let changed = false;
       const next: any = { ...prev };
       if (autoClaim > 0 && !next.delivery_claim) {
         next.delivery_claim = autoClaim;
-        changed = true;
-      }
-      if (computedLateDays > 0 && (!next.detention_days || Number(next.detention_days) === 0)) {
-        next.detention_days = computedLateDays;
         changed = true;
       }
       return changed ? next : prev;
