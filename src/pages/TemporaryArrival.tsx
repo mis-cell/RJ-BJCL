@@ -212,8 +212,34 @@ export default function TemporaryArrival({ onSave, onCancel, initialData }: { on
   const filteredArrivalAgencies = useMemo(() => {
     const currentArea = (formData.arrival_area_name || formData.arrival_area_code || '').trim();
     if (!currentArea) return [];
-    return getUniqueAgenciesForArea(currentArea);
-  }, [formData.arrival_area_name, formData.arrival_area_code]);
+    const mapped = getUniqueAgenciesForArea(currentArea);
+    const normArea = currentArea.toUpperCase();
+    const extraFromDb = (agencies || []).filter(a => {
+      const aAreaName = String(a.area_name || a.AREA_NAME || '').trim().toUpperCase();
+      const aAreaCode = String(a.area_code || a.AREA_CODE || '').trim().toUpperCase();
+      return aAreaName === normArea || aAreaCode === normArea;
+    });
+    if (extraFromDb.length === 0) return mapped;
+    const uniqueMap = new Map<string, any>();
+    mapped.forEach(item => {
+      const name = String(item.agency_name || item.AGENCY_NAME || item.name || '').trim();
+      if (name) uniqueMap.set(name.toUpperCase(), item);
+    });
+    extraFromDb.forEach(item => {
+      const name = String(item.agency_name || item.AGENCY_NAME || item.name || '').trim().replace(/\s*\(Code\s*\d+\)$/i, '').replace(/\s*Code\s*\d+$/i, '').trim();
+      if (name && !uniqueMap.has(name.toUpperCase())) {
+        uniqueMap.set(name.toUpperCase(), {
+          ...item,
+          AGENCY_NAME: name,
+          agency_name: name,
+          name
+        });
+      }
+    });
+    return Array.from(uniqueMap.values()).sort((a, b) =>
+      String(a.agency_name || a.AGENCY_NAME || '').localeCompare(String(b.agency_name || b.AGENCY_NAME || ''))
+    );
+  }, [formData.arrival_area_name, formData.arrival_area_code, agencies]);
 
   useEffect(() => {
     if (initialData) {

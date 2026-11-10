@@ -11,6 +11,7 @@ interface FinalArrivalGridTableProps {
   grades: any[];
   agencies: any[];
   markas: any[];
+  formDataArea?: string;
   unitList: string[];
   totalChallanQuantity: number;
   totalReceiptQuantity: number;
@@ -25,6 +26,7 @@ export function FinalArrivalGridTable({
   grades,
   agencies,
   markas,
+  formDataArea,
   unitList,
   totalChallanQuantity,
   totalReceiptQuantity,
@@ -94,17 +96,27 @@ export function FinalArrivalGridTable({
                       value={row.receipt_grade_name || row.receipt_grade_code || ''}
                       onChange={(e) => {
                         const val = e.target.value;
-                        const match = grades.find(g => String(g.grade_code).toUpperCase() === val.toUpperCase() || String(g.grade_name).toUpperCase() === val.toUpperCase());
-                        handleRowChange(idx, 'receipt_grade_code', match ? match.grade_code : val);
-                        handleRowChange(idx, 'receipt_grade_name', match ? match.grade_name : val);
+                        handleRowChange(idx, 'receipt_grade_name', val);
                       }}
                       placeholder="Select Grade"
                       className="w-full h-6 px-1.5 bg-white border border-slate-200 rounded text-xs uppercase focus:border-[#D94B5A] outline-none"
                     />
                     <datalist id={`grade-list-${idx}`}>
-                      {grades.map((g, gIdx) => (
-                        <option key={gIdx} value={g.grade_name || g.grade_code} />
-                      ))}
+                      {grades
+                        .slice()
+                        .filter((g, index, arr) =>
+                          arr.findIndex(
+                            item =>
+                              (item.grade_name || '').trim().toLowerCase() ===
+                              (g.grade_name || '').trim().toLowerCase()
+                          ) === index
+                        )
+                        .sort((a, b) =>
+                          (a.grade_name || '').localeCompare(b.grade_name || '')
+                        )
+                        .map((g, gIdx) => (
+                          <option key={g.id || g.grade_code || gIdx} value={g.grade_name || g.grade_code} />
+                        ))}
                     </datalist>
                   </td>
 
@@ -133,20 +145,30 @@ export function FinalArrivalGridTable({
                     <input
                       list={`agency-list-${idx}`}
                       type="text"
+                      placeholder={
+                        !formDataArea || !formDataArea.trim()
+                          ? "Select Area First"
+                          : agencies.length === 0
+                          ? "No Agency Found"
+                          : "Select Agency"
+                      }
+                      disabled={!formDataArea || !formDataArea.trim() || agencies.length === 0}
                       value={row.agency_name || ''}
                       onChange={(e) => {
-                        const val = e.target.value;
-                        const match = agencies.find(a => String(a.agency_code).toUpperCase() === val.toUpperCase() || String(a.agency_name).toUpperCase() === val.toUpperCase());
-                        handleRowChange(idx, 'agency_name', match ? match.agency_name : val);
-                        handleRowChange(idx, 'agency_code', match ? match.agency_code : '');
+                        handleRowChange(idx, 'agency_name', e.target.value);
                       }}
-                      placeholder="Select Agency"
-                      className="w-full h-6 px-1.5 bg-white border border-slate-200 rounded text-xs uppercase focus:border-[#D94B5A] outline-none"
+                      className="w-full h-6 px-1.5 bg-white border border-slate-200 rounded text-xs uppercase focus:border-[#D94B5A] outline-none disabled:bg-slate-100 disabled:text-slate-400"
                     />
                     <datalist id={`agency-list-${idx}`}>
-                      {agencies.map((a, aIdx) => (
-                        <option key={aIdx} value={a.agency_name || a.agency_code} />
-                      ))}
+                      {agencies.map((a, aIdx) => {
+                        const agName = a.agency_name || a.AGENCY_NAME || a.name || '';
+                        const agCode = a.agency_code || a.AGENCY_CODE || a.code || '';
+                        return (
+                          <option key={a.id || `${agCode}_${aIdx}`} value={agName}>
+                            {agCode ? `Code: ${agCode}` : ''}
+                          </option>
+                        );
+                      })}
                     </datalist>
                   </td>
 
@@ -157,17 +179,14 @@ export function FinalArrivalGridTable({
                       type="text"
                       value={row.challan_marka_name || ''}
                       onChange={(e) => {
-                        const val = e.target.value;
-                        const match = markas.find(m => String(m.marka_code).toUpperCase() === val.toUpperCase() || String(m.marka_name).toUpperCase() === val.toUpperCase());
-                        handleRowChange(idx, 'challan_marka_name', match ? match.marka_name : val);
-                        handleRowChange(idx, 'challan_marka_code', match ? match.marka_code : '');
+                        handleRowChange(idx, 'challan_marka_name', e.target.value);
                       }}
                       placeholder="Select Marka"
                       className="w-full h-6 px-1.5 bg-white border border-slate-200 rounded text-xs uppercase focus:border-[#D94B5A] outline-none"
                     />
                     <datalist id={`marka-list-${idx}`}>
                       {markas.map((m, mIdx) => (
-                        <option key={mIdx} value={m.marka_name || m.marka_code} />
+                        <option key={m.id || m.marka_code || mIdx} value={m.marka_name || m.name || m.mark_name || m.marka_code} />
                       ))}
                     </datalist>
                   </td>

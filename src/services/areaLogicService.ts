@@ -49,11 +49,68 @@ export async function fetchAreaLogic(): Promise<AreaLogicRecord[]> {
       }
     }
 
-    if (allRecords.length > 0) {
-      inMemoryAreaLogic = allRecords;
-      isLoadedFromSupabase = true;
-      console.log(`[areaLogicService] Successfully loaded ${allRecords.length} Area-Agency mappings from Supabase area_logic table.`);
-    }
+    const masterMap = new Map<string, AreaLogicRecord>();
+    AREA_LOGIC_MASTER_DATA.forEach(r => {
+      const aCode = String(r.AREA_CODE || '').trim().toUpperCase();
+      const aName = String(r.AREA_NAME || '').trim().toUpperCase();
+      const agCode = String(r.AGENCY_CODE || '').trim().toUpperCase();
+      const agName = String(r.AGENCY_NAME || '').trim().toUpperCase();
+      if (aName && agName) {
+        masterMap.set(`${aName}__${agName}__${agCode}`, {
+          AREA_CODE: String(r.AREA_CODE || '').trim(),
+          AREA_NAME: String(r.AREA_NAME || '').trim(),
+          AGENCY_CODE: String(r.AGENCY_CODE || '').trim(),
+          AGENCY_NAME: String(r.AGENCY_NAME || '').trim()
+        });
+      } else if (aCode && agCode) {
+        masterMap.set(`${aCode}__${agCode}`, {
+          AREA_CODE: String(r.AREA_CODE || '').trim(),
+          AREA_NAME: String(r.AREA_NAME || '').trim(),
+          AGENCY_CODE: String(r.AGENCY_CODE || '').trim(),
+          AGENCY_NAME: String(r.AGENCY_NAME || '').trim()
+        });
+      }
+    });
+
+    allRecords.forEach(r => {
+      const aCode = String(r.AREA_CODE || '').trim().toUpperCase();
+      const aName = String(r.AREA_NAME || '').trim().toUpperCase();
+      const agCode = String(r.AGENCY_CODE || '').trim().toUpperCase();
+      const agName = String(r.AGENCY_NAME || '').trim().toUpperCase();
+      if (aName && agName) {
+        masterMap.set(`${aName}__${agName}__${agCode}`, r);
+      } else if (aCode && agCode) {
+        masterMap.set(`${aCode}__${agCode}`, r);
+      }
+    });
+
+    try {
+      const { data: agMasterData } = await supabase
+        .from('agency_master')
+        .select('area_code, area_name, agency_code, agency_name');
+      if (agMasterData && agMasterData.length > 0) {
+        agMasterData.forEach((r: any) => {
+          const areaCode = String(r.area_code || r.AREA_CODE || '').trim();
+          const areaName = String(r.area_name || r.AREA_NAME || '').trim();
+          const agencyCode = String(r.agency_code || r.AGENCY_CODE || '').trim();
+          const agencyName = String(r.agency_name || r.AGENCY_NAME || '').trim();
+          if ((areaName || areaCode) && agencyName) {
+            const key = `${areaName.toUpperCase() || areaCode.toUpperCase()}__${agencyName.toUpperCase()}__${agencyCode.toUpperCase()}`;
+            if (!masterMap.has(key)) {
+              masterMap.set(key, {
+                AREA_CODE: areaCode,
+                AREA_NAME: areaName,
+                AGENCY_CODE: agencyCode,
+                AGENCY_NAME: agencyName
+              });
+            }
+          }
+        });
+      }
+    } catch (_) {}
+
+    inMemoryAreaLogic = Array.from(masterMap.values());
+    isLoadedFromSupabase = true;
   } catch (err) {
     console.warn('[areaLogicService] Failed to query Supabase area_logic table, using bundled master data:', err);
   }
@@ -68,13 +125,13 @@ export async function seedAreaLogicToSupabase(): Promise<boolean> {
   if (!supabase) return false;
 
   try {
-    // 1. Seed agency_master
+    // 1. Seed agency_master if missing records
     const { data: existingAgencies } = await supabase
       .from('agency_master')
       .select('id')
-      .limit(10);
+      .limit(600);
 
-    if (!existingAgencies || existingAgencies.length < 50) {
+    if (!existingAgencies || existingAgencies.length < 600) {
       console.log('[areaLogicService] Seeding agency_master table with AREA_LOGIC_MASTER_DATA...');
       const agencyRecords = AREA_LOGIC_MASTER_DATA.map(r => ({
         area_code: String(r.AREA_CODE).trim(),
@@ -94,9 +151,9 @@ export async function seedAreaLogicToSupabase(): Promise<boolean> {
     const { data: existing, error: checkErr } = await supabase
       .from('area_logic')
       .select('id')
-      .limit(1);
+      .limit(600);
 
-    if (!checkErr && (!existing || existing.length === 0)) {
+    if (!checkErr && (!existing || existing.length < 600)) {
       console.log('[areaLogicService] Seeding 657 Area-Agency records into Supabase area_logic table...');
       const batchSize = 100;
       for (let i = 0; i < AREA_LOGIC_MASTER_DATA.length; i += batchSize) {

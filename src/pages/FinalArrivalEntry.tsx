@@ -120,6 +120,7 @@ export default function FinalArrivalEntry({ onSave, onCancel, initialData }: Fin
           grades={grades}
           agencies={agencies}
           markas={markas}
+          formDataArea={formData.arrival_area_name || formData.area}
           unitList={unitList}
           totalChallanQuantity={totalChallanQuantity}
           totalReceiptQuantity={totalReceiptQuantity}

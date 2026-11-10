@@ -6,6 +6,7 @@ import { enforceEditOrDeletePermission } from '../../lib/permissions';
 import { sanitizeDate } from '../../lib/utils';
 import { useKeyboardNavigation } from '../../hooks/useKeyboardNavigation';
 import { screenDraftService } from '../../services/screenDraftService';
+import { getUniqueAgenciesForArea } from '../../services/areaLogicService';
 
 interface UseFinalArrivalEntryLogicProps {
   initialData?: any;
@@ -198,6 +199,38 @@ export function useFinalArrivalEntryLogic({ initialData, onSave }: UseFinalArriv
     };
   });
 
+  const filteredArrivalAgencies = useMemo(() => {
+    const currentArea = (formData.arrival_area_name || formData.area || formData.arrival_area_code || '').trim();
+    if (!currentArea) return [];
+    const mapped = getUniqueAgenciesForArea(currentArea);
+    const normArea = currentArea.toUpperCase();
+    const extraFromDb = (agencies || []).filter(a => {
+      const aAreaName = String(a.area_name || a.AREA_NAME || '').trim().toUpperCase();
+      const aAreaCode = String(a.area_code || a.AREA_CODE || '').trim().toUpperCase();
+      return aAreaName === normArea || aAreaCode === normArea;
+    });
+    if (extraFromDb.length === 0) return mapped;
+    const uniqueMap = new Map<string, any>();
+    mapped.forEach(item => {
+      const name = String(item.agency_name || item.AGENCY_NAME || item.name || '').trim();
+      if (name) uniqueMap.set(name.toUpperCase(), item);
+    });
+    extraFromDb.forEach(item => {
+      const name = String(item.agency_name || item.AGENCY_NAME || item.name || '').trim().replace(/\s*\(Code\s*\d+\)$/i, '').replace(/\s*Code\s*\d+$/i, '').trim();
+      if (name && !uniqueMap.has(name.toUpperCase())) {
+        uniqueMap.set(name.toUpperCase(), {
+          ...item,
+          AGENCY_NAME: name,
+          agency_name: name,
+          name
+        });
+      }
+    });
+    return Array.from(uniqueMap.values()).sort((a, b) =>
+      String(a.agency_name || a.AGENCY_NAME || '').localeCompare(String(b.agency_name || b.AGENCY_NAME || ''))
+    );
+  }, [formData.arrival_area_name, formData.area, formData.arrival_area_code, agencies]);
+
   useEffect(() => {
     async function loadUnits() {
       try {
@@ -367,7 +400,33 @@ export function useFinalArrivalEntryLogic({ initialData, onSave }: UseFinalArriv
 
         setBrokers((brokData || []).map((b: any) => ({ ...b, brok_name: (b.brok_name || '').toUpperCase() })));
         setSuppliers((suppData || []).map((s: any) => ({ ...s, supp_name: (s.supp_name || '').toUpperCase() })));
-        setAreas((areaData || []).map((a: any) => ({ ...a, area_name: (a.area_name || '').toUpperCase() })));
+
+        const defaultAreasList = [
+          { area_code: '10', area_name: 'BANGLADESH' },
+          { area_code: '20', area_name: 'BIHAR' },
+          { area_code: '30', area_name: 'DAISEE' },
+          { area_code: '40', area_name: 'JUNGLE' },
+          { area_code: '50', area_name: 'LOWER ASSAM' },
+          { area_code: '60', area_name: 'NORTHERN' },
+          { area_code: '70', area_name: 'ORISSA' },
+          { area_code: '80', area_name: 'OTHERS' },
+          { area_code: '90', area_name: 'SEMI NORTHERN' },
+          { area_code: '100', area_name: 'UPPER ASSAM' }
+        ];
+        const mergedAreasMap = new Map<string, any>();
+        defaultAreasList.forEach(a => mergedAreasMap.set(a.area_name, a));
+        (areaData || []).forEach((a: any) => {
+          const name = String(a.area_name || '').trim().toUpperCase();
+          if (name) {
+            mergedAreasMap.set(name, {
+              id: a.id,
+              area_code: String(a.area_code || a.code || '').trim(),
+              area_name: name
+            });
+          }
+        });
+        setAreas(Array.from(mergedAreasMap.values()).sort((a, b) => a.area_name.localeCompare(b.area_name)));
+
         setAgencies(agcData || []);
         setGrades(gradeData || []);
         setInspectionsList(inspectionData || []);
@@ -392,7 +451,31 @@ export function useFinalArrivalEntryLogic({ initialData, onSave }: UseFinalArriv
           return !isCompleted;
         }));
 
-        const finalMarkas = markaData || [];
+        const fallbackMarkaNames = ["NO MARK", "SH", "CHANGE", "MJ", "BSP", "RT", "PUROHIT", "DB", "KK", "C.M", "BS", "IM", "NI", "RIEEM", "MAA", "V VISHNU", "KR", "SUNIL", "SARTAJ", "J.S.J", "PK", "ANAND", "RR", "HARI", "PS", "RS", "MR", "GOPAL", "A.P.J.S", "SUN", "SAHEB", "C.R.D", "SM", "SA", "AM", "RABI", "AD", "ML", "RK", "MUBIN", "AMAN", "SKB", "ANTIMA", "SHM", "JMP", "HM", "SN", "KT", "LN", "RAJU", "RA", "SS", "SR", "RAHA", "TT", "USHA", "OP", "ST", "PB", "SK", "BAHETI", "DR", "ROHIT", "BK", "KAMAL", "JM", "CHAIN", "SSB", "SANVI", "BR", "UDM", "JAYA", "MM", "SANGITA", "S", "HBGM", "DHRUV", "SD", "AS", "BALAJI", "AJAY", "SG", "GS", "SB", "RE", "JS", "RM", "RBT", "BD", "MS", "RAEEM", "TS", "TOSH", "LC", "SUMAN", "VANSH", "DK", "BHAWANI", "BP", "SHIV", "SHREE HARI", "A", "KS", "KJ", "VK", "JK", "ARHAM", "SOVA", "KM", "PRAMOD", "PUJA", "DURGA", "JSB", "NS", "JAY HANUMAN", "MB", "MANOJ", "SHUBHAM", "KISHAN", "JAY", "AX", "SKC", "YUNUS", "BIJOY", "BN", "A.J.P", "J/MU/DK", "J/MU/HP", "AP", "ANISH", "RISHAV", "SKS", "BUL BUL", "KEDIA", "SMB", "NAIZA", "MH", "BULBUL", "RAKHECHA", "R.JAIN", "MKC", "NC", "MRR", "P", "J.A.K.", "JAK", "GOBINDA", "RAM", "TULSI G", "PP", "HARI OM", "MOTI", "GK", "KRISHNA", "SANJOY", "AA", "MP", "TANU", "ASHA", "DNJ(BHOWMICK)", "SUMIT", "TULSI/H", "KP", "K.L.K", "SWASTIK", "JC", "PM", "BB", "GM", "SHREE"];
+        let finalMarkas = markaData || [];
+        if (finalMarkas.length === 0) {
+          finalMarkas = fallbackMarkaNames.map((name, i) => ({
+            id: i + 1,
+            marka_code: String(i + 1).padStart(2, '0'),
+            marka_name: name
+          }));
+        } else {
+          const existingMarkaMap = new Map<string, any>();
+          finalMarkas.forEach((m: any) => {
+            const mName = String(m.marka_name || m.name || m.mark_name || '').trim().toUpperCase();
+            if (mName) existingMarkaMap.set(mName, m);
+          });
+          fallbackMarkaNames.forEach((name, i) => {
+            if (!existingMarkaMap.has(name.toUpperCase())) {
+              existingMarkaMap.set(name.toUpperCase(), {
+                id: `fb_${i + 1}`,
+                marka_code: String(i + 1).padStart(2, '0'),
+                marka_name: name
+              });
+            }
+          });
+          finalMarkas = Array.from(existingMarkaMap.values());
+        }
         setMarkas(finalMarkas);
 
         if (!initialData) {
@@ -1143,26 +1226,27 @@ export function useFinalArrivalEntryLogic({ initialData, onSave }: UseFinalArriv
         challan_grade_name: updatedDetails[index].challan_grade_name || finalName
       };
     } else if (field === 'agency_name' || field === 'agency_code') {
-      const valStr = String(val || '').trim();
-      const matchA = agencies.find(a => 
-        String(a.agency_code).trim().toUpperCase() === valStr.toUpperCase() || 
-        String(a.agency_name).trim().toUpperCase() === valStr.toUpperCase()
+      const valStr = String(val || '').trim().replace(/\s*\(Code\s*\d+\)$/i, '').replace(/\s*Code\s*\d+$/i, '').trim();
+      const activeAgencies = filteredArrivalAgencies.length > 0 ? filteredArrivalAgencies : agencies;
+      const matchA = activeAgencies.find(a => 
+        String(a.agency_code || a.AGENCY_CODE || a.code || '').trim().toUpperCase() === valStr.toUpperCase() || 
+        String(a.agency_name || a.AGENCY_NAME || a.name || '').trim().replace(/\s*\(Code\s*\d+\)$/i, '').toUpperCase() === valStr.toUpperCase()
       );
       updatedDetails[index] = {
         ...updatedDetails[index],
-        agency_code: matchA ? matchA.agency_code : (field === 'agency_code' ? valStr : (updatedDetails[index].agency_code || '')),
-        agency_name: matchA ? matchA.agency_name : valStr
+        agency_code: matchA ? (matchA.agency_code || matchA.AGENCY_CODE || matchA.code || '') : (field === 'agency_code' ? valStr : (updatedDetails[index].agency_code || '')),
+        agency_name: matchA ? (matchA.agency_name || matchA.AGENCY_NAME || matchA.name || valStr) : valStr
       };
     } else if (field === 'challan_marka_name' || field === 'challan_marka_code') {
       const valStr = String(val || '').trim();
       const matchM = markas.find(m => 
-        String(m.marka_code).trim().toUpperCase() === valStr.toUpperCase() || 
-        String(m.marka_name).trim().toUpperCase() === valStr.toUpperCase()
+        String(m.marka_code || m.code || '').trim().toUpperCase() === valStr.toUpperCase() || 
+        String(m.marka_name || m.name || m.mark_name || '').trim().toUpperCase() === valStr.toUpperCase()
       );
       updatedDetails[index] = {
         ...updatedDetails[index],
-        challan_marka_code: matchM ? matchM.marka_code : (field === 'challan_marka_code' ? valStr : (updatedDetails[index].challan_marka_code || '')),
-        challan_marka_name: matchM ? matchM.marka_name : valStr
+        challan_marka_code: matchM ? (matchM.marka_code || matchM.code || '') : (field === 'challan_marka_code' ? valStr : (updatedDetails[index].challan_marka_code || '')),
+        challan_marka_name: matchM ? (matchM.marka_name || matchM.name || matchM.mark_name || valStr) : valStr
       };
     } else {
       updatedDetails[index] = {
@@ -1496,7 +1580,9 @@ export function useFinalArrivalEntryLogic({ initialData, onSave }: UseFinalArriv
     brokers,
     suppliers,
     areas,
-    agencies,
+    agencies: filteredArrivalAgencies,
+    allAgencies: agencies,
+    filteredArrivalAgencies,
     grades,
     markas,
     purchaseOrders,
