@@ -39,10 +39,28 @@ export default defineConfig(({mode}) => {
         }
       }
     },
+    optimizeDeps: {
+      include: [
+        'react',
+        'react-dom',
+        'react/jsx-runtime',
+        'lucide-react',
+        'papaparse',
+        'html2canvas',
+        'jspdf',
+        'jspdf-autotable',
+        'recharts',
+        'clsx',
+        'tailwind-merge',
+        'date-fns',
+        'pigeon-maps',
+        '@supabase/supabase-js',
+      ],
+    },
     server: {
       host: '0.0.0.0',
       allowedHosts: true,
-      hmr: process.env.DISABLE_HMR !== 'true',
+      hmr: false,
       watch: process.env.DISABLE_HMR === 'true' ? null : {
         ignored: ['**/emails.json', '**/requests.log', '**/payload.json', '**/*.log', '**/create_mail_logs*']
       },

@@ -1,6 +1,28 @@
 <!doctype html>
 <html lang="en">
-  <head><script>window.addEventListener("error", function(e) { console.error("GLOBAL ERROR:", e.error && e.error.stack ? e.error.stack : e.message); });</script>
+  <head>
+    <script>
+      window.addEventListener("error", function(e) {
+        console.error("GLOBAL ERROR:", e.error && e.error.stack ? e.error.stack : e.message);
+        var target = e.target || e.srcElement;
+        if (target && target.tagName === "SCRIPT" && target.src && target.src.indexOf(".vite/deps") !== -1) {
+          var reloadKey = "bjl_vite_dep_reload";
+          var lastReload = Number(sessionStorage.getItem(reloadKey) || "0");
+          if (Date.now() - lastReload > 10000) {
+            sessionStorage.setItem(reloadKey, String(Date.now()));
+            window.location.reload();
+          }
+        }
+      }, true);
+      window.addEventListener("vite:preloadError", function() {
+        var reloadKey = "bjl_vite_preload_reload";
+        var lastReload = Number(sessionStorage.getItem(reloadKey) || "0");
+        if (Date.now() - lastReload > 10000) {
+          sessionStorage.setItem(reloadKey, String(Date.now()));
+          window.location.reload();
+        }
+      });
+    </script>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Bally Jute Company Limited</title>

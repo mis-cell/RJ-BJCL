@@ -1,40 +1,62 @@
 import React from "react";
 import { ScreenErrorBoundary } from "../ScreenErrorBoundary";
 import { Page, getPageMeta } from "../../config/navigationConfig";
-
-// Static page component imports to prevent dynamic chunk/module fetch errors on remote networks
-import TemporaryArrival from "../../pages/TemporaryArrival";
-import AmadRegister from "../../pages/AmadRegister";
-import SaudaEntry from "../../pages/SaudaEntry";
-import BardanaVouchers from "../../pages/BardanaVouchers";
-import DirectoryView from "../../pages/DirectoryView";
-import Reports from "../../pages/Reports";
 import Dashboard from "../../pages/Dashboard";
-import StockSummary from "../../pages/StockSummary";
-import ConfigGuide from "../../pages/ConfigGuide";
-import SaudaRegister from "../../pages/SaudaRegister";
-import SmsSaudaDesk from "../../pages/SmsSaudaDesk";
-import SattaRegister from "../../pages/SattaRegister";
-import SattaEntry from "../../pages/SattaEntry";
-import SattaChart from "../../pages/SattaChart";
-import PurchaseOrder from "../../pages/PurchaseOrder";
-import MaterialIssue from "../../pages/MaterialIssue";
-import AdminDesk from "../../pages/AdminDesk";
-import AIPortal from "../../pages/AIPortal";
-import MaterialInspection from "../../pages/MaterialInspection";
-import ReturnLorry from "../../pages/ReturnLorry";
-import Inspection from "../../pages/Inspection";
-import WeightBridge from "../../pages/WeightBridge";
-import MrSettlement from "../../pages/MrSettlement";
-import ClosingStockEntry from "../../pages/ClosingStockEntry";
-import MismatchCase from "../../pages/MismatchCase";
-import ClubPOMR from "../../pages/ClubPOMR";
-import FinalArrival from "../../pages/FinalArrival";
-import RequisitionDesk from "../../pages/RequisitionDesk";
-import PaymentModule from "../../pages/PaymentModule";
-import TredeReport from "../../pages/TredeReport";
-import LorryDispatchSystem from "../../pages/LorryDispatchSystem";
-import SystemChangeLogPage from "../../pages/SystemChangeLogPage";
+
+function lazyWithRetry<T extends React.ComponentType<any>>(
+  importer: () => Promise<{ default: T }>,
+  modulePath: string
+): React.LazyExoticComponent<T> {
+  return React.lazy(async () => {
+    let lastError: any;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        return await importer();
+      } catch (err: any) {
+        lastError = err;
+        await new Promise((resolve) => setTimeout(resolve, 250 * (attempt + 1)));
+      }
+    }
+    try {
+      // Fallback with cache-busting query for dev server module recovery
+      return await import(/* @vite-ignore */ `${modulePath}?t=${Date.now()}`);
+    } catch {
+      throw lastError;
+    }
+  });
+}
+
+const TemporaryArrival = lazyWithRetry(() => import("../../pages/TemporaryArrival"), "../../pages/TemporaryArrival");
+const AmadRegister = lazyWithRetry(() => import("../../pages/AmadRegister"), "../../pages/AmadRegister");
+const SaudaEntry = lazyWithRetry(() => import("../../pages/SaudaEntry"), "../../pages/SaudaEntry");
+const BardanaVouchers = lazyWithRetry(() => import("../../pages/BardanaVouchers"), "../../pages/BardanaVouchers");
+const DirectoryView = lazyWithRetry(() => import("../../pages/DirectoryView"), "../../pages/DirectoryView");
+const Reports = lazyWithRetry(() => import("../../pages/Reports"), "../../pages/Reports");
+const StockSummary = lazyWithRetry(() => import("../../pages/StockSummary"), "../../pages/StockSummary");
+const ConfigGuide = lazyWithRetry(() => import("../../pages/ConfigGuide"), "../../pages/ConfigGuide");
+const SaudaRegister = lazyWithRetry(() => import("../../pages/SaudaRegister"), "../../pages/SaudaRegister");
+const SmsSaudaDesk = lazyWithRetry(() => import("../../pages/SmsSaudaDesk"), "../../pages/SmsSaudaDesk");
+const SattaRegister = lazyWithRetry(() => import("../../pages/SattaRegister"), "../../pages/SattaRegister");
+const SattaEntry = lazyWithRetry(() => import("../../pages/SattaEntry"), "../../pages/SattaEntry");
+const SattaChart = lazyWithRetry(() => import("../../pages/SattaChart"), "../../pages/SattaChart");
+const PurchaseOrder = lazyWithRetry(() => import("../../pages/PurchaseOrder"), "../../pages/PurchaseOrder");
+const MaterialIssue = lazyWithRetry(() => import("../../pages/MaterialIssue"), "../../pages/MaterialIssue");
+const AdminDesk = lazyWithRetry(() => import("../../pages/AdminDesk"), "../../pages/AdminDesk");
+const AIPortal = lazyWithRetry(() => import("../../pages/AIPortal"), "../../pages/AIPortal");
+const MaterialInspection = lazyWithRetry(() => import("../../pages/MaterialInspection"), "../../pages/MaterialInspection");
+const ReturnLorry = lazyWithRetry(() => import("../../pages/ReturnLorry"), "../../pages/ReturnLorry");
+const Inspection = lazyWithRetry(() => import("../../pages/Inspection"), "../../pages/Inspection");
+const WeightBridge = lazyWithRetry(() => import("../../pages/WeightBridge"), "../../pages/WeightBridge");
+const MrSettlement = lazyWithRetry(() => import("../../pages/MrSettlement"), "../../pages/MrSettlement");
+const ClosingStockEntry = lazyWithRetry(() => import("../../pages/ClosingStockEntry"), "../../pages/ClosingStockEntry");
+const MismatchCase = lazyWithRetry(() => import("../../pages/MismatchCase"), "../../pages/MismatchCase");
+const ClubPOMR = lazyWithRetry(() => import("../../pages/ClubPOMR"), "../../pages/ClubPOMR");
+const FinalArrival = lazyWithRetry(() => import("../../pages/FinalArrival"), "../../pages/FinalArrival");
+const RequisitionDesk = lazyWithRetry(() => import("../../pages/RequisitionDesk"), "../../pages/RequisitionDesk");
+const PaymentModule = lazyWithRetry(() => import("../../pages/PaymentModule"), "../../pages/PaymentModule");
+const TredeReport = lazyWithRetry(() => import("../../pages/TredeReport"), "../../pages/TredeReport");
+const LorryDispatchSystem = lazyWithRetry(() => import("../../pages/LorryDispatchSystem"), "../../pages/LorryDispatchSystem");
+const SystemChangeLogPage = lazyWithRetry(() => import("../../pages/SystemChangeLogPage"), "../../pages/SystemChangeLogPage");
 
 const PageLoadingFallback = ({ moduleName }: { moduleName?: string }) => (
   <div className="flex-1 flex flex-col items-center justify-center h-full w-full min-h-[350px] p-8 text-slate-500">
