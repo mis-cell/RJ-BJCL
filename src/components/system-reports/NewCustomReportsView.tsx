@@ -1094,8 +1094,9 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
           };
 
           const mrBreakdown: any[] = [];
-          let computedTotalClaimMt = 0;
-              let lastMrNo = String(savedDed?.last_mr_no || '').trim();
+          let sumShortClaimMt = 0;
+          let sumExcessClaimMt = 0;
+          let lastMrNo = String(savedDed?.last_mr_no || '').trim();
           let lastMrDate = normalizeDateYmd(savedDed?.last_arrival_date || '');
 
           if (sortedInsps.length > 0) {
@@ -1205,8 +1206,10 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
               mrGrossMt = Math.round(mrGrossMt * 1000) / 1000;
               mrNetMt = Math.round(mrNetMt * 1000) / 1000;
 
-              const finalClaimMt = isMulti && isLast ? mrGrossMt : mrNetMt;
-              computedTotalClaimMt += finalClaimMt;
+              const shortClaimMt = isMulti && isLast ? mrGrossMt : mrNetMt;
+              const excessClaimMt = isMulti ? (isLast ? mrNetMt : mrGrossMt) : mrNetMt;
+              sumShortClaimMt += shortClaimMt;
+              sumExcessClaimMt += excessClaimMt;
 
               if (isLast) {
                 lastMrNo = mrNoStr;
@@ -1223,13 +1226,15 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
                 marka: markaStr,
                 cropYear: cropYearStr,
                 bags,
+                isLast,
+                isMulti,
                 grossMt: Number(mrGrossMt.toFixed(3)),
                 grossKg: Math.round(mrGrossMt * 1000),
                 netMt: Number(mrNetMt.toFixed(3)),
                 netKg: Math.round(mrNetMt * 1000),
-                finalClaimMt: Number(finalClaimMt.toFixed(3)),
-                finalClaimKg: Math.round(finalClaimMt * 1000),
-                finalClaimQtl: Number((finalClaimMt * 10).toFixed(2)),
+                finalClaimMt: Number(shortClaimMt.toFixed(3)),
+                finalClaimKg: Math.round(shortClaimMt * 1000),
+                finalClaimQtl: Number((shortClaimMt * 10).toFixed(2)),
                 claimBasis: isMulti && isLast ? 'Gross (Last Lorry)' : 'Net',
                 saudaSattaRate: saudaRate,
                 mrSattaRate: mrRate,
@@ -1237,6 +1242,24 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
               });
             });
           }
+
+          const roundedShortClaimMt = Math.round(sumShortClaimMt * 1000) / 1000;
+          const roundedExcessClaimMt = Math.round(sumExcessClaimMt * 1000) / 1000;
+          const isExcessBasis =
+            (contractMt - roundedExcessClaimMt) < -0.0001 &&
+            (roundedShortClaimMt >= contractMt - 0.0001 || (roundedExcessClaimMt - contractMt) >= (contractMt - roundedShortClaimMt));
+
+          if (isExcessBasis && mrBreakdown.length > 0) {
+            mrBreakdown.forEach(item => {
+              const cMt = item.isMulti ? (item.isLast ? item.netMt : item.grossMt) : item.netMt;
+              item.finalClaimMt = Number(cMt.toFixed(3));
+              item.finalClaimKg = Math.round(cMt * 1000);
+              item.finalClaimQtl = Number((cMt * 10).toFixed(2));
+              item.claimBasis = item.isMulti ? (item.isLast ? 'Net (Last Lorry)' : 'Gross (First Lorry)') : 'Net';
+            });
+          }
+
+          const computedTotalClaimMt = isExcessBasis ? roundedExcessClaimMt : roundedShortClaimMt;
 
           const totalReceivedMt =
             computedTotalClaimMt > 0
