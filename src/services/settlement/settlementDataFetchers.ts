@@ -496,18 +496,14 @@ export const fetchSaudaCheckpointDeduction = async (cleanPoNo: string) => {
       if (!record) return null;
       const updated = { ...record };
 
-      const savedRecMt = Number(updated.total_received_mt || 0);
-      const savedContractMt = Number(updated.contract_weight_mt || 0);
-      const isLockedRecord = String(updated.status || '').toLowerCase() === 'approved';
-      // Preserve locked/approved records that already have valid saved weights
-      if (isLockedRecord && savedRecMt > 0 && (savedContractMt <= 0 || savedRecMt <= savedContractMt * 3)) {
+      if (updated.rate_basis === 'custom') {
         return updated;
       }
 
       let changed = false;
 
-      // Reconcile against live arrivals/inspections only when record has missing or corrupted weights
-      if (supabase && Number(updated.contract_weight_mt) > 0 && (savedRecMt <= 0 || savedRecMt > savedContractMt * 3)) {
+      // Always reconcile against live material_inspection + material_inspection_details so Excess/Short weights match the Sauda Check Point Settlement modal
+      if (supabase && Number(updated.contract_weight_mt) > 0) {
         try {
           const [miRes, tmrRes, faRes] = await Promise.all([
             supabase.from('material_inspection').select('mr_no, arrival_no, final_arrival_no, date, mr_date, inspection_date, created_at, receipt_gross_wt, challan_gross_wt, gross_weight, total_final_receipt_wt, final_receipt_wt, weight_reduced, reduced_weight, electronic_net_weight, final_weight_mt, weight_qtl, weight, grid_details, details').ilike('po_no', `%${rawPoNo}%`).then(r => r.data || [], () => []),
@@ -522,6 +518,13 @@ export const fetchSaudaCheckpointDeduction = async (cleanPoNo: string) => {
           const canonicalMrKey = (mr: string): string => {
             const seq = extractMrSeq(mr);
             return seq > 0 ? `MR_${seq}` : String(mr || '').trim().toUpperCase();
+          };
+          const toMtFromRawWt = (val: any): number => {
+            const n = Number(val || 0);
+            if (!Number.isFinite(n) || n <= 0) return 0;
+            if (n >= 500) return n / 1000;
+            if (n > 50 && n < 500) return n / 10;
+            return n;
           };
 
           const uniqueMrMap = new Map<string, any>();
@@ -549,7 +552,6 @@ export const fetchSaudaCheckpointDeduction = async (cleanPoNo: string) => {
           });
 
           const mrEntries = Array.from(uniqueMrMap.values());
-          // Sort by MR sequence to identify earlier lorries vs last lorry reliably
           mrEntries.sort((a, b) => {
             const seqA = extractMrSeq(a.mrNo);
             const seqB = extractMrSeq(b.mrNo);
@@ -558,102 +560,164 @@ export const fetchSaudaCheckpointDeduction = async (cleanPoNo: string) => {
           });
 
           if (mrEntries.length > 0) {
+            // Fetch material_inspection_details for all matched MRs of this PO
+            let liveInspectionDetails: any[] = [];
+            const mrCandidateList = Array.from(
+              new Set(
+                mrEntries.flatMap(e => {
+                  const raw = String(e.mrNo || '').trim();
+                  const seq = extractMrSeq(raw);
+                  return [
+                    raw,
+                    seq > 0 ? `MR${seq}` : '',
+                    seq > 0 ? `MR0${seq}` : '',
+                    seq > 0 ? `MR00${seq}` : ''
+                  ].filter(Boolean);
+                })
+              )
+            );
+            if (mrCandidateList.length > 0) {
+              const detRes = await supabase
+                .from('material_inspection_details')
+                .select('*')
+                .in('mr_no', mrCandidateList)
+                .then(r => r.data || [], () => []);
+              if (Array.isArray(detRes) && detRes.length > 0) {
+                liveInspectionDetails = detRes;
+              }
+            }
+
             const faTotalMt = (faRes || []).reduce((sum: number, f: any) => {
               const w = Number(f.weight_qtl) > 0 ? Number(f.weight_qtl) / 10 : Number(f.electronic_net_weight || f.challan_material_weight || 0);
               return sum + w;
             }, 0);
 
             const isMultiLorry = mrEntries.length > 1;
-            let liveClaimSumMt = 0;
+            let sumShortClaimMt = 0;
+            let sumExcessClaimMt = 0;
+
             mrEntries.forEach((entry, idx) => {
               const src = entry.source;
               const mrKey = canonicalMrKey(entry.mrNo);
               const isLast = idx === mrEntries.length - 1;
-              let grossMt = 0;
-              let netMt = 0;
+              let mrGrossMt = 0;
+              let mrNetMt = 0;
 
-              // Parse grid_details or details if available
-              let gridItems: any[] = [];
+              if (src) {
+                const topGross = toMtFromRawWt(src.challan_gross_wt ?? src.receipt_gross_wt ?? src.gross_weight);
+                const topNet = toMtFromRawWt(src.final_receipt_wt ?? src.total_final_receipt_wt ?? src.reduced_weight ?? src.weight_reduced ?? src.electronic_net_weight ?? src.final_weight_mt);
+                if (topGross > 0) mrGrossMt = topGross;
+                if (topNet > 0) mrNetMt = topNet;
+              }
+
+              // Parse embedded grid_details or details if available
+              let embeddedGrid: any[] = [];
               if (src?.grid_details) {
                 try {
-                  gridItems = typeof src.grid_details === 'string' ? JSON.parse(src.grid_details) : src.grid_details;
+                  embeddedGrid = typeof src.grid_details === 'string' ? JSON.parse(src.grid_details) : src.grid_details;
                 } catch (_e) {}
               }
-              if ((!gridItems || !gridItems.length) && src?.details) {
+              if ((!embeddedGrid || !embeddedGrid.length) && src?.details) {
                 try {
-                  gridItems = typeof src.details === 'string' ? JSON.parse(src.details) : src.details;
+                  embeddedGrid = typeof src.details === 'string' ? JSON.parse(src.details) : src.details;
                 } catch (_e) {}
               }
 
-              if (Array.isArray(gridItems) && gridItems.length > 0) {
-                let sumG = 0;
-                let sumN = 0;
+              const matchingDetails = (liveInspectionDetails || []).filter((d: any) => {
+                const dMr = String(d.mr_no || '').trim();
+                return dMr && canonicalMrKey(dMr) === mrKey;
+              });
+
+              const rawDetailItems = (Array.isArray(embeddedGrid) && embeddedGrid.length > 0) ? embeddedGrid : matchingDetails;
+
+              if (Array.isArray(rawDetailItems) && rawDetailItems.length > 0) {
+                let sumDetailGrossMt = 0;
+                let sumDetailNetMt = 0;
                 const seenSrl = new Set<string>();
-                gridItems.forEach((it: any, itIdx: number) => {
+                rawDetailItems.forEach((it: any, itIdx: number) => {
                   if (!it || typeof it !== 'object') return;
                   const itMr = String(it.mr_no || '').trim();
                   if (itMr && canonicalMrKey(itMr) !== mrKey) return;
-                  let g = Number(it.challan_gross_wt ?? it.receipt_gross_wt ?? it.gross_weight ?? 0);
-                  let n = Number(it.final_receipt_wt ?? it.reduced_weight ?? it.netto_pnto ?? 0);
-                  if (g <= 0 && n <= 0) return;
+                  const gRaw = Number(it.challan_gross_wt ?? it.receipt_gross_wt ?? it.gross_weight_batch ?? it.gross_weight ?? 0);
+                  const nRaw = Number(it.final_receipt_wt ?? it.reduced_weight ?? it.netto_pnto ?? 0);
+                  if (gRaw <= 0 && nRaw <= 0) return;
                   const srl = it.srl_no !== undefined && it.srl_no !== null && String(it.srl_no).trim() !== ''
                     ? `SRL_${String(it.srl_no).trim()}`
-                    : `ROW_${itIdx}_${g}_${n}`;
+                    : `ROW_${String(it.arrival_grade || it.receipt_grade_name || it.challan_grade_name || itIdx).trim()}_${gRaw}_${nRaw}`;
                   if (seenSrl.has(srl)) return;
                   seenSrl.add(srl);
 
-                  if (g >= 500) g = g / 1000;
-                  else if (g > 50 && g < 500) g = g / 10;
-                  sumG += g;
+                  const gWt = toMtFromRawWt(gRaw);
+                  let nWt = toMtFromRawWt(nRaw);
+                  if (nWt <= 0 && it.quantity_rcpt) nWt = toMtFromRawWt(it.quantity_rcpt);
+                  if (nWt <= 0 && gWt > 0) nWt = gWt;
 
-                  if (n >= 500) n = n / 1000;
-                  else if (n > 50 && n < 500) n = n / 10;
-                  sumN += n;
+                  sumDetailGrossMt += gWt;
+                  sumDetailNetMt += nWt;
                 });
-                if (sumG > 0) grossMt = sumG;
-                if (sumN > 0) netMt = sumN;
+
+                const roundedDetailGross = Math.round(sumDetailGrossMt * 1000) / 1000;
+                const roundedDetailNet = Math.round(sumDetailNetMt * 1000) / 1000;
+
+                if (roundedDetailGross > 0 && (mrGrossMt <= 0 || Math.abs(mrGrossMt - roundedDetailGross) > 0.05)) {
+                  mrGrossMt = roundedDetailGross;
+                }
+                if (
+                  roundedDetailNet > 0 &&
+                  (mrNetMt <= 0 ||
+                    (mrGrossMt > 0 && mrNetMt > mrGrossMt + 0.001) ||
+                    Math.abs(mrNetMt - roundedDetailNet) > 0.05)
+                ) {
+                  mrNetMt = roundedDetailNet;
+                }
               }
 
-              if (src) {
-                if (grossMt <= 0) {
-                  let g = Number(src.challan_gross_wt || src.receipt_gross_wt || src.gross_weight || 0);
-                  if (g >= 500) g = g / 1000;
-                  else if (g > 50 && g < 500) g = g / 10;
-                  grossMt = g;
-                }
-                if (netMt <= 0) {
-                  let n = Number(src.final_receipt_wt || src.total_final_receipt_wt || src.weight_reduced || src.reduced_weight || src.electronic_net_weight || src.final_weight_mt || 0);
-                  if (n <= 0 && src.weight_qtl) n = Number(src.weight_qtl) / 10;
-                  if (n <= 0 && src.weight) {
-                    const w = Number(src.weight);
-                    n = w > 500 ? w / 100 : (w > 50 ? w / 10 : w);
-                  }
-                  if (n >= 500) n = n / 1000;
-                  else if (n > 50 && n < 500) n = n / 10;
-                  netMt = (grossMt > 0 && n > grossMt + 0.001) ? grossMt : n;
-                }
+              if (mrGrossMt > 0 && mrNetMt > mrGrossMt + 0.001) {
+                mrNetMt = mrGrossMt;
               }
-              if (grossMt > 0 && netMt > grossMt + 0.001) {
-                netMt = grossMt;
+              if (mrNetMt <= 0 && src) {
+                if (src.weight_qtl) mrNetMt = Number(src.weight_qtl) / 10;
+                else if (src.weight) mrNetMt = toMtFromRawWt(src.weight);
               }
-              if (netMt <= 0 && grossMt <= 0) {
+              if (mrNetMt <= 0 && mrGrossMt <= 0) {
                 const baseTotal = faTotalMt > 0 ? faTotalMt : Number(updated.contract_weight_mt);
-                netMt = baseTotal / mrEntries.length;
+                mrNetMt = baseTotal / mrEntries.length;
               }
-              if (grossMt <= 0) grossMt = netMt;
-              if (netMt <= 0) netMt = grossMt;
+              if (mrGrossMt <= 0) mrGrossMt = mrNetMt;
+              if (mrNetMt <= 0) mrNetMt = mrGrossMt;
 
-              // Multiple-lorry: Net of earlier lorries + Gross of last lorry.
-              // Single-lorry: Net weight.
-              const claimMt = (isMultiLorry && isLast) ? grossMt : netMt;
-              liveClaimSumMt += claimMt;
+              mrGrossMt = Math.round(mrGrossMt * 1000) / 1000;
+              mrNetMt = Math.round(mrNetMt * 1000) / 1000;
+
+              // Short Basis:
+              // - Single Lorry: MR Net Weight (mrNetMt)
+              // - Multiple Lorry: Earlier lorries Net Weight (mrNetMt) + Last Lorry Gross Weight (mrGrossMt)
+              const shortClaimMt = (isMultiLorry && isLast) ? mrGrossMt : mrNetMt;
+
+              // Excess Basis:
+              // - Single Lorry: MR Net Weight (mrNetMt)
+              // - Multiple Lorry: First/Earlier lorries Gross Weight (mrGrossMt) + Last Lorry Net Weight (mrNetMt)
+              const excessClaimMt = isMultiLorry ? (isLast ? mrNetMt : mrGrossMt) : mrNetMt;
+
+              sumShortClaimMt += shortClaimMt;
+              sumExcessClaimMt += excessClaimMt;
             });
 
-            const roundedLiveMt = Math.round(liveClaimSumMt * 1000) / 1000;
+            const roundedShortClaimMt = Math.round(sumShortClaimMt * 1000) / 1000;
+            const roundedExcessClaimMt = Math.round(sumExcessClaimMt * 1000) / 1000;
             const contractMt = Number(updated.contract_weight_mt);
             const tolMt = Math.round(contractMt * 0.03 * 1000) / 1000;
 
+            const isClaimExcess =
+              (contractMt - roundedExcessClaimMt) < -0.0001 &&
+              (roundedShortClaimMt >= contractMt - 0.0001 || (roundedExcessClaimMt - contractMt) >= (contractMt - roundedShortClaimMt));
+
+            const roundedLiveMt = isClaimExcess ? roundedExcessClaimMt : roundedShortClaimMt;
+
             if (roundedLiveMt > 0 && contractMt > 0) {
+              if (Math.abs(Number(updated.total_received_mt || 0) - roundedLiveMt) > 0.0005) {
+                changed = true;
+              }
               updated.total_received_mt = roundedLiveMt;
               updated.variation_mt = Number((contractMt - roundedLiveMt).toFixed(3));
               updated.arrival_numbers = mrEntries.map(e => e.mrNo).join(', ');
@@ -664,14 +728,12 @@ export const fetchSaudaCheckpointDeduction = async (cleanPoNo: string) => {
               if (shortageMt > 0.0001) {
                 // Shortage rules
                 if (shortageMt >= 1.5) {
-                  // >= 1.5 MT: no 3% tolerance, full shortage is chargeable
                   updated.variation_type = 'short';
                   updated.tolerance_pct = 0;
                   updated.tolerance_mt = 0;
                   updated.deduction_qty_mt = shortageMt;
                   updated.deduction_qty_qtl = Math.round(shortageMt * 10 * 100) / 100;
                 } else if (shortageMt <= tolMt) {
-                  // < 1.5 MT and within 3% tolerance: no deduction
                   updated.variation_type = 'within_tolerance';
                   updated.deduction_qty_mt = 0;
                   updated.deduction_qty_qtl = 0;
@@ -680,7 +742,6 @@ export const fetchSaudaCheckpointDeduction = async (cleanPoNo: string) => {
                   updated.applicable_rate = 0;
                   updated.remarks = 'Within 3% Exemption – No Deduction';
                 } else {
-                  // < 1.5 MT but exceeding 3% tolerance: deduct only excess over tolerance
                   updated.variation_type = 'short';
                   const deductMt = Math.round((shortageMt - tolMt) * 1000) / 1000;
                   updated.deduction_qty_mt = deductMt;
@@ -702,15 +763,12 @@ export const fetchSaudaCheckpointDeduction = async (cleanPoNo: string) => {
                 updated.deduction_amount = 0;
                 updated.remarks = 'Exact Weight – No Deduction';
               }
-              changed = true;
             }
           }
         } catch (_e) {}
       }
 
       // Enforce Short Satta Rate Rule:
-      // Apply monetary deduction ONLY when final MR-received-date Satta rate is higher than Sauda-date Satta rate.
-      // If final rate is equal to or lower than Sauda-date rate, do not deduct.
       if (updated.variation_type === 'short' && updated.rate_basis !== 'custom') {
         const sRate = Number(updated.sauda_rate || 0);
         const mRate = Number(updated.satta_rate || 0);
@@ -736,9 +794,6 @@ export const fetchSaudaCheckpointDeduction = async (cleanPoNo: string) => {
       }
 
       // Enforce Excess Satta Rate Rule:
-      // For Excess: If Last MR Date Satta Rate >= Sauda Date Satta Rate (e.g. Sauda 13000 & Last MR 13500),
-      // DO NOT DEDUCT — It is Applicable for Sauda (Deduction = ₹0).
-      // Otherwise: Excess in kg × Rate Difference (e.g. 3,635 kg × 600 = 2,181,000).
       if (updated.variation_type === 'excess' && updated.rate_basis !== 'custom') {
         const sRate = Number(updated.sauda_rate || 0);
         const mRate = Number(updated.satta_rate || 0);
@@ -768,6 +823,23 @@ export const fetchSaudaCheckpointDeduction = async (cleanPoNo: string) => {
         try {
           localStorage.setItem(`sauda_settlement_${cleanAlphaPo}`, JSON.stringify(updated));
           localStorage.setItem(`sauda_settlement_${rawPoNo}`, JSON.stringify(updated));
+          if (supabase && updated.id) {
+            supabase
+              .from('sauda_check_point_deductions')
+              .update({
+                total_received_mt: updated.total_received_mt,
+                variation_mt: updated.variation_mt,
+                variation_type: updated.variation_type,
+                deduction_qty_mt: updated.deduction_qty_mt,
+                deduction_qty_qtl: updated.deduction_qty_qtl,
+                rate_difference: updated.rate_difference,
+                applicable_rate: updated.applicable_rate,
+                deduction_amount: updated.deduction_amount,
+                remarks: updated.remarks
+              })
+              .eq('id', updated.id)
+              .then(() => {}, () => {});
+          }
         } catch (_e) {}
       }
 

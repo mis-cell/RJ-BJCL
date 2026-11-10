@@ -1475,13 +1475,26 @@ export function usePaymentData(onSaveSuccess?: () => void) {
       verifiedArrivals
     });
 
-    setMasterData(prev => ({
-      ...prev,
-      summary_delivery_claim: deductions.deliveryClaim,
-      summary_deduction_amount: deductions.totalDeductionsAndPenalties,
-      summary_deduction_type: deductions.deductionSummaryText,
-      val_ex_short: deductions.extraAndShort
-    }));
+    setMasterData(prev => {
+      const grossVal = Math.round(Number(prev.payable_amt || prev.total_amount || 0));
+      const prevExShort = Number(prev.val_ex_short || 0);
+      const nextPaid = (grossVal > 0 && prevExShort !== deductions.extraAndShort)
+        ? calculateNetPaidAmountAfterDeductions(
+            grossVal,
+            deductions.deliveryClaim,
+            deductions.totalDeductionsAndPenalties,
+            deductions.extraAndShort
+          )
+        : prev.paid_amount;
+      return {
+        ...prev,
+        summary_delivery_claim: deductions.deliveryClaim,
+        summary_deduction_amount: deductions.totalDeductionsAndPenalties,
+        summary_deduction_type: deductions.deductionSummaryText,
+        val_ex_short: deductions.extraAndShort,
+        paid_amount: nextPaid
+      };
+    });
   };
 
   const handleExportPdf = (filteredPayments: PaymentMaster[]) => {

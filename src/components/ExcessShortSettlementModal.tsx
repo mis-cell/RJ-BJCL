@@ -1026,6 +1026,24 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
       if (cleanSaudaKey) {
         localStorage.setItem(`sauda_settlement_${cleanSaudaKey}`, JSON.stringify(cacheObj));
       }
+      if (supabase && existingRecordId && selectedRateMode !== 'custom' && totalFinalReceiptClaimMt > 0) {
+        supabase
+          .from('sauda_check_point_deductions')
+          .update({
+            total_received_mt: payload.total_received_mt,
+            variation_type: payload.variation_type,
+            variation_mt: payload.variation_mt,
+            deduction_qty_mt: payload.deduction_qty_mt,
+            deduction_qty_qtl: payload.deduction_qty_qtl,
+            rate_difference: payload.rate_difference,
+            applicable_rate: payload.applicable_rate,
+            deduction_amount: payload.deduction_amount,
+            remarks: payload.remarks,
+            grade_breakdown: payload.grade_breakdown
+          })
+          .eq('id', existingRecordId)
+          .then(() => {}, () => {});
+      }
     } catch (_e) {}
   }, [
     contractMt,
