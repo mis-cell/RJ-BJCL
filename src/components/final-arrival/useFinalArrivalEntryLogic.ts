@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
-import { ArrivalDetailRow, FinalArrivalEntryFormData } from './finalArrivalTypes';
+import { ArrivalDetailRow, FinalArrivalEntryFormData, getLowestNetWeight } from './finalArrivalTypes';
 import { dbModule } from '../../services/dbModule';
 import { supabase } from '../../lib/supabase';
 import { enforceEditOrDeletePermission } from '../../lib/permissions';
@@ -55,12 +55,14 @@ export function useFinalArrivalEntryLogic({ initialData, onSave }: UseFinalArriv
     }
     
     // Map and sanitize all columns properly
+    const headerUnit = (initialFA?.unit_name || initialFA?.unit || '').toString().trim().toUpperCase();
     const mapped: ArrivalDetailRow[] = pDetails.map((d: any, idx: number) => {
-      const u = (d.unit || initialFA?.unit_name || 'BALES').toString().trim().toUpperCase();
+      const rowU = (d.unit || '').toString().trim().toUpperCase();
+      const u = (headerUnit && headerUnit !== 'LOOSE') ? headerUnit : (rowU || headerUnit || 'BALES');
       const isLoose = u.includes('LOOSE') || u === 'LOOSE';
       const rawNetto = Number(d.netto_pnto) || Number(d.quantity_mt) || Number(d.challan_gross_wt) || Number(d.net_weight) || Number(d.weight) || 0;
-      const qChln = isLoose ? 0 : (d.quantity_chln !== undefined && d.quantity_chln !== null && d.quantity_chln !== '' ? Number(d.quantity_chln) : (Number(d.quantity) || Math.round(rawNetto)));
-      const qRcpt = isLoose ? 0 : (d.quantity_rcpt !== undefined && d.quantity_rcpt !== null && d.quantity_rcpt !== '' ? Number(d.quantity_rcpt) : (qChln || Number(d.quantity) || Math.round(rawNetto)));
+      const qChln = isLoose ? 0 : (Number(d.quantity_chln) > 0 ? Number(d.quantity_chln) : (Number(d.quantity) || Math.round(rawNetto)));
+      const qRcpt = isLoose ? 0 : (Number(d.quantity_rcpt) > 0 ? Number(d.quantity_rcpt) : (qChln || Number(d.quantity) || Math.round(rawNetto)));
 
       const rGradeCode = d.receipt_grade_code || d.grade_code || d.stock_grade_code || '';
       let rGradeName = d.receipt_grade_name || d.grade_name || d.stock_grade_name || d.arrival_grade || d.receipt_grade || '';
@@ -103,11 +105,27 @@ export function useFinalArrivalEntryLogic({ initialData, onSave }: UseFinalArriv
         netto_pnto: rawNetto,
         quantity_chln: qChln,
         quantity_rcpt: qRcpt,
-        unit: d.unit || u,
+        unit: u,
         remarks: d.remarks || '',
         marks_phota: d.marks_phota || ''
       };
     });
+
+    const targetWt = getLowestNetWeight(initialFA);
+    const currentWtSum = mapped.reduce((s, r) => s + (Number(r.netto_pnto) || 0), 0);
+    if (targetWt > 0 && mapped.length > 0 && Math.abs(currentWtSum - targetWt) > 0.005) {
+      let runningWt = 0;
+      mapped.forEach((r, idx) => {
+        if (idx === mapped.length - 1) {
+          r.netto_pnto = Math.max(0, Math.round((targetWt - runningWt) * 1000) / 1000);
+        } else {
+          const share = currentWtSum > 0 ? (Number(r.netto_pnto) || 0) / currentWtSum : 1 / mapped.length;
+          const allocated = Math.round(targetWt * share * 1000) / 1000;
+          r.netto_pnto = allocated;
+          runningWt += allocated;
+        }
+      });
+    }
 
     const padded = [...mapped];
     if (padded.length === 0) {
@@ -623,11 +641,12 @@ export function useFinalArrivalEntryLogic({ initialData, onSave }: UseFinalArriv
 
         if (parsedGrid && parsedGrid.length > 0) {
           const mappedGrid = parsedGrid.map((row: any, idx: number) => {
-            const rowUnit = (row.unit || amadUnit || 'BALES').toString().trim().toUpperCase();
+            const rawRowUnit = (row.unit || '').toString().trim().toUpperCase();
+            const rowUnit = (amadUnit && amadUnit !== 'LOOSE') ? amadUnit : (rawRowUnit || amadUnit || 'BALES');
             const isLoose = rowUnit.includes('LOOSE') || rowUnit === 'LOOSE';
             const rawNetto = Number(row.netto_pnto) || Number(row.quantity_mt) || Number(row.challan_gross_wt) || Number(row.net_weight) || 0;
-            const qChln = isLoose ? 0 : (row.quantity_chln !== undefined && row.quantity_chln !== null && row.quantity_chln !== '' ? Number(row.quantity_chln) : (Number(row.quantity) || Math.round(rawNetto)));
-            const qRcpt = isLoose ? 0 : (row.quantity_rcpt !== undefined && row.quantity_rcpt !== null && row.quantity_rcpt !== '' ? Number(row.quantity_rcpt) : (qChln || Number(row.quantity) || Math.round(rawNetto)));
+            const qChln = isLoose ? 0 : (Number(row.quantity_chln) > 0 ? Number(row.quantity_chln) : (Number(row.quantity) || Math.round(rawNetto)));
+            const qRcpt = isLoose ? 0 : (Number(row.quantity_rcpt) > 0 ? Number(row.quantity_rcpt) : (qChln || Number(row.quantity) || Math.round(rawNetto)));
 
             // Receipt Grade Name from Temporary Arrival's Arrival Item Details Grid table
             const rGradeCode = row.receipt_grade_code || row.grade_code || row.stock_grade_code || '';
@@ -672,11 +691,26 @@ export function useFinalArrivalEntryLogic({ initialData, onSave }: UseFinalArriv
               netto_pnto: rawNetto,
               quantity_chln: qChln,
               quantity_rcpt: qRcpt,
-              unit: row.unit || amadUnit,
+              unit: rowUnit,
               remarks: row.remarks || '',
               marks_phota: row.marks_phota || ''
             };
           });
+          const amadTargetWt = getLowestNetWeight(matchedAmad);
+          const amadGridWtSum = mappedGrid.reduce((s, r) => s + (Number(r.netto_pnto) || 0), 0);
+          if (amadTargetWt > 0 && mappedGrid.length > 0 && Math.abs(amadGridWtSum - amadTargetWt) > 0.005) {
+            let runningWt = 0;
+            mappedGrid.forEach((r, idx) => {
+              if (idx === mappedGrid.length - 1) {
+                r.netto_pnto = Math.max(0, Math.round((amadTargetWt - runningWt) * 1000) / 1000);
+              } else {
+                const share = amadGridWtSum > 0 ? (Number(r.netto_pnto) || 0) / amadGridWtSum : 1 / mappedGrid.length;
+                const allocated = Math.round(amadTargetWt * share * 1000) / 1000;
+                r.netto_pnto = allocated;
+                runningWt += allocated;
+              }
+            });
+          }
           setDetails(mappedGrid);
           return;
         } else if (matchedAmad.variety || matchedAmad.grading || matchedAmad.receipt_grade) {
@@ -867,11 +901,12 @@ export function useFinalArrivalEntryLogic({ initialData, onSave }: UseFinalArriv
 
         if (parsedGrid && parsedGrid.length > 0) {
           amadMappedGrid = parsedGrid.map((row: any, idx: number) => {
-            const rowUnit = (row.unit || amadUnit || 'BALES').toString().trim().toUpperCase();
+            const rawRowUnit = (row.unit || '').toString().trim().toUpperCase();
+            const rowUnit = (amadUnit && amadUnit !== 'LOOSE') ? amadUnit : (rawRowUnit || amadUnit || 'BALES');
             const isLoose = rowUnit.includes('LOOSE') || rowUnit === 'LOOSE';
             const rawNetto = Number(row.netto_pnto) || Number(row.quantity_mt) || Number(row.challan_gross_wt) || Number(row.net_weight) || 0;
-            const qChln = isLoose ? 0 : (row.quantity_chln !== undefined && row.quantity_chln !== null && row.quantity_chln !== '' ? Number(row.quantity_chln) : (Number(row.quantity) || Math.round(rawNetto)));
-            const qRcpt = isLoose ? 0 : (row.quantity_rcpt !== undefined && row.quantity_rcpt !== null && row.quantity_rcpt !== '' ? Number(row.quantity_rcpt) : (qChln || Number(row.quantity) || Math.round(rawNetto)));
+            const qChln = isLoose ? 0 : (Number(row.quantity_chln) > 0 ? Number(row.quantity_chln) : (Number(row.quantity) || Math.round(rawNetto)));
+            const qRcpt = isLoose ? 0 : (Number(row.quantity_rcpt) > 0 ? Number(row.quantity_rcpt) : (qChln || Number(row.quantity) || Math.round(rawNetto)));
 
             const rGradeCode = row.receipt_grade_code || row.grade_code || row.stock_grade_code || '';
             let rGradeName = row.receipt_grade_name || row.receipt_grade || row.grade_name || row.stock_grade_name || row.arrival_grade || '';
@@ -915,7 +950,7 @@ export function useFinalArrivalEntryLogic({ initialData, onSave }: UseFinalArriv
               netto_pnto: rawNetto,
               quantity_chln: qChln,
               quantity_rcpt: qRcpt,
-              unit: row.unit || amadUnit,
+              unit: rowUnit,
               remarks: row.remarks || '',
               marks_phota: row.marks_phota || ''
             };
@@ -1044,8 +1079,10 @@ export function useFinalArrivalEntryLogic({ initialData, onSave }: UseFinalArriv
             if (matchA) agencyName = matchA.agency_name;
           }
 
-          const nettoVal = Number(fd.quantity_mt || fd.quantity || fd.netto_pnto || 0);
-          const rowUnit = (fd.unit || formData.unit_name || 'BALES').toString().trim().toUpperCase();
+          const nettoVal = Number(fd.weight_mt || fd.quantity_mt || fd.netto_pnto || fd.weight || fd.quantity || 0);
+          const headerUnit = (formData.unit_name || '').toString().trim().toUpperCase();
+          const fdUnit = (fd.unit || '').toString().trim().toUpperCase();
+          const rowUnit = (headerUnit && headerUnit !== 'LOOSE') ? headerUnit : (fdUnit || headerUnit || 'BALES');
           const isLoose = rowUnit.includes('LOOSE') || rowUnit === 'LOOSE';
 
           return {
@@ -1061,10 +1098,25 @@ export function useFinalArrivalEntryLogic({ initialData, onSave }: UseFinalArriv
             netto_pnto: nettoVal,
             quantity_chln: isLoose ? 0 : Math.round(nettoVal),
             quantity_rcpt: isLoose ? 0 : Math.round(nettoVal),
-            unit: fd.unit || rowUnit,
+            unit: rowUnit,
             remarks: fd.remarks || ''
           };
         });
+        const targetWt = getLowestNetWeight(formData);
+        const currentWtSum = newDetails.reduce((s, r) => s + (Number(r.netto_pnto) || 0), 0);
+        if (targetWt > 0 && newDetails.length > 0 && Math.abs(currentWtSum - targetWt) > 0.005) {
+          let runningWt = 0;
+          newDetails.forEach((r, idx) => {
+            if (idx === newDetails.length - 1) {
+              r.netto_pnto = Math.max(0, Math.round((targetWt - runningWt) * 1000) / 1000);
+            } else {
+              const share = currentWtSum > 0 ? (Number(r.netto_pnto) || 0) / currentWtSum : 1 / newDetails.length;
+              const allocated = Math.round(targetWt * share * 1000) / 1000;
+              r.netto_pnto = allocated;
+              runningWt += allocated;
+            }
+          });
+        }
         setDetails(newDetails);
       }
     } catch (err) {

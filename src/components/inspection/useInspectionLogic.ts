@@ -677,6 +677,160 @@ export function useInspectionLogic() {
 
   useLiveAutoRefresh(fetchInspectionRecords, [], { tables: ['material_inspection', 'material_inspection_details', 'final_arrival', 'purchase_master', 'purchase_detail_master', 'temporary_material_received', 'moisture_logic', 'deduction_master'] });
 
+  const getAuthoritativeArrivalWeightMt = (rec: any): number => {
+    if (!rec) return 0;
+    const netCandidates = [
+      Number(rec.weight_reduced),
+      Number(rec.electronic_net_weight),
+      Number(rec.supplier_net_weight),
+      Number(rec.challan_material_weight)
+    ].filter(v => typeof v === 'number' && !isNaN(v) && v > 0);
+    if (netCandidates.length > 0) {
+      return Math.round(Math.min(...netCandidates) * 1000) / 1000;
+    }
+    const fallbackCandidates = [
+      rec.weight_qtl ? Number(rec.weight_qtl) / 10 : 0,
+      Number(rec.net_weight),
+      Number(rec.weight),
+      Number(rec.received_weight_mt)
+    ].filter(v => typeof v === 'number' && !isNaN(v) && v > 0);
+    return fallbackCandidates.length > 0 ? Math.round(fallbackCandidates[0] * 1000) / 1000 : 0;
+  };
+
+  const parseGridSafe = (raw: any): any[] => {
+    if (!raw) return [];
+    if (Array.isArray(raw)) return raw;
+    if (typeof raw === 'string') {
+      try {
+        const parsed = (raw === 'undefined' || raw === 'null') ? [] : JSON.parse(raw);
+        return Array.isArray(parsed) ? parsed : [];
+      } catch (e) {
+        return [];
+      }
+    }
+    return [];
+  };
+
+  const getAuthoritativeArrivalPackets = (faRec: any, tmrRec?: any): number => {
+    for (const src of [tmrRec, faRec]) {
+      if (!src) continue;
+      const grid = parseGridSafe(src.grid_details || src.details || src.items);
+      let sumRcptOrChln = 0;
+      grid.forEach((r: any) => {
+        const rcpt = Number(r.quantity_rcpt) || Number(r.rcpt) || 0;
+        const chln = Number(r.quantity_chln) || Number(r.chln) || 0;
+        if (rcpt > 0) sumRcptOrChln += rcpt;
+        else if (chln > 0) sumRcptOrChln += chln;
+      });
+      if (sumRcptOrChln > 0) return sumRcptOrChln;
+      const hdrPkts = Number(src.total_packets || src.packets || 0);
+      if (hdrPkts > 0) return hdrPkts;
+    }
+    return 0;
+  };
+
+  const reconcileDetailsWithArrival = (
+    rows: InspectionDetailRow[],
+    faRec?: any,
+    tmrRec?: any
+  ): InspectionDetailRow[] => {
+    if (!rows || rows.length === 0) return rows;
+
+    const targetWtMt = getAuthoritativeArrivalWeightMt(faRec) || getAuthoritativeArrivalWeightMt(tmrRec);
+    const tmrUnit = String(tmrRec?.unit_name || tmrRec?.unit || '').trim().toUpperCase();
+    const faUnit = String(faRec?.unit_name || faRec?.unit || '').trim().toUpperCase();
+    const targetUnit = (tmrUnit && tmrUnit !== 'LOOSE') ? tmrUnit : ((faUnit && faUnit !== 'LOOSE') ? faUnit : (faUnit || tmrUnit || ''));
+    const isTargetLoose = targetUnit.includes('LOOSE');
+    const targetPackets = isTargetLoose ? 0 : getAuthoritativeArrivalPackets(faRec, tmrRec);
+
+    const tmrGrid = parseGridSafe(tmrRec?.grid_details || tmrRec?.details || tmrRec?.items);
+    const faGrid = parseGridSafe(faRec?.grid_details || faRec?.details || faRec?.items);
+    const refGrid = tmrGrid.length === rows.length ? tmrGrid : (faGrid.length === rows.length ? faGrid : []);
+
+    // 1. Reconcile Unit on each row
+    const updated = rows.map((r, idx) => {
+      const copy = { ...r };
+      const curU = String(copy.unit || '').trim().toUpperCase();
+      if (targetUnit && !isTargetLoose && (!curU || curU === 'LOOSE' || curU === 'BALES')) {
+        copy.unit = targetUnit;
+      } else if (targetUnit && !curU) {
+        copy.unit = targetUnit;
+      }
+      if (refGrid[idx]) {
+        const refRow = refGrid[idx];
+        const refAgency = refRow.agency_name || refRow.agency || '';
+        const refMarka = refRow.challan_marka_name || refRow.marka_name || refRow.marka || '';
+        if (!copy.agency && refAgency) copy.agency = refAgency;
+        if (!copy.marks && refMarka) copy.marks = refMarka;
+      }
+      return copy;
+    });
+
+    // 2. Reconcile Quantity (Packets/Drums/Bales) if not LOOSE
+    if (!isTargetLoose && targetPackets > 0) {
+      const currentQtySum = updated.reduce((s, r) => s + (Number(r.quantity) || 0), 0);
+      if (currentQtySum !== targetPackets) {
+        const refRowQtys = refGrid.map((r: any) => Number(r.quantity_rcpt) || Number(r.rcpt) || Number(r.quantity_chln) || Number(r.chln) || 0);
+        const refQtySum = refRowQtys.reduce((a, b) => a + b, 0);
+        if (refQtySum === targetPackets) {
+          updated.forEach((r, idx) => {
+            r.quantity = refRowQtys[idx];
+          });
+        } else {
+          let runningQty = 0;
+          updated.forEach((r, idx) => {
+            if (idx === updated.length - 1) {
+              r.quantity = Math.max(0, Math.round(targetPackets - runningQty));
+            } else {
+              const share = currentQtySum > 0 ? (Number(r.quantity) || 0) / currentQtySum : 1 / updated.length;
+              const allocatedQty = Math.round(targetPackets * share);
+              r.quantity = allocatedQty;
+              runningQty += allocatedQty;
+            }
+          });
+        }
+      }
+    }
+
+    // 3. Reconcile Gross Weight (M.Ton) to match authoritative Arrival Final Weight (e.g. 10.830 MT instead of 13.030 MT PO weight)
+    if (targetWtMt > 0) {
+      const currentGrossSum = updated.reduce((s, r) => s + (Number(r.challan_gross_wt || r.receipt_gross_wt || 0)), 0);
+      if (Math.abs(currentGrossSum - targetWtMt) > 0.005) {
+        const refRowWts = refGrid.map((r: any) => Number(r.netto_pnto || r.challan_gross_wt || r.receipt_gross_wt || r.weight_mt || 0));
+        const refWtSum = refRowWts.reduce((a, b) => a + b, 0);
+        const useRefWts = refGrid.length === updated.length && Math.abs(refWtSum - targetWtMt) <= 0.005;
+
+        let runningWt = 0;
+        const totalQtyForShare = updated.reduce((s, r) => s + (Number(r.quantity) || 0), 0);
+
+        updated.forEach((r, idx) => {
+          let newGross = 0;
+          if (useRefWts) {
+            newGross = Math.round(refRowWts[idx] * 1000) / 1000;
+          } else if (idx === updated.length - 1) {
+            newGross = Math.max(0, Math.round((targetWtMt - runningWt) * 1000) / 1000);
+          } else {
+            const share = currentGrossSum > 0
+              ? (Number(r.challan_gross_wt || r.receipt_gross_wt || 0)) / currentGrossSum
+              : (totalQtyForShare > 0 ? (Number(r.quantity) || 0) / totalQtyForShare : 1 / updated.length);
+            newGross = Math.round(targetWtMt * share * 1000) / 1000;
+            runningWt += newGross;
+          }
+
+          r.challan_gross_wt = newGross;
+          r.receipt_gross_wt = newGross;
+          r.gross_weight_batch = newGross;
+          const computed = computeDetailRowWeights(r);
+          Object.assign(r, computed);
+          r.qty_in_mt = calculateQtyInMt(r);
+          r.amount = calculateRowAmount(r);
+        });
+      }
+    }
+
+    return updated;
+  };
+
   const loadDetailsForPo = async (poNo: string, overrideArrivalData?: any) => {
     if (!poNo) return;
     try {
@@ -852,8 +1006,14 @@ export function useInspectionLogic() {
         });
 
         if (details.length > 0) {
-          setDetailRows(details);
-          showToast(`Loaded ${details.length} PO detail rows.`);
+          const activeArrKey = String(overrideArrivalData?.final_arrival_no || overrideArrivalData?.arrival_no || headerForm.arrival_no || headerForm.mr_no || "").trim().toUpperCase();
+          const matchedFa = overrideArrivalData || finalArrivalList.find(f => {
+            const fk = String(f.final_arrival_no || f.arrival_no || f.temporary_arrival_no || f.mr_no || "").trim().toUpperCase();
+            return fk && activeArrKey && fk === activeArrKey;
+          });
+          const reconciled = reconcileDetailsWithArrival(details, matchedFa);
+          setDetailRows(reconciled);
+          showToast(`Loaded ${reconciled.length} PO detail rows.`);
         }
       }
     } catch (e) {
@@ -924,45 +1084,54 @@ export function useInspectionLogic() {
         }
       }
 
-      // If grid_details was not embedded, query Supabase for arrival record details
-      if (rawGridItems.length === 0 && supabase) {
+      // Always query Supabase for both Final Arrival and Temporary Arrival so we can reconcile exact lorry Weight (M.Ton), Unit, and Packets
+      let foundFa: any = null;
+      let foundTmr: any = null;
+      if (supabase) {
         try {
           const arrClean = arrNo.trim();
+          const tempNoClean = String(fa.temporary_arrival_no || fa.amad_no || arrClean).trim();
           const [faDbRes, tmrDbRes, fadRes, tmdRes, midRes, millDetailRes] = await Promise.all([
-            arrClean ? supabase.from('final_arrival').select('*').or(`final_arrival_no.eq.${arrClean},arrival_no.eq.${arrClean},temporary_arrival_no.eq.${arrClean}`).maybeSingle() : Promise.resolve({ data: null }),
-            arrClean ? supabase.from('temporary_material_received').select('*').eq('temporary_arrival_no', arrClean).maybeSingle() : Promise.resolve({ data: null }),
+            arrClean ? supabase.from('final_arrival').select('*').or(`final_arrival_no.eq.${arrClean},arrival_no.eq.${arrClean},temporary_arrival_no.eq.${arrClean},mr_no.eq.${arrClean}`).limit(1) : Promise.resolve({ data: null }),
+            (arrClean || tempNoClean) ? supabase.from('temporary_material_received').select('*').or(`temporary_arrival_no.eq.${arrClean},amad_no.eq.${arrClean},arrival_no.eq.${arrClean},mr_no.eq.${arrClean}${tempNoClean && tempNoClean !== arrClean ? `,temporary_arrival_no.eq.${tempNoClean},amad_no.eq.${tempNoClean}` : ''}`).limit(1) : Promise.resolve({ data: null }),
             arrClean ? supabase.from('final_arrival_details').select('*').eq('final_arrival_no', arrClean) : Promise.resolve({ data: null }),
             arrClean ? supabase.from('temporary_material_details').select('*').eq('temporary_arrival_no', arrClean) : Promise.resolve({ data: null }),
             arrClean ? supabase.from('material_inspection_details').select('*').eq('mr_no', arrClean) : Promise.resolve({ data: null }),
             arrClean ? supabase.from('mill_inspection_detail').select('*').eq('mr_no', arrClean) : Promise.resolve({ data: null })
           ]);
 
-          const foundFa = faDbRes.data;
-          const foundTmr = tmrDbRes.data;
+          foundFa = Array.isArray(faDbRes.data) ? faDbRes.data[0] : faDbRes.data;
+          foundTmr = Array.isArray(tmrDbRes.data) ? tmrDbRes.data[0] : tmrDbRes.data;
           const dbApmc = Number(foundTmr?.apmc_fees ?? foundTmr?.arival_apmc_fees ?? foundFa?.apmc_fees ?? foundFa?.arival_apmc_fees ?? 0);
           const dbFaArrDate = sanitizeDate(foundFa?.date || foundFa?.arrival_date || foundFa?.final_arrival_date);
-          if (dbApmc > 0 || dbFaArrDate) {
+          const dbUnit = String(foundTmr?.unit_name || foundTmr?.unit || foundFa?.unit_name || foundFa?.unit || '').trim().toUpperCase();
+          if (dbApmc > 0 || dbFaArrDate || (dbUnit && dbUnit !== 'LOOSE')) {
             setHeaderForm(prev => ({
               ...prev,
               ...(dbApmc > 0 ? { arival_apmc_fees: dbApmc } : {}),
-              ...(dbFaArrDate ? { mr_date: dbFaArrDate, arrival_date: dbFaArrDate } : {})
+              ...(dbFaArrDate ? { mr_date: dbFaArrDate, arrival_date: dbFaArrDate } : {}),
+              ...(dbUnit && dbUnit !== 'LOOSE' ? { unit_name: dbUnit } : {})
             }));
           }
 
-          if (midRes.data && Array.isArray(midRes.data) && midRes.data.length > 0) {
-            rawGridItems = midRes.data;
-          } else if (millDetailRes.data && Array.isArray(millDetailRes.data) && millDetailRes.data.length > 0) {
-            rawGridItems = millDetailRes.data;
-          } else if (foundFa?.grid_details) {
-            const parsed = typeof foundFa.grid_details === 'string' ? JSON.parse(foundFa.grid_details) : foundFa.grid_details;
-            if (Array.isArray(parsed) && parsed.length > 0) rawGridItems = parsed;
-          } else if (foundTmr?.grid_details) {
-            const parsed = typeof foundTmr.grid_details === 'string' ? JSON.parse(foundTmr.grid_details) : foundTmr.grid_details;
-            if (Array.isArray(parsed) && parsed.length > 0) rawGridItems = parsed;
-          } else if (fadRes.data && Array.isArray(fadRes.data) && fadRes.data.length > 0) {
-            rawGridItems = fadRes.data;
-          } else if (tmdRes.data && Array.isArray(tmdRes.data) && tmdRes.data.length > 0) {
-            rawGridItems = tmdRes.data;
+          if (rawGridItems.length === 0) {
+            if (foundTmr?.grid_details) {
+              const parsed = parseGridSafe(foundTmr.grid_details);
+              if (parsed.length > 0) rawGridItems = parsed;
+            }
+            if (rawGridItems.length === 0 && foundFa?.grid_details) {
+              const parsed = parseGridSafe(foundFa.grid_details);
+              if (parsed.length > 0) rawGridItems = parsed;
+            }
+            if (rawGridItems.length === 0 && midRes.data && Array.isArray(midRes.data) && midRes.data.length > 0) {
+              rawGridItems = midRes.data;
+            } else if (rawGridItems.length === 0 && millDetailRes.data && Array.isArray(millDetailRes.data) && millDetailRes.data.length > 0) {
+              rawGridItems = millDetailRes.data;
+            } else if (rawGridItems.length === 0 && fadRes.data && Array.isArray(fadRes.data) && fadRes.data.length > 0) {
+              rawGridItems = fadRes.data;
+            } else if (rawGridItems.length === 0 && tmdRes.data && Array.isArray(tmdRes.data) && tmdRes.data.length > 0) {
+              rawGridItems = tmdRes.data;
+            }
           }
         } catch (e) {
           console.warn("DB lookup error for arrival details:", e);
@@ -1097,15 +1266,16 @@ export function useInspectionLogic() {
 
         const validDetails = details.filter(r => Boolean(r.arrival_grade || r.stock_grade_name || (Number(r.quantity) > 0) || (Number(r.challan_gross_wt) > 0)));
         if (validDetails.length > 0) {
-          setDetailRows(validDetails);
-          showToast(`Loaded ${validDetails.length} arrival inspection detail rows.`);
+          const reconciled = reconcileDetailsWithArrival(validDetails, foundFa || fa, foundTmr);
+          setDetailRows(reconciled);
+          showToast(`Loaded ${reconciled.length} arrival inspection detail rows.`);
           return;
         }
       }
 
       // Fallback: If no arrival grid items found, load from PO
       if (fa.po_no) {
-        await loadDetailsForPo(fa.po_no, fa);
+        await loadDetailsForPo(fa.po_no, foundFa || fa);
       }
       showToast(`Selected Final Arrival #${arrNo}`);
     } catch (e) {
@@ -1183,7 +1353,10 @@ export function useInspectionLogic() {
     }
 
     if (field === 'po_no' && value) {
-      loadDetailsForPo(String(value));
+      const hasExistingArrivalRows = detailRows.some(r => (r.arrival_grade || r.stock_grade_name) && Number(r.challan_gross_wt) > 0);
+      if (!hasExistingArrivalRows) {
+        loadDetailsForPo(String(value));
+      }
     }
   };
 
@@ -1403,11 +1576,16 @@ export function useInspectionLogic() {
 
     try {
       if (supabase && record.mr_no) {
-        const [midRes, millDetailRes, inspDetailRes] = await Promise.all([
+        const recClean = String(record.mr_no || record.arrival_no || "").trim();
+        const [midRes, millDetailRes, inspDetailRes, faEditRes, tmrEditRes] = await Promise.all([
           supabase.from("material_inspection_details").select("*").eq("mr_no", record.mr_no).order("srl_no", { ascending: true }),
           supabase.from("mill_inspection_detail").select("*").eq("mr_no", record.mr_no).order("srl_no", { ascending: true }),
-          supabase.from("inspection_details").select("*").eq("mr_no", record.mr_no).order("srl_no", { ascending: true })
+          supabase.from("inspection_details").select("*").eq("mr_no", record.mr_no).order("srl_no", { ascending: true }),
+          recClean ? supabase.from("final_arrival").select("*").or(`final_arrival_no.eq.${recClean},arrival_no.eq.${recClean},temporary_arrival_no.eq.${recClean},mr_no.eq.${recClean}`).limit(1) : Promise.resolve({ data: null }),
+          recClean ? supabase.from("temporary_material_received").select("*").or(`temporary_arrival_no.eq.${recClean},amad_no.eq.${recClean},arrival_no.eq.${recClean},mr_no.eq.${recClean}`).limit(1) : Promise.resolve({ data: null })
         ]);
+        const dbFaForEdit = Array.isArray(faEditRes.data) ? faEditRes.data[0] : faEditRes.data;
+        const dbTmrForEdit = Array.isArray(tmrEditRes.data) ? tmrEditRes.data[0] : tmrEditRes.data;
 
         let rawDetails = (midRes.data && midRes.data.length > 0)
           ? midRes.data
@@ -1517,7 +1695,16 @@ export function useInspectionLogic() {
             row.amount = (Number(d.amount) > 0) ? Number(d.amount) : calculateRowAmount(row);
             return row;
           });
-          setDetailRows(mappedRows);
+          const reconciledEditRows = reconcileDetailsWithArrival(
+            mappedRows,
+            dbFaForEdit || matchedFaForEdit || record,
+            dbTmrForEdit
+          );
+          const resolvedEditUnit = String(dbTmrForEdit?.unit_name || dbTmrForEdit?.unit || dbFaForEdit?.unit_name || matchedFaForEdit?.unit_name || '').trim().toUpperCase();
+          if (resolvedEditUnit && resolvedEditUnit !== 'LOOSE') {
+            setHeaderForm(prev => ({ ...prev, unit_name: resolvedEditUnit }));
+          }
+          setDetailRows(reconciledEditRows);
         }
 
         const [dedPrimaryRes, dedFallbackRes] = await Promise.all([

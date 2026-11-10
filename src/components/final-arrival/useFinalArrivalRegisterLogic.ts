@@ -97,10 +97,11 @@ export function useFinalArrivalRegisterLogic({ isArchiveView = false }: UseFinal
     if (records.length === 0) setLoading(true);
     try {
       const targetTable = isArchiveView ? 'm.r_archive' : 'final_arrival';
-      let { data, error } = await supabase
-        .from(targetTable)
-        .select('*')
-        .order('created_at', { ascending: false });
+      const [mainRes, tempRes] = await Promise.all([
+        supabase.from(targetTable).select('*').order('created_at', { ascending: false }),
+        supabase.from('temporary_material_received').select('temporary_arrival_no,amad_no,arrival_no,mr_no,unit_name,unit,total_packets,packets,grid_details,weight_reduced,electronic_net_weight,supplier_net_weight,challan_material_weight,weight_qtl')
+      ]);
+      let { data, error } = mainRes;
 
       if (isArchiveView && (error || !data || data.length === 0)) {
         const altRes = await supabase.from('mr_archive').select('*').order('created_at', { ascending: false });
@@ -116,10 +117,42 @@ export function useFinalArrivalRegisterLogic({ isArchiveView = false }: UseFinal
 
       if (error) throw error;
 
+      const tempMap = new Map<string, any>();
+      (tempRes.data || []).forEach((t: any) => {
+        [t.temporary_arrival_no, t.amad_no, t.arrival_no, t.mr_no].forEach(k => {
+          const clean = String(k || '').trim().toUpperCase();
+          if (clean) tempMap.set(clean, t);
+        });
+      });
+
       let loadedRecords = (data || []) as FinalArrivalRecord[];
       if (!isArchiveView) {
         loadedRecords = loadedRecords.filter(r => !(r as any).archived_at);
       }
+
+      loadedRecords = loadedRecords.map(r => {
+        const keys = [(r as any).temporary_arrival_no, r.final_arrival_no, (r as any).arrival_no, r.mr_no]
+          .map(k => String(k || '').trim().toUpperCase())
+          .filter(Boolean);
+        let matchedTemp: any = null;
+        for (const k of keys) {
+          if (tempMap.has(k)) {
+            matchedTemp = tempMap.get(k);
+            break;
+          }
+        }
+        if (!matchedTemp) return r;
+        const tempPackets = getRcptQty(matchedTemp) || Number(matchedTemp.total_packets || matchedTemp.packets || 0);
+        const curPackets = getRcptQty(r);
+        const tempUnit = String(matchedTemp.unit_name || matchedTemp.unit || '').trim().toUpperCase();
+        const curUnit = String(r.unit_name || (r as any).unit || '').trim().toUpperCase();
+        return {
+          ...r,
+          unit_name: (!curUnit || (curUnit === 'LOOSE' && tempUnit && tempUnit !== 'LOOSE')) ? (tempUnit || r.unit_name) : r.unit_name,
+          ...(curPackets === 0 && tempPackets > 0 ? { total_packets: tempPackets } : {})
+        };
+      });
+
       setRecords(loadedRecords);
 
       let weightSumQtl = 0;
@@ -127,7 +160,7 @@ export function useFinalArrivalRegisterLogic({ isArchiveView = false }: UseFinal
       const uniqueVehicles = new Set();
 
       loadedRecords.forEach(r => {
-        weightSumQtl += Number(r.weight_qtl) || 0;
+        weightSumQtl += Number(r.weight_qtl) || (getLowestNetWeight(r) * 10) || 0;
         packetsSum += getRcptQty(r);
         if (r.lorry_number || (r as any).lorry_no || (r as any).vehicle_no) {
           uniqueVehicles.add(String(r.lorry_number || (r as any).lorry_no || (r as any).vehicle_no).trim().toUpperCase());

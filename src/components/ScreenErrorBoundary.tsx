@@ -30,6 +30,11 @@ export class ScreenErrorBoundary extends Component<Props, State> {
   }
 
   private handleReset = () => {
+    const errMsg = this.state.error?.message || '';
+    if (/dynamically imported module|failed to fetch|loading chunk/i.test(errMsg)) {
+      window.location.reload();
+      return;
+    }
     this.setState({ hasError: false, error: null });
     if (this.props.onReset) {
       this.props.onReset();

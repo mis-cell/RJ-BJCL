@@ -194,6 +194,8 @@ export const getRcptQty = (item: any): number => {
   const itemUnit = (item.unit_name || item.unit || item.unit_code || '').toString().trim().toUpperCase();
   if (itemUnit.includes('LOOSE') || itemUnit === 'LOOSE') return 0;
 
+  const headerPackets = Number(item.total_packets || item.packets || 0);
+
   if (item.grid_details) {
     let grid: any[] = [];
     if (typeof item.grid_details === 'string') {
@@ -205,30 +207,30 @@ export const getRcptQty = (item: any): number => {
       grid = item.grid_details;
     }
     if (grid.length > 0) {
-      let hasRcpt = false;
-      let sumRcpt = 0;
+      let sumRcptOrChln = 0;
+      let sumFallback = 0;
       grid.forEach((row: any) => {
         const rowUnit = (row.unit || itemUnit).toString().trim().toUpperCase();
-        if (rowUnit.includes('LOOSE') || rowUnit === 'LOOSE') return;
-        const val = row.quantity_rcpt !== undefined && row.quantity_rcpt !== null && row.quantity_rcpt !== ''
-          ? Number(row.quantity_rcpt)
-          : (row.rcpt !== undefined && row.rcpt !== null && row.rcpt !== '' ? Number(row.rcpt) : NaN);
-        if (!isNaN(val)) {
-          hasRcpt = true;
-          sumRcpt += val;
+        // Only treat row as LOOSE if header itemUnit is not explicitly BALES/DRUMS
+        if (!itemUnit && (rowUnit.includes('LOOSE') || rowUnit === 'LOOSE')) return;
+        const rcpt = Number(row.quantity_rcpt) || Number(row.rcpt) || 0;
+        const chln = Number(row.quantity_chln) || Number(row.chln) || 0;
+        if (rcpt > 0) {
+          sumRcptOrChln += rcpt;
+        } else if (chln > 0) {
+          sumRcptOrChln += chln;
+        }
+        const other = Number(row.quantity) || Number(row.qty) || Number(row.bales) || Number(row.packets) || 0;
+        if (other > 0 && !(row.unit && String(row.unit).trim().toUpperCase().includes('LOOSE'))) {
+          sumFallback += other;
         }
       });
-      if (hasRcpt) return sumRcpt;
-
-      const fallback = grid.reduce((acc: number, row: any) => {
-        const rowUnit = (row.unit || itemUnit).toString().trim().toUpperCase();
-        if (rowUnit.includes('LOOSE') || rowUnit === 'LOOSE') return acc;
-        return acc + (Number(row.quantity_rcpt) || Number(row.rcpt) || Number(row.quantity) || Number(row.qty) || 0);
-      }, 0);
-      if (fallback > 0) return fallback;
+      if (sumRcptOrChln > 0) return sumRcptOrChln;
+      if (headerPackets > 0) return headerPackets;
+      if (sumFallback > 0) return sumFallback;
     }
   }
-  return Number(item.total_packets || item.packets || 0);
+  return headerPackets;
 };
 
 export const getLowestNetWeight = (item: any): number => {
