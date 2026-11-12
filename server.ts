@@ -7,7 +7,7 @@ import aiGatewayRouter from "./src/lib/ai-gateway.ts";
 import nodemailer from "nodemailer";
 import imaps from 'imap-simple';
 import { simpleParser } from 'mailparser';
-import { serverLocalDb, executeSelect, executeInsert, executeUpsert, executeUpdate, executeDelete, executeRpc, syncPendingDataToLocalPostgres } from "./src/lib/serverPostgresDb.ts";
+import { serverLocalDb, executeSelect, executeInsert, executeUpsert, executeUpdate, executeDelete, executeRpc, syncPendingDataToLocalPostgres, ensureLocalPostgresDatabaseAndHourlyBackup } from "./src/lib/serverPostgresDb.ts";
 
 // Pure Local PostgreSQL database instance (No Supabase connection or dependency)
 const supabase = serverLocalDb;
@@ -2326,6 +2326,9 @@ async function startServer() {
 
   const server = app.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on http://localhost:${PORT}`);
+    ensureLocalPostgresDatabaseAndHourlyBackup().catch(err => {
+      console.warn("Database auto-restore/backup check skipped:", err?.message || err);
+    });
     syncEmailsBackground().catch(err => {
       console.error("Background email sync failed to start:", err);
     });

@@ -2004,3 +2004,150 @@ export const serverLocalDb = {
     return executeRpc(func, args);
   }
 };
+
+let hourlyBackupTimerStarted = false;
+
+/**
+ * Ensures local PostgreSQL database `bjcl_db` exists (restoring from latest backup, `postgres` DB, or local snapshot if missing/empty)
+ * and schedules an automatic hourly pg_dump backup to ~/backups / /home/ubuntu/backups.
+ */
+export async function ensureLocalPostgresDatabaseAndHourlyBackup(): Promise<void> {
+  const { exec } = await import('child_process');
+  const { promisify } = await import('util');
+  const execAsync = promisify(exec);
+
+  const host = process.env.PGHOST || process.env.LOCAL_DB_HOST || '127.0.0.1';
+  const port = Number(process.env.PGPORT || process.env.LOCAL_DB_PORT) || 5432;
+  const user = process.env.PGUSER || process.env.LOCAL_DB_USER || 'postgres';
+  const password = process.env.PGPASSWORD || process.env.LOCAL_DB_PASSWORD || 'postgres';
+  const targetDb = process.env.PGDATABASE || process.env.LOCAL_DB_NAME || 'bjcl_db';
+
+  const maintPool = new Pool({
+    host,
+    port,
+    database: 'postgres',
+    user,
+    password,
+    connectionTimeoutMillis: 3000,
+  });
+
+  try {
+    const dbCheck = await maintPool.query(`SELECT 1 FROM pg_database WHERE datname = $1`, [targetDb]);
+    if (dbCheck.rowCount === 0) {
+      console.log(`[DB Auto-Restore] Database "${targetDb}" does not exist. Creating "${targetDb}" now...`);
+      await maintPool.query(`CREATE DATABASE "${targetDb.replace(/"/g, '')}"`);
+    }
+
+    // Check if targetDb has tables (e.g., sauda_check_point)
+    const targetCheckPool = new Pool({ host, port, database: targetDb, user, password, connectionTimeoutMillis: 3000 });
+    let hasTables = false;
+    try {
+      const tblRes = await targetCheckPool.query(
+        `SELECT COUNT(*)::int AS cnt FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'sauda_check_point'`
+      );
+      hasTables = (tblRes.rows?.[0]?.cnt || 0) > 0;
+    } catch (_e) {
+      hasTables = false;
+    } finally {
+      await targetCheckPool.end().catch(() => {});
+    }
+
+    if (!hasTables) {
+      console.log(`[DB Auto-Restore] Database "${targetDb}" is empty. Checking for latest backup or live tables in "postgres" DB...`);
+      const homeDir = process.env.HOME || '/home/ubuntu';
+      const candidateDirs = ['/home/ubuntu/backups', path.join(homeDir, 'backups'), '/var/backups', process.cwd()];
+      let newestDump = '';
+      let newestMtime = 0;
+
+      for (const dir of candidateDirs) {
+        if (!fs.existsSync(dir)) continue;
+        const files = fs.readdirSync(dir);
+        for (const f of files) {
+          if (f.endsWith('.dump') || f.endsWith('.backup')) {
+            const full = path.join(dir, f);
+            try {
+              const st = fs.statSync(full);
+              if (st.size > 1024 && st.mtimeMs > newestMtime) {
+                newestMtime = st.mtimeMs;
+                newestDump = full;
+              }
+            } catch (_e) {}
+          }
+        }
+      }
+
+      // Check if "postgres" DB already holds sauda_check_point rows
+      let postgresHasLiveTables = false;
+      try {
+        const pgTbl = await maintPool.query(
+          `SELECT COUNT(*)::int AS cnt FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'sauda_check_point'`
+        );
+        if ((pgTbl.rows?.[0]?.cnt || 0) > 0) {
+          const rowCheck = await maintPool.query(`SELECT COUNT(*)::int AS cnt FROM public.sauda_check_point`);
+          postgresHasLiveTables = (rowCheck.rows?.[0]?.cnt || 0) > 0;
+        }
+      } catch (_e) {}
+
+      if (newestDump) {
+        console.log(`[DB Auto-Restore] Restoring "${targetDb}" from latest backup: ${newestDump}`);
+        await execAsync(
+          `PGPASSWORD="${password}" pg_restore -h ${host} -p ${port} -U ${user} -d ${targetDb} --no-owner --no-privileges "${newestDump}" || true`
+        );
+      } else if (postgresHasLiveTables) {
+        console.log(`[DB Auto-Restore] Cloning live tables from "postgres" database into "${targetDb}"...`);
+        await execAsync(
+          `PGPASSWORD="${password}" pg_dump -h ${host} -p ${port} -U ${user} -d postgres --no-owner --no-privileges | PGPASSWORD="${password}" psql -h ${host} -p ${port} -U ${user} -d ${targetDb}`
+        );
+      } else {
+        const schemaPath = path.resolve(process.cwd(), 'complete_local_schema.sql');
+        const dataGzPath = path.resolve(process.cwd(), 'complete_local_data.sql.gz');
+        if (fs.existsSync(schemaPath)) {
+          console.log(`[DB Auto-Restore] Applying complete_local_schema.sql to "${targetDb}"...`);
+          await execAsync(`PGPASSWORD="${password}" psql -h ${host} -p ${port} -U ${user} -d ${targetDb} -f "${schemaPath}"`);
+        }
+        if (fs.existsSync(dataGzPath)) {
+          console.log(`[DB Auto-Restore] Streaming complete_local_data.sql.gz into "${targetDb}"...`);
+          await execAsync(`gunzip -c "${dataGzPath}" | PGPASSWORD="${password}" psql -h ${host} -p ${port} -U ${user} -d ${targetDb}`);
+        }
+      }
+      console.log(`[DB Auto-Restore] Database "${targetDb}" is ready!`);
+    }
+
+    // Start 1-hour automatic backup daemon
+    if (!hourlyBackupTimerStarted) {
+      hourlyBackupTimerStarted = true;
+      const runHourlyBackup = async () => {
+        try {
+          const backupDir = fs.existsSync('/home/ubuntu') ? '/home/ubuntu/backups' : path.join(process.cwd(), 'backups');
+          fs.mkdirSync(backupDir, { recursive: true });
+          const now = new Date();
+          const ts =
+            now.getFullYear().toString() +
+            String(now.getMonth() + 1).padStart(2, '0') +
+            String(now.getDate()).padStart(2, '0') +
+            '_' +
+            String(now.getHours()).padStart(2, '0') +
+            String(now.getMinutes()).padStart(2, '0') +
+            String(now.getSeconds()).padStart(2, '0');
+          const filePath = path.join(backupDir, `bjcl_db_${ts}.dump`);
+          const latestPath = path.join(backupDir, `bjcl_db_latest.dump`);
+          await execAsync(
+            `PGPASSWORD="${password}" pg_dump -h ${host} -p ${port} -U ${user} -d ${targetDb} -F c -b -f "${filePath}" && cp -f "${filePath}" "${latestPath}"`
+          );
+          console.log(`[Hourly Backup] Saved PostgreSQL backup: ${filePath}`);
+        } catch (_err) {
+          // Silently ignore if pg_dump is unavailable in container preview
+        }
+      };
+
+      // Run initial backup check 15s after boot, then every 1 hour (3,600,000 ms)
+      setTimeout(runHourlyBackup, 15000);
+      setInterval(runHourlyBackup, 60 * 60 * 1000);
+    }
+  } catch (_err) {
+    // Non-fatal if local PostgreSQL is not installed in cloud preview environment
+  } finally {
+    await maintPool.end().catch(() => {});
+  }
+}
+
