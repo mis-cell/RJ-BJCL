@@ -275,6 +275,26 @@ function getLocalSnapshotStore(): Map<string, any[]> {
         r.remarks = 'Excess Weight Deduction: 36.35 Qtl × ₹600/Qtl = ₹21,810.00.';
       }
     }
+
+    // Reconcile temporary_material_received.po_no with final_arrival.po_no when a temp arrival was promoted/clubbed to a different P.O.
+    const faRows = localSnapshotStore.get('final_arrival') || [];
+    const faPoByTempNo = new Map<string, string>();
+    for (const f of faRows) {
+      const fPo = String(f?.po_no || '').trim();
+      if (!fPo) continue;
+      const tNo = String(f?.temporary_arrival_no || '').trim().toUpperCase();
+      if (tNo) faPoByTempNo.set(tNo, fPo);
+    }
+    const tmrRows = localSnapshotStore.get('temporary_material_received') || [];
+    for (const t of tmrRows) {
+      const tNo = String(t?.temporary_arrival_no || '').trim().toUpperCase();
+      if (tNo && faPoByTempNo.has(tNo)) {
+        const promotedPo = faPoByTempNo.get(tNo)!;
+        if (String(t.po_no || '').trim().toUpperCase() !== promotedPo.toUpperCase()) {
+          t.po_no = promotedPo;
+        }
+      }
+    }
   } catch (err) {
     console.warn('Could not load local snapshot fallback:', err);
   }

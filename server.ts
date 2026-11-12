@@ -1438,6 +1438,17 @@ async function startServer() {
             amount = COALESCE(NULLIF(amount, 0), ROUND(((COALESCE(NULLIF(arr_qty_wt, 0), wt_quantity, 0) * 10) * (CASE WHEN rate_value > 0 THEN (rate_value - (CASE WHEN COALESCE(NULLIF(sett_pct, 0), gd_sett, 0) > 0 THEN (rate_value * COALESCE(NULLIF(sett_pct, 0), gd_sett, 0) / 100) ELSE 0 END)) ELSE 0 END))::numeric, 2))
         WHERE (sett_rate IS NULL OR sett_rate = 0 OR amount IS NULL OR amount = 0) AND (rate_value > 0 OR arr_qty_wt > 0);
 
+        -- Sync temporary_material_received.po_no with final_arrival.po_no when a temporary arrival was promoted/clubbed to another P.O.
+        UPDATE temporary_material_received t
+        SET po_no = f.po_no
+        FROM final_arrival f
+        WHERE t.temporary_arrival_no IS NOT NULL
+          AND f.temporary_arrival_no IS NOT NULL
+          AND TRIM(UPPER(t.temporary_arrival_no)) = TRIM(UPPER(f.temporary_arrival_no))
+          AND f.po_no IS NOT NULL
+          AND TRIM(f.po_no) <> ''
+          AND COALESCE(TRIM(UPPER(t.po_no)), '') <> TRIM(UPPER(f.po_no));
+
         -- Safe Indexes
         CREATE INDEX IF NOT EXISTS idx_inspection_mr ON material_inspection(mr_no);
         CREATE INDEX IF NOT EXISTS idx_inspection_arr ON material_inspection(arrival_no);

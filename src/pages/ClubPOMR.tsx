@@ -329,6 +329,20 @@ export default function ClubPOMR({ onClose }: { onClose?: () => void }) {
       s.contract_no
     ]);
 
+    const allPromotedTempTokens = new Set<string>();
+    const addPromotedTempToken = (val: any) => {
+      const s = normalize(val);
+      if (!s || s === 'N/A' || s === 'UNDEFINED') return;
+      allPromotedTempTokens.add(s);
+    };
+    (allFinalArrivals || []).forEach((f: any) => {
+      if (!f) return;
+      addPromotedTempToken(f.temporary_arrival_no);
+      addPromotedTempToken(f.arrival_no);
+      addPromotedTempToken(f.mr_no);
+      addPromotedTempToken(f.final_arrival_no);
+    });
+
     // 3. Process Open P.O / Sauda Check Point Contracts:
     // A P.O / Sauda with multiple lorries (e.g. 6 lorries on BJCL/2026-2027/0660) MUST remain available
     // until all contracted lorries have been received/tagged (receivedLorries < contractLorries) and it is not closed.
@@ -372,36 +386,56 @@ export default function ClubPOMR({ onClose }: { onClose?: () => void }) {
       );
 
       // Match all Final Arrivals and Temporary Arrivals already tagged to this P.O
-      const matchingFinal = queryPoIndex(finalByPoIndex, poKeys);
+      const rawMatchingFinal = queryPoIndex(finalByPoIndex, poKeys);
+      const seenFinalKeys = new Set<string>();
+      const matchingFinal = rawMatchingFinal.filter((f: any) => {
+        const key = normalize(f.final_arrival_no || f.arrival_no || f.mr_no || f.temporary_arrival_no || f.id || '');
+        if (!key) return true;
+        if (seenFinalKeys.has(key)) return false;
+        seenFinalKeys.add(key);
+        return true;
+      });
+
       const matchingTempArrivals = queryPoIndex(tempByPoIndex, poKeys);
 
       // Deduplicate Temp Arrivals that are already represented in Final Arrivals (1 Lorry = 1 MR)
-      const matchingTempDeduped = matchingTempArrivals.filter(
-        (ar: any) =>
-          !matchingFinal.some(
-            (f: any) =>
-              (f.temporary_arrival_no &&
-                (ar.temporary_arrival_no || ar.amad_no) &&
-                normalize(f.temporary_arrival_no) === normalize(ar.temporary_arrival_no || ar.amad_no)) ||
-              (f.arrival_no &&
-                (ar.temporary_arrival_no || ar.amad_no) &&
-                normalize(f.arrival_no) === normalize(ar.temporary_arrival_no || ar.amad_no)) ||
-              (f.mr_no &&
-                (ar.temporary_arrival_no || ar.amad_no) &&
-                normalize(f.mr_no) === normalize(ar.temporary_arrival_no || ar.amad_no)) ||
-              (f.final_arrival_no &&
-                (ar.temporary_arrival_no || ar.amad_no || ar.mr_no) &&
-                normalize(f.final_arrival_no) === normalize(ar.temporary_arrival_no || ar.amad_no || ar.mr_no)) ||
-              (f.lorry_number &&
-                ar.lorry_number &&
-                normalize(f.lorry_number) === normalize(ar.lorry_number))
-          )
-      );
+      const seenTempKeys = new Set<string>();
+      const matchingTempDeduped = matchingTempArrivals.filter((ar: any) => {
+        const matchedInThisPoFinal = matchingFinal.some(
+          (f: any) =>
+            (f.temporary_arrival_no &&
+              (ar.temporary_arrival_no || ar.amad_no) &&
+              normalize(f.temporary_arrival_no) === normalize(ar.temporary_arrival_no || ar.amad_no)) ||
+            (f.arrival_no &&
+              (ar.temporary_arrival_no || ar.amad_no) &&
+              normalize(f.arrival_no) === normalize(ar.temporary_arrival_no || ar.amad_no)) ||
+            (f.mr_no &&
+              (ar.temporary_arrival_no || ar.amad_no) &&
+              normalize(f.mr_no) === normalize(ar.temporary_arrival_no || ar.amad_no)) ||
+            (f.final_arrival_no &&
+              (ar.temporary_arrival_no || ar.amad_no || ar.mr_no) &&
+              normalize(f.final_arrival_no) === normalize(ar.temporary_arrival_no || ar.amad_no || ar.mr_no)) ||
+            (f.lorry_number &&
+              ar.lorry_number &&
+              normalize(f.lorry_number) === normalize(ar.lorry_number))
+        );
+        if (matchedInThisPoFinal) return false;
 
-      const receivedLorries = Math.max(
-        matchingTempArrivals.length,
-        matchingFinal.length + matchingTempDeduped.length
-      );
+        const tempId = normalize(ar.temporary_arrival_no || ar.amad_no || '');
+        const mrId = normalize(ar.mr_no || ar.arrival_no || '');
+        if ((tempId && allPromotedTempTokens.has(tempId)) || (mrId && allPromotedTempTokens.has(mrId))) {
+          return false;
+        }
+
+        const key = normalize(ar.temporary_arrival_no || ar.amad_no || ar.mr_no || ar.id || '');
+        if (key) {
+          if (seenTempKeys.has(key)) return false;
+          seenTempKeys.add(key);
+        }
+        return true;
+      });
+
+      const receivedLorries = matchingFinal.length + matchingTempDeduped.length;
 
       const receivedWeightMt =
         matchingFinal.reduce((sum: number, r: any) => sum + getArrivalWeightMt(r), 0) +

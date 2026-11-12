@@ -477,9 +477,24 @@ export function usePurchaseOrderData({
         ar.sauda_no,
         ar.po_contract,
         ar.contract_no,
-        ar.ptf_no,
-        ar.temporary_arrival_no
+        ar.ptf_no
       ]);
+
+      // Track all temporary arrival identifiers already promoted to final_arrival across ANY P.O.
+      // so a temporary arrival that was re-linked/clubbed to another P.O. in final_arrival is never counted on its old P.O.
+      const allPromotedTempTokens = new Set<string>();
+      const addPromotedTempToken = (val: any) => {
+        const s = String(val || '').trim().toUpperCase();
+        if (!s || s === 'N/A' || s === 'UNDEFINED') return;
+        allPromotedTempTokens.add(s);
+      };
+      (finalArrivals || []).forEach((f: any) => {
+        if (!f) return;
+        addPromotedTempToken(f.temporary_arrival_no);
+        addPromotedTempToken(f.arrival_no);
+        addPromotedTempToken(f.mr_no);
+        addPromotedTempToken(f.final_arrival_no);
+      });
       const mergedInspectionsIndex = buildRecordIndex(allMergedInspections);
       const matInspectionsIndex = buildRecordIndex(matInspections || []);
       const scpDetailsIndex = buildRecordIndex(scpDetailsList);
@@ -563,16 +578,47 @@ export function usePurchaseOrderData({
         ]);
 
         const contractWeight = parseFloat(p.total_contract_mt) || 0;
-        const matchingFinal = queryRecordIndex(finalArrivalsIndex, poKeys);
-        const matchingTempArrivals = queryRecordIndex(tempArrivalsIndex, poKeys);
-        const matchingTemp = matchingTempArrivals.filter((ar: any) =>
-          !matchingFinal.some(f =>
+        const rawMatchingFinal = queryRecordIndex(finalArrivalsIndex, poKeys);
+        const seenFinalKeys = new Set<string>();
+        const matchingFinal = rawMatchingFinal.filter((f: any) => {
+          const key = String(f.final_arrival_no || f.arrival_no || f.mr_no || f.temporary_arrival_no || f.id || '').trim().toUpperCase();
+          if (!key) return true;
+          if (seenFinalKeys.has(key)) return false;
+          seenFinalKeys.add(key);
+          return true;
+        });
+
+        const rawMatchingTempArrivals = queryRecordIndex(tempArrivalsIndex, poKeys);
+        const isMatchedInThisPoFinal = (ar: any) =>
+          matchingFinal.some(f =>
             (f.temporary_arrival_no && (ar.temporary_arrival_no || ar.amad_no) && String(f.temporary_arrival_no).trim().toUpperCase() === String(ar.temporary_arrival_no || ar.amad_no).trim().toUpperCase()) ||
             (f.arrival_no && (ar.temporary_arrival_no || ar.amad_no) && String(f.arrival_no).trim().toUpperCase() === String(ar.temporary_arrival_no || ar.amad_no).trim().toUpperCase()) ||
             (f.mr_no && (ar.temporary_arrival_no || ar.amad_no) && String(f.mr_no).trim().toUpperCase() === String(ar.temporary_arrival_no || ar.amad_no).trim().toUpperCase()) ||
+            (f.final_arrival_no && (ar.temporary_arrival_no || ar.amad_no || ar.mr_no) && String(f.final_arrival_no).trim().toUpperCase() === String(ar.temporary_arrival_no || ar.amad_no || ar.mr_no).trim().toUpperCase()) ||
             (f.lorry_number && ar.lorry_number && String(f.lorry_number).trim().toUpperCase() === String(ar.lorry_number).trim().toUpperCase())
-          )
+          );
+
+        const isPromotedToAnyFinal = (ar: any) => {
+          const tempId = String(ar.temporary_arrival_no || ar.amad_no || '').trim().toUpperCase();
+          const mrId = String(ar.mr_no || ar.arrival_no || '').trim().toUpperCase();
+          return (tempId !== '' && allPromotedTempTokens.has(tempId)) || (mrId !== '' && allPromotedTempTokens.has(mrId));
+        };
+
+        // Exclude temporary arrivals that were already promoted/clubbed to a DIFFERENT P.O. in final_arrival
+        const matchingTempArrivals = rawMatchingTempArrivals.filter((ar: any) =>
+          isMatchedInThisPoFinal(ar) || !isPromotedToAnyFinal(ar)
         );
+
+        const seenTempKeys = new Set<string>();
+        const matchingTemp = matchingTempArrivals.filter((ar: any) => {
+          if (isMatchedInThisPoFinal(ar) || isPromotedToAnyFinal(ar)) return false;
+          const key = String(ar.temporary_arrival_no || ar.amad_no || ar.mr_no || ar.id || '').trim().toUpperCase();
+          if (key) {
+            if (seenTempKeys.has(key)) return false;
+            seenTempKeys.add(key);
+          }
+          return true;
+        });
 
         const totalFinalMt = matchingFinal.reduce((sum: number, ar: any) => sum + finalWeightOf(ar), 0);
         const totalTempMt = matchingTemp.reduce((sum: number, ar: any) => sum + tempWeightOf(ar), 0);
@@ -846,7 +892,7 @@ export function usePurchaseOrderData({
 
         const isMismatch = !isCleared && (hasDbMismatch || mismatchFields.length > 0 || (p.pass_status === 'mismatch' && !isCleared));
 
-        const receivedLorries = Math.max(matchingTempArrivals.length, matchingFinal.length + matchingTemp.length);
+        const receivedLorries = matchingFinal.length + matchingTemp.length;
         const contractLorries = Math.max(1, parseInt(p.total_lorries || p.total_no_of_lorries || p.no_of_lorries || p.lorries || 1, 10) || 1);
 
         const cleanPoKey = String(p.po_no || '').trim().toUpperCase();

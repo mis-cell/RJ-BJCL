@@ -391,6 +391,20 @@ export default function TemporaryArrival({ onSave, onCancel, initialData }: { on
       const faIndex = buildRecordIndex(faList || []);
       const amadIndex = buildRecordIndex(amadList || []);
 
+      const allPromotedTempTokens = new Set<string>();
+      const addPromotedTempToken = (val: any) => {
+        const s = String(val || '').trim().toUpperCase();
+        if (!s || s === 'N/A' || s === 'UNDEFINED') return;
+        allPromotedTempTokens.add(s);
+      };
+      (faList || []).forEach((f: any) => {
+        if (!f) return;
+        addPromotedTempToken(f.temporary_arrival_no);
+        addPromotedTempToken(f.arrival_no);
+        addPromotedTempToken(f.mr_no);
+        addPromotedTempToken(f.final_arrival_no);
+      });
+
       const tempWeightOf = (ar: any) => {
         if (ar.challan_material_weight && Number(ar.challan_material_weight) > 0) return Number(ar.challan_material_weight);
         if (ar.weight_reduced && Number(ar.weight_reduced) > 0) return Number(ar.weight_reduced);
@@ -459,19 +473,44 @@ export default function TemporaryArrival({ onSave, onCancel, initialData }: { on
 
         const contractLorries = Math.max(1, parseInt(po.total_lorries || po.total_no_of_lorries || po.no_of_lorries || po.lorries || 1, 10) || 1);
 
-        const faMatches = queryRecordIndex(po, faIndex);
+        const rawFaMatches = queryRecordIndex(po, faIndex);
+        const seenFaKeys = new Set<string>();
+        const faMatches = rawFaMatches.filter((f: any) => {
+          const key = String(f.final_arrival_no || f.arrival_no || f.mr_no || f.temporary_arrival_no || f.id || '').trim().toUpperCase();
+          if (!key) return true;
+          if (seenFaKeys.has(key)) return false;
+          seenFaKeys.add(key);
+          return true;
+        });
+
         const amadMatches = queryRecordIndex(po, amadIndex);
 
-        const unpromotedAmad = amadMatches.filter((ar: any) =>
-          !faMatches.some((f: any) =>
+        const seenAmadKeys = new Set<string>();
+        const unpromotedAmad = amadMatches.filter((ar: any) => {
+          const matchedInThisPoFa = faMatches.some((f: any) =>
             (f.temporary_arrival_no && (ar.temporary_arrival_no || ar.amad_no) && String(f.temporary_arrival_no).trim().toUpperCase() === String(ar.temporary_arrival_no || ar.amad_no).trim().toUpperCase()) ||
             (f.arrival_no && (ar.temporary_arrival_no || ar.amad_no) && String(f.arrival_no).trim().toUpperCase() === String(ar.temporary_arrival_no || ar.amad_no).trim().toUpperCase()) ||
             (f.mr_no && (ar.temporary_arrival_no || ar.amad_no) && String(f.mr_no).trim().toUpperCase() === String(ar.temporary_arrival_no || ar.amad_no).trim().toUpperCase()) ||
+            (f.final_arrival_no && (ar.temporary_arrival_no || ar.amad_no || ar.mr_no) && String(f.final_arrival_no).trim().toUpperCase() === String(ar.temporary_arrival_no || ar.amad_no || ar.mr_no).trim().toUpperCase()) ||
             (f.lorry_number && ar.lorry_number && String(f.lorry_number).trim().toUpperCase() === String(ar.lorry_number).trim().toUpperCase())
-          )
-        );
+          );
+          if (matchedInThisPoFa) return false;
 
-        const receivedLorries = Math.max(amadMatches.length, faMatches.length + unpromotedAmad.length);
+          const tempId = String(ar.temporary_arrival_no || ar.amad_no || '').trim().toUpperCase();
+          const mrId = String(ar.mr_no || ar.arrival_no || '').trim().toUpperCase();
+          if ((tempId && allPromotedTempTokens.has(tempId)) || (mrId && allPromotedTempTokens.has(mrId))) {
+            return false;
+          }
+
+          const key = String(ar.temporary_arrival_no || ar.amad_no || ar.mr_no || ar.id || '').trim().toUpperCase();
+          if (key) {
+            if (seenAmadKeys.has(key)) return false;
+            seenAmadKeys.add(key);
+          }
+          return true;
+        });
+
+        const receivedLorries = faMatches.length + unpromotedAmad.length;
 
         const totalReceivedMt = faMatches.reduce((sum: number, f: any) => sum + finalWeightOf(f), 0) +
                                 unpromotedAmad.reduce((sum: number, a: any) => sum + tempWeightOf(a), 0);
