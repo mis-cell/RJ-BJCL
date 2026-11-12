@@ -162,7 +162,7 @@ export const AdminDeskClassicLayout: React.FC<AdminDeskClassicLayoutProps> = ({
     try {
       setBusyAction("recover");
       setActionFeedback(
-        "Creating safety backup of current DB, then scanning Docker 54322, local DBs, backups & Supabase Cloud for missing records..."
+        "Creating safety backup of current DB, then scanning local PostgreSQL databases & backups for missing records..."
       );
       const res = await fetch("/api/admin/recover-missing-data", {
         method: "POST",

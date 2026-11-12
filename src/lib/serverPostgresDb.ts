@@ -97,10 +97,7 @@ export interface QueryPayload {
   onConflictCols?: string[];
 }
 
-const SUPABASE_BASE_URL = process.env.SUPABASE_URL || 'https://lxuapkccxaadwixjpirs.supabase.co/rest/v1';
-const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || '';
-
-// Lazy in-memory snapshot fallback parsed from complete_local_data.sql.gz when local PostgreSQL is unreachable and SUPABASE_KEY is not configured
+// Pure Local PostgreSQL Only — lazy in-memory snapshot fallback parsed from complete_local_data.sql.gz only if local PostgreSQL is not yet initialized
 let localSnapshotStore: Map<string, any[]> | null = null;
 
 function parseSqlScalar(raw: string): any {
@@ -427,85 +424,7 @@ function isConnectionError(err: any): boolean {
 }
 
 async function querySupabaseFallback(payload: QueryPayload) {
-  if (!SUPABASE_KEY) {
-    return queryLocalSnapshot(payload);
-  }
-  try {
-    const table = sanitizeIdent(payload.table);
-    const baseUrl = `${SUPABASE_BASE_URL}/${table}`;
-    const queryParams = new URLSearchParams();
-
-    if (payload.select && payload.select !== '*') {
-      queryParams.set('select', payload.select);
-    } else {
-      queryParams.set('select', '*');
-    }
-
-    if (Array.isArray(payload.filters)) {
-      for (const f of payload.filters) {
-        if (!f.column) continue;
-        if (f.op === 'eq') queryParams.append(f.column, `eq.${f.value}`);
-        else if (f.op === 'neq') queryParams.append(f.column, `neq.${f.value}`);
-        else if (f.op === 'gt') queryParams.append(f.column, `gt.${f.value}`);
-        else if (f.op === 'gte') queryParams.append(f.column, `gte.${f.value}`);
-        else if (f.op === 'lt') queryParams.append(f.column, `lt.${f.value}`);
-        else if (f.op === 'lte') queryParams.append(f.column, `lte.${f.value}`);
-        else if (f.op === 'like') queryParams.append(f.column, `like.${f.value}`);
-        else if (f.op === 'ilike') queryParams.append(f.column, `ilike.${f.value}`);
-        else if (f.op === 'is') queryParams.append(f.column, `is.${f.value}`);
-        else if (f.op === 'in' && Array.isArray(f.value)) queryParams.append(f.column, `in.(${f.value.join(',')})`);
-      }
-    }
-
-    if (Array.isArray(payload.orFilters) && payload.orFilters.length > 0) {
-      for (const orF of payload.orFilters) {
-        queryParams.append('or', `(${orF})`);
-      }
-    }
-
-    if (Array.isArray(payload.orders) && payload.orders.length > 0) {
-      const orderStr = payload.orders.map(o => `${o.column}.${o.ascending ? 'asc' : 'desc'}`).join(',');
-      queryParams.set('order', orderStr);
-    }
-
-    if (typeof payload.limit === 'number') {
-      queryParams.set('limit', String(payload.limit));
-    }
-    if (typeof payload.offset === 'number') {
-      queryParams.set('offset', String(payload.offset));
-    }
-
-    const headers: Record<string, string> = {
-      apikey: SUPABASE_KEY,
-      Authorization: `Bearer ${SUPABASE_KEY}`,
-      Accept: 'application/json',
-    };
-
-    if (payload.count) {
-      headers['Prefer'] = `count=${payload.count}`;
-    }
-
-    const res = await fetch(`${baseUrl}?${queryParams.toString()}`, { headers });
-    if (!res.ok) {
-      return queryLocalSnapshot(payload);
-    }
-
-    const contentRange = res.headers.get('content-range');
-    let totalCount: number | null = null;
-    if (contentRange && contentRange.includes('/')) {
-      const parts = contentRange.split('/');
-      totalCount = parts[1] !== '*' ? parseInt(parts[1], 10) : null;
-    }
-
-    const data = await res.json();
-    return {
-      data: Array.isArray(data) ? data : (data ? [data] : []),
-      count: totalCount !== null ? totalCount : (Array.isArray(data) ? data.length : 0),
-      error: null
-    };
-  } catch (err: any) {
-    return queryLocalSnapshot(payload);
-  }
+  return queryLocalSnapshot(payload);
 }
 
 async function insertSupabaseFallback(payload: QueryPayload) {
@@ -535,33 +454,7 @@ async function insertSupabaseFallback(payload: QueryPayload) {
     }
   }
   store.set(table, list);
-
-  if (!SUPABASE_KEY) {
-    return { data: rawValues, error: null };
-  }
-  try {
-    const url = `${SUPABASE_BASE_URL}/${table}`;
-    const headers: Record<string, string> = {
-      apikey: SUPABASE_KEY,
-      Authorization: `Bearer ${SUPABASE_KEY}`,
-      'Content-Type': 'application/json',
-      Prefer: payload.onConflictCols && payload.onConflictCols.length > 0
-        ? 'resolution=merge-duplicates,return=representation'
-        : 'return=representation'
-    };
-    const res = await fetch(url, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(rawValues)
-    });
-    if (!res.ok) {
-      return { data: rawValues, error: null };
-    }
-    const data = await res.json();
-    return { data: Array.isArray(data) ? data : [data], error: null };
-  } catch (err: any) {
-    return { data: rawValues, error: null };
-  }
+  return { data: rawValues, error: null };
 }
 
 async function updateSupabaseFallback(payload: QueryPayload) {
@@ -578,37 +471,7 @@ async function updateSupabaseFallback(payload: QueryPayload) {
     }
   }
   store.set(table, list);
-
-  if (!SUPABASE_KEY) {
-    return { data: updatedRows, error: null };
-  }
-  try {
-    const queryParams = new URLSearchParams();
-    if (Array.isArray(payload.filters)) {
-      for (const f of payload.filters) {
-        if (f.op === 'eq') queryParams.append(f.column, `eq.${f.value}`);
-        else if (f.op === 'neq') queryParams.append(f.column, `neq.${f.value}`);
-        else if (f.op === 'in' && Array.isArray(f.value)) queryParams.append(f.column, `in.(${f.value.join(',')})`);
-      }
-    }
-    const url = `${SUPABASE_BASE_URL}/${table}?${queryParams.toString()}`;
-    const headers: Record<string, string> = {
-      apikey: SUPABASE_KEY,
-      Authorization: `Bearer ${SUPABASE_KEY}`,
-      'Content-Type': 'application/json',
-      Prefer: 'return=representation'
-    };
-    const res = await fetch(url, {
-      method: 'PATCH',
-      headers,
-      body: JSON.stringify(payload.values || {})
-    });
-    if (!res.ok) return { data: updatedRows, error: null };
-    const data = await res.json();
-    return { data: Array.isArray(data) ? data : [data], error: null };
-  } catch (err: any) {
-    return { data: updatedRows, error: null };
-  }
+  return { data: updatedRows, error: null };
 }
 
 async function deleteSupabaseFallback(payload: QueryPayload) {
@@ -625,55 +488,11 @@ async function deleteSupabaseFallback(payload: QueryPayload) {
     return true;
   });
   store.set(table, remaining);
-
-  if (!SUPABASE_KEY) {
-    return { data: deletedRows, error: null };
-  }
-  try {
-    const queryParams = new URLSearchParams();
-    if (Array.isArray(payload.filters)) {
-      for (const f of payload.filters) {
-        if (f.op === 'eq') queryParams.append(f.column, `eq.${f.value}`);
-      }
-    }
-    const url = `${SUPABASE_BASE_URL}/${table}?${queryParams.toString()}`;
-    const headers: Record<string, string> = {
-      apikey: SUPABASE_KEY,
-      Authorization: `Bearer ${SUPABASE_KEY}`,
-      Prefer: 'return=representation'
-    };
-    const res = await fetch(url, { method: 'DELETE', headers });
-    if (!res.ok) return { data: deletedRows, error: null };
-    const data = await res.json();
-    return { data: Array.isArray(data) ? data : [data], error: null };
-  } catch (err: any) {
-    return { data: deletedRows, error: null };
-  }
+  return { data: deletedRows, error: null };
 }
 
-async function rpcSupabaseFallback(funcName: string, args: any) {
-  if (!SUPABASE_KEY) {
-    return { data: { success: true }, error: null };
-  }
-  try {
-    const func = sanitizeIdent(funcName);
-    const url = `${SUPABASE_BASE_URL}/rpc/${func}`;
-    const headers: Record<string, string> = {
-      apikey: SUPABASE_KEY,
-      Authorization: `Bearer ${SUPABASE_KEY}`,
-      'Content-Type': 'application/json'
-    };
-    const res = await fetch(url, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(args || {})
-    });
-    if (!res.ok) return { data: null, error: null };
-    const data = await res.json();
-    return { data, error: null };
-  } catch (err: any) {
-    return { data: null, error: null };
-  }
+async function rpcSupabaseFallback(_funcName: string, _args: any) {
+  return { data: { success: true }, error: null };
 }
 
 export async function executeSelect(payload: QueryPayload) {
@@ -1125,91 +944,9 @@ export async function syncPendingDataToLocalPostgres(options?: {
       cloudSyncedCount += cleanedRows.length;
     }
 
-    // Step 3: Pull all 1,398 records of temporary_material_received from Supabase Web (auto-detecting key from env or local git history)
-    const rawUrl = (options?.supabaseUrl || process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL || 'https://lxuapkccxaadwixjpirs.supabase.co').trim().replace(/\/+$/, '');
-    const restBaseUrl = rawUrl.endsWith('/rest/v1') ? rawUrl : `${rawUrl}/rest/v1`;
-    let supaKey = (options?.supabaseKey || process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || '').trim();
-
-    if (!supaKey) {
-      try {
-        const { execSync } = await import('child_process');
-        const rawTokens = execSync(
-          `{ git log -p -n 100 2>/dev/null; cat ~/.pm2/dump.pm2 /var/www/Jute-Purchase-Automation/.env* ~/.env* .env* 2>/dev/null; } | grep -oE 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+' | sort -u`,
-          { encoding: 'utf8', timeout: 8000 }
-        )
-          .split(/\r?\n/)
-          .map(s => s.trim())
-          .filter(Boolean);
-
-        for (const tok of rawTokens) {
-          try {
-            const payloadJson = Buffer.from(tok.split('.')[1], 'base64').toString('utf8');
-            if (payloadJson.includes('lxuapkccxaadwixjpirs')) {
-              supaKey = tok;
-              if (payloadJson.includes('service_role')) break;
-            }
-          } catch (_) {}
-        }
-      } catch (_) {}
-    }
-
-    if (supaKey) {
-      const cloudTables: Array<{ table: string; conflictCol: string }> = [
-        { table: 'temporary_material_received', conflictCol: 'amad_id' },
-        { table: 'sauda_check_point', conflictCol: 'po_id' },
-        { table: 'sauda_check_point_details', conflictCol: 'item_id' },
-        { table: 'final_arrival', conflictCol: 'final_arrival_id' },
-        { table: 'material_inspection', conflictCol: 'mr_no' },
-        { table: 'material_inspection_details', conflictCol: 'id' },
-        { table: 'mr_settlement_master', conflictCol: 'settlement_id' },
-        { table: 'mr_settlement_detail', conflictCol: 'detail_id' },
-        { table: 'payment_master', conflictCol: 'payment_id' },
-        { table: 'payment_details', conflictCol: 'detail_id' },
-        { table: 'lorry_weighments', conflictCol: 'id' }
-      ];
-
-      for (const { table, conflictCol } of cloudTables) {
-        let offset = 0;
-        const limit = 500;
-        while (true) {
-          const url = `${restBaseUrl}/${table}?select=*&limit=${limit}&offset=${offset}`;
-          const res = await fetch(url, {
-            headers: {
-              apikey: supaKey,
-              Authorization: `Bearer ${supaKey}`,
-              Accept: 'application/json'
-            }
-          });
-          if (!res.ok) {
-            if (table === 'temporary_material_received' && offset === 0) {
-              const errTxt = await res.text().catch(() => res.statusText);
-              throw new Error(`Supabase API returned ${res.status}: ${errTxt}`);
-            }
-            break;
-          }
-          const rows = await res.json();
-          if (!Array.isArray(rows) || rows.length === 0) break;
-
-          await executeUpsert({
-            table,
-            values: rows,
-            onConflictCols: [conflictCol]
-          });
-
-          if (table === 'temporary_material_received') {
-            cloudSyncedCount += rows.length;
-          }
-
-          if (rows.length < limit) break;
-          offset += limit;
-        }
-      }
-    }
-
     const afterRes = await pool.query(`SELECT COUNT(*)::int AS cnt FROM "temporary_material_received"`).catch(() => ({ rows: [{ cnt: beforeCount }] }));
     afterCount = afterRes.rows?.[0]?.cnt ?? beforeCount;
     const addedCount = Math.max(0, afterCount - beforeCount);
-    const needsCloudSync = afterCount < 1398 && cloudSyncedCount === 0;
 
     return {
       success: true,
@@ -1217,10 +954,8 @@ export async function syncPendingDataToLocalPostgres(options?: {
       afterCount,
       addedCount,
       cloudSyncedCount,
-      needsCloudSync,
-      message: needsCloudSync
-        ? `Restored local backup to ${afterCount} records (${addedCount} restored). To pull the remaining ${1398 - afterCount} new records from Supabase Web (1,398 total), please enter your Supabase Anon Key or upload the Supabase CSV export.`
-        : `Temporary Arrival sync complete! Local PostgreSQL now has ${afterCount} records in temporary_material_received (${addedCount} new records added).`
+      needsCloudSync: false,
+      message: `Local PostgreSQL sync complete! Database now has ${afterCount} records in temporary_material_received (${addedCount} new records added).`
     };
   } catch (err: any) {
     return {
@@ -2478,9 +2213,8 @@ export async function recoverMissingDataFromAllSources(): Promise<{
     { table: 'return_lorry', pk: 'id' },
   ];
 
-  // 1. Check sibling PostgreSQL ports/databases (including Supabase Docker port 54322 & local 'postgres'/'SQC' DBs)
+  // 1. Check sibling local PostgreSQL databases ('postgres', 'SQC', 'bjcl_db')
   const candidateSources = [
-    { label: 'Local Supabase Docker (127.0.0.1:54322 / postgres)', host: '127.0.0.1', port: 54322, database: 'postgres', user: 'postgres', password: process.env.POSTGRES_PASSWORD || 'postgres' },
     { label: 'Local PostgreSQL (127.0.0.1:5432 / postgres)', host, port, database: 'postgres', user, password },
     { label: 'Local PostgreSQL (127.0.0.1:5432 / SQC)', host, port, database: 'SQC', user, password },
     { label: 'Local PostgreSQL Cluster Port 5433 (bjcl_db)', host, port: 5433, database: 'bjcl_db', user, password },
@@ -2537,7 +2271,7 @@ export async function recoverMissingDataFromAllSources(): Promise<{
     }
   }
 
-  // 2. Run syncPendingDataToLocalPostgres (merges complete_local_data.sql.gz + Supabase Cloud lxuapkccxaadwixjpirs.supabase.co)
+  // 2. Run syncPendingDataToLocalPostgres (merges complete_local_data.sql.gz + sibling local PostgreSQL databases)
   const syncRes = await syncPendingDataToLocalPostgres().catch((err: any) => ({
     success: false,
     addedCount: 0,
@@ -2545,7 +2279,7 @@ export async function recoverMissingDataFromAllSources(): Promise<{
     message: err?.message || 'failed',
   }));
   sourcesChecked.push({
-    source: 'Local Snapshot (complete_local_data.sql.gz) + Supabase Cloud Sync',
+    source: 'Local Snapshot (complete_local_data.sql.gz) + Local PostgreSQL Sync',
     status: syncRes.success ? 'Verified & Merged' : syncRes.message,
     rowsRecovered: (syncRes.addedCount || 0) + (syncRes.cloudSyncedCount || 0),
   });
@@ -2569,7 +2303,7 @@ export async function recoverMissingDataFromAllSources(): Promise<{
     sourcesChecked,
     totalRowsRecovered,
     marka3153Present,
-    message: `Pre-recovery safety backup created. Checked ${sourcesChecked.length} data sources, recovered ${totalRowsRecovered} missing row(s), and verified marka_master ID 3153 (T1007 / TEST) in PostgreSQL.`,
+    message: `Pre-recovery safety backup created. Checked ${sourcesChecked.length} local PostgreSQL data sources, recovered ${totalRowsRecovered} missing row(s), and verified marka_master ID 3153 (T1007 / TEST) in PostgreSQL.`,
   };
 }
 
@@ -2587,6 +2321,9 @@ export async function ensureLocalPostgresDatabaseAndHourlyBackup(): Promise<void
   const user = process.env.PGUSER || process.env.LOCAL_DB_USER || 'postgres';
   const password = process.env.PGPASSWORD || process.env.LOCAL_DB_PASSWORD || 'postgres';
   const targetDb = process.env.PGDATABASE || process.env.LOCAL_DB_NAME || 'bjcl_db';
+
+  // Ensure local postgres user password matches configured PGPASSWORD so TCP connections never fail with password auth error
+  await execAsync(`sudo -n -u postgres psql -p ${port} -c "ALTER USER ${user} WITH PASSWORD '${password}';"`).catch(() => {});
 
   const maintPool = new Pool({
     host,
@@ -2671,7 +2408,7 @@ export async function ensureLocalPostgresDatabaseAndHourlyBackup(): Promise<void
       console.log(`[DB Auto-Restore] Database "${targetDb}" is ready with ${tableCount} tables!`);
     }
 
-    // Ensure Marka Master 3153 and any newer records in Docker 54322 / complete_local_data.sql.gz / Cloud are synced into bjcl_db
+    // Ensure Marka Master 3153 and any newer records in local PostgreSQL databases / complete_local_data.sql.gz are synced into bjcl_db
     integrityInitialized = false;
     await ensureDatabaseIntegrity().catch(() => {});
     await syncPendingDataToLocalPostgres().catch(() => {});

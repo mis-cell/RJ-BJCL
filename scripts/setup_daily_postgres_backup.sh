@@ -126,27 +126,12 @@ run_psql "$TARGET_DB" -c "
 echo " -> Verified marka_master ID 3153 (T1007 / TEST) in ${TARGET_DB}."
 
 echo "=================================================================="
-echo "3. Checking Local Supabase Docker (Port 54322) & Backups for Missing Data"
-echo "=================================================================="
-if PGPASSWORD="$PG_PASSWORD" psql -w -h 127.0.0.1 -p 54322 -U postgres -d postgres -c "SELECT 1;" >/dev/null 2>&1; then
-  echo " -> Found running Supabase Docker PostgreSQL on port 54322! Dumping & merging newer records into ${TARGET_DB}..."
-  DOCKER_DUMP="${BACKUP_DIR}/docker_supabase_54322_${TIMESTAMP}.sql"
-  PGPASSWORD="$PG_PASSWORD" pg_dump -w -h 127.0.0.1 -p 54322 -U postgres -d postgres --data-only --column-inserts --on-conflict-do-nothing -n public > "$DOCKER_DUMP" 2>/dev/null || true
-  if [ -s "$DOCKER_DUMP" ]; then
-    run_psql "$TARGET_DB" -f "$DOCKER_DUMP" >/dev/null 2>&1 || true
-    echo "    [MERGED] Data from port 54322 merged into ${TARGET_DB}."
-  fi
-else
-  echo " -> No separate Postgres instance listening on port 54322."
-fi
-
-echo "=================================================================="
-echo "4. Enforcing ${RETENTION_DAYS}-Day Backup Retention Policy"
+echo "3. Enforcing ${RETENTION_DAYS}-Day Backup Retention Policy"
 echo "=================================================================="
 find "$BACKUP_DIR" -maxdepth 1 -type f \( -name "*.dump" -o -name "*.sql.gz" \) ! -name "*_latest.dump" -mtime +${RETENTION_DAYS} -delete 2>/dev/null || true
 
 echo "=================================================================="
-echo "5. Installing Automatic Daily Cron Job (Runs Daily at 02:00 AM)"
+echo "4. Installing Automatic Daily Cron Job (Runs Daily at 02:00 AM)"
 echo "=================================================================="
 SCRIPT_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
 chmod +x "$SCRIPT_PATH"
