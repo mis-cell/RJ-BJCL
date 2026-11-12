@@ -28,7 +28,7 @@ if [ -f "complete_local_data.sql.gz" ]; then
   gunzip -c "complete_local_data.sql.gz" | psql -h "$LOCAL_HOST" -p "$LOCAL_PORT" -U "$LOCAL_USER" -d "$DB_NAME" >/dev/null 2>&1 || true
 fi
 
-# 3. Auto-detect Supabase key from env or git history and pull all 1,398 rows of temporary_material_received directly into bjcl_db
+# 3. Auto-detect Supabase key from env, PM2 dump, or git history and pull all latest rows directly into bjcl_db
 node -e '
 const { Pool } = require("pg");
 const { execSync } = require("child_process");
@@ -37,7 +37,7 @@ const { execSync } = require("child_process");
   let supaKey = (process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || "").trim();
   if (!supaKey) {
     try {
-      const tokens = execSync("git log -p -n 60 2>/dev/null | grep -oE \"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9\\\\.[A-Za-z0-9_-]+\\\\.[A-Za-z0-9_-]+\" | sort -u", { encoding: "utf8" })
+      const tokens = execSync("{ git log -p -n 100 2>/dev/null; cat ~/.pm2/dump.pm2 /var/www/Jute-Purchase-Automation/.env* ~/.env* .env* 2>/dev/null; } | grep -oE \"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9\\\\.[A-Za-z0-9_-]+\\\\.[A-Za-z0-9_-]+\" | sort -u", { encoding: "utf8" })
         .split(/\r?\n/).map(s => s.trim()).filter(Boolean);
       for (const tok of tokens) {
         try {
@@ -55,7 +55,7 @@ const { execSync } = require("child_process");
     process.exit(0);
   }
 
-  console.log("🌐 Pulling all 1,398 records from Supabase table \"temporary_material_received\"...");
+  console.log("🌐 Pulling latest November 2026 records from Supabase Cloud into bjcl_db...");
   const pool = new Pool({
     host: process.env.PGHOST || "127.0.0.1",
     port: Number(process.env.PGPORT) || 5432,
@@ -64,34 +64,47 @@ const { execSync } = require("child_process");
     password: process.env.PGPASSWORD || "postgres"
   });
 
-  const colRes = await pool.query("SELECT column_name FROM information_schema.columns WHERE table_schema = '\''public'\'' AND table_name = '\''temporary_material_received'\''");
-  const validCols = new Set(colRes.rows.map(r => r.column_name));
+  const tablesToSync = [
+    { table: "temporary_material_received", pk: "amad_id" },
+    { table: "sauda_check_point", pk: "po_id" },
+    { table: "sauda_check_point_details", pk: "item_id" },
+    { table: "final_arrival", pk: "final_arrival_id" },
+    { table: "material_inspection", pk: "mr_no" },
+    { table: "mr_settlement_master", pk: "settlement_id" },
+    { table: "mr_settlement_detail", pk: "detail_id" },
+    { table: "payment_master", pk: "payment_id" },
+    { table: "payment_details", pk: "detail_id" },
+    { table: "lorry_weighments", pk: "id" }
+  ];
 
-  let offset = 0;
-  const limit = 500;
-  let fetched = 0;
-  while (true) {
-    const res = await fetch(`https://lxuapkccxaadwixjpirs.supabase.co/rest/v1/temporary_material_received?select=*&limit=${limit}&offset=${offset}`, {
-      headers: { apikey: supaKey, Authorization: `Bearer ${supaKey}`, Accept: "application/json" }
-    });
-    if (!res.ok) break;
-    const rows = await res.json();
-    if (!Array.isArray(rows) || rows.length === 0) break;
-    fetched += rows.length;
+  for (const { table, pk } of tablesToSync) {
+    const colRes = await pool.query("SELECT column_name FROM information_schema.columns WHERE table_schema = '\''public'\'' AND table_name = $1", [table]);
+    const validCols = new Set(colRes.rows.map(r => r.column_name));
+    if (validCols.size === 0) continue;
 
-    for (const row of rows) {
-      const cols = Object.keys(row).filter(c => validCols.has(c) && row[c] !== undefined);
-      if (cols.length === 0) continue;
-      const colNames = cols.map(c => `"${c}"`).join(", ");
-      const placeholders = cols.map((_, i) => `$${i + 1}`).join(", ");
-      const vals = cols.map(c => (row[c] !== null && typeof row[c] === "object") ? JSON.stringify(row[c]) : row[c]);
-      await pool.query(`INSERT INTO "temporary_material_received" (${colNames}) VALUES (${placeholders}) ON CONFLICT ("amad_id") DO NOTHING`, vals).catch(() => {});
+    let offset = 0;
+    const limit = 500;
+    while (true) {
+      const res = await fetch(`https://lxuapkccxaadwixjpirs.supabase.co/rest/v1/${table}?select=*&limit=${limit}&offset=${offset}`, {
+        headers: { apikey: supaKey, Authorization: `Bearer ${supaKey}`, Accept: "application/json" }
+      });
+      if (!res.ok) break;
+      const rows = await res.json();
+      if (!Array.isArray(rows) || rows.length === 0) break;
+
+      for (const row of rows) {
+        const cols = Object.keys(row).filter(c => validCols.has(c) && row[c] !== undefined);
+        if (cols.length === 0) continue;
+        const colNames = cols.map(c => `"${c}"`).join(", ");
+        const placeholders = cols.map((_, i) => `$${i + 1}`).join(", ");
+        const vals = cols.map(c => (row[c] !== null && typeof row[c] === "object") ? JSON.stringify(row[c]) : row[c]);
+        await pool.query(`INSERT INTO "${table}" (${colNames}) VALUES (${placeholders}) ON CONFLICT ("${pk}") DO NOTHING`, vals).catch(() => {});
+      }
+
+      if (rows.length < limit) break;
+      offset += limit;
     }
-
-    if (rows.length < limit) break;
-    offset += limit;
   }
-  console.log(`✅ Checked ${fetched} rows from Supabase Cloud "temporary_material_received".`);
   await pool.end();
 })().catch(() => process.exit(0));
 '

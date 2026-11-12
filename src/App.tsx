@@ -122,6 +122,68 @@ export default function App() {
   const [allowedModules, setAllowedModules] = useState<string[]>(["*"]);
   const [runningPages, setRunningPages] = useState<Page[]>([]);
   const [selectedAmadForFinalMr, setSelectedAmadForFinalMr] = useState<any>(null);
+  const [maintenanceMode, setMaintenanceMode] = useState<{
+    enabled: boolean;
+    message: string;
+    updatedBy?: string;
+    updatedAt?: string;
+  }>({
+    enabled: false,
+    message: "Server update in progress. Please wait and try again shortly.",
+  });
+
+  const fetchMaintenanceStatus = React.useCallback(async () => {
+    try {
+      const res = await fetch(getApiUrl("/api/maintenance"));
+      if (res.ok) {
+        const data = await res.json();
+        setMaintenanceMode({
+          enabled: Boolean(data?.enabled),
+          message:
+            String(data?.message || "").trim() ||
+            "Server update in progress. Please wait and try again shortly.",
+          updatedBy: data?.updatedBy,
+          updatedAt: data?.updatedAt,
+        });
+      }
+    } catch (_e) {}
+  }, []);
+
+  React.useEffect(() => {
+    fetchMaintenanceStatus();
+    const timer = setInterval(fetchMaintenanceStatus, 5000);
+    const handleMaintEvent = () => fetchMaintenanceStatus();
+    window.addEventListener("maintenance-mode-changed", handleMaintEvent);
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener("maintenance-mode-changed", handleMaintEvent);
+    };
+  }, [fetchMaintenanceStatus]);
+
+  const toggleMaintenanceMode = React.useCallback(
+    async (enable: boolean) => {
+      try {
+        const ctx = getCurrentUserContext();
+        const res = await fetch(getApiUrl("/api/maintenance"), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            enabled: enable,
+            message: "Server update in progress. Please wait and try again shortly.",
+            updatedBy: ctx.username || "ADMIN",
+          }),
+        });
+        if (res.ok) {
+          const json = await res.json();
+          if (json?.maintenance) {
+            setMaintenanceMode(json.maintenance);
+          }
+          window.dispatchEvent(new CustomEvent("maintenance-mode-changed"));
+        }
+      } catch (_e) {}
+    },
+    []
+  );
 
   const clearAuthSessionSelective = React.useCallback(async () => {
     try {
@@ -789,7 +851,16 @@ export default function App() {
             data.role?.toUpperCase() === "ADMIN" ||
             data.role?.toUpperCase() === "ADMINISTRATOR" ||
             data.level?.toUpperCase() === "L5" ||
-            data.level?.toUpperCase() === "ADMIN";
+            data.level?.toUpperCase() === "ADMIN" ||
+            String(data.user_id || "") === "001";
+
+          if (maintenanceMode.enabled && !isAdminUser) {
+            alert(
+              maintenanceMode.message ||
+                "Server update in progress. Please wait and try again shortly."
+            );
+            return;
+          }
 
           setIsAdmin(isAdminUser);
           setUserRole(data.role?.toUpperCase() || "L1");
@@ -956,7 +1027,7 @@ export default function App() {
   if (!isLoggedIn) {
     return (
       <>
-        <AuthScreen onLogin={handleLogin} />
+        <AuthScreen onLogin={handleLogin} maintenanceMode={maintenanceMode} />
 
         {/* Custom HTML Alert overlay for Login Screen */}
         {htmlAlert && (
@@ -966,6 +1037,47 @@ export default function App() {
           />
         )}
       </>
+    );
+  }
+
+  // Maintenance Mode Lock Screen: Prevent non-admin users from using application features during maintenance
+  if (maintenanceMode.enabled && !isAdmin) {
+    return (
+      <div className="flex h-screen w-full items-center justify-center bg-[#FDE7E6] font-sans p-4">
+        <div className="bg-white border-2 border-amber-500 rounded-2xl shadow-2xl p-8 max-w-lg w-full text-center">
+          <div className="w-16 h-16 rounded-full bg-amber-100 border-2 border-amber-400 text-amber-700 flex items-center justify-center mx-auto mb-4">
+            <AlertTriangle className="w-8 h-8" />
+          </div>
+          <span className="inline-block px-3 py-1 rounded-full bg-amber-100 text-amber-900 text-[11px] font-black uppercase tracking-wider mb-3 border border-amber-300">
+            System Maintenance Active
+          </span>
+          <h2 className="text-xl font-black text-slate-900 tracking-tight">
+            {maintenanceMode.message || "Server update in progress. Please wait and try again shortly."}
+          </h2>
+          <p className="text-xs text-slate-600 mt-3 leading-relaxed">
+            All application features and logins are temporarily locked while the server update is being completed. Your session will automatically resume once the Administrator turns maintenance mode off.
+          </p>
+          <div className="mt-6 flex items-center justify-center gap-3">
+            <button
+              type="button"
+              onClick={() => fetchMaintenanceStatus()}
+              className="px-4 py-2.5 bg-amber-600 hover:bg-amber-700 text-white rounded-lg text-xs font-bold uppercase tracking-wider cursor-pointer transition-colors"
+            >
+              Check Status Again
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setIsLoggedIn(false);
+                clearAuthSessionSelective();
+              }}
+              className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 rounded-lg text-xs font-bold uppercase tracking-wider cursor-pointer transition-colors"
+            >
+              Return to Login
+            </button>
+          </div>
+        </div>
+      </div>
     );
   }
 
@@ -980,6 +1092,25 @@ export default function App() {
     <div className="flex h-screen w-full max-w-full min-w-0 overflow-hidden bg-legacy-bg font-sans">
       {/* Master Wrapper */}
       <div className="flex flex-1 flex-col w-full max-w-full min-w-0 h-full overflow-hidden">
+        {/* Global Top Maintenance Banner (visible to Admin while Maintenance Mode is ON) */}
+        {maintenanceMode.enabled && (
+          <div className="bg-amber-600 text-white px-4 py-2 flex flex-wrap items-center justify-between gap-2 border-b-2 border-amber-900 shrink-0 z-50 shadow-md">
+            <div className="flex items-center gap-2.5">
+              <span className="inline-block w-2.5 h-2.5 rounded-full bg-white animate-ping shrink-0" />
+              <span className="text-xs font-black uppercase tracking-wider">
+                MAINTENANCE MODE ACTIVE — Users see: &ldquo;{maintenanceMode.message || "Server update in progress. Please wait and try again shortly."}&rdquo;
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => toggleMaintenanceMode(false)}
+              className="px-3 py-1 bg-white hover:bg-emerald-50 text-amber-950 font-black text-xs rounded border border-amber-900 uppercase tracking-wide cursor-pointer shadow-xs transition-colors"
+            >
+              Turn Maintenance Mode OFF
+            </button>
+          </div>
+        )}
+
         {/* Main Content Area */}
         <div className="flex-1 flex overflow-hidden w-full max-w-full min-w-0">
           {/* Sidebar removed per user request */}

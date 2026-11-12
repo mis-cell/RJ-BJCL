@@ -249,6 +249,42 @@ export default function LegacyLayout({
 
   const [isMaximized, setIsMaximized] = React.useState(false);
   const [isAuditLogOpen, setIsAuditLogOpen] = React.useState(false);
+  const [maintenanceActive, setMaintenanceActive] = React.useState(false);
+
+  React.useEffect(() => {
+    const syncMaint = async () => {
+      try {
+        const res = await fetch('/api/maintenance');
+        if (res.ok) {
+          const d = await res.json();
+          setMaintenanceActive(Boolean(d?.enabled));
+        }
+      } catch (_e) {}
+    };
+    syncMaint();
+    window.addEventListener('maintenance-mode-changed', syncMaint);
+    return () => window.removeEventListener('maintenance-mode-changed', syncMaint);
+  }, []);
+
+  const handleToggleMaintenance = async () => {
+    try {
+      const nextState = !maintenanceActive;
+      const res = await fetch('/api/maintenance', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          enabled: nextState,
+          message: 'Server update in progress. Please wait and try again shortly.',
+          updatedBy: currentUser || 'ADMIN',
+        }),
+      });
+      if (res.ok) {
+        const d = await res.json();
+        setMaintenanceActive(Boolean(d?.maintenance?.enabled));
+        window.dispatchEvent(new CustomEvent('maintenance-mode-changed'));
+      }
+    } catch (_e) {}
+  };
 
   React.useEffect(() => {
     const handleOpenAudit = () => setIsAuditLogOpen(true);
@@ -393,8 +429,7 @@ export default function LegacyLayout({
         { id: 'reports', label: 'Report', icon: BarChart3, pageId: 'reports' },
         { id: 'treds', label: 'Trade', icon: Wallet, pageId: 'treds' },
         { id: 'system_change_logs', label: 'System Change Log', icon: History, pageId: 'system_change_logs' },
-        /* { id: 'admindesk', label: 'Admin Desk', icon: Lock, pageId: 'admindesk' }, */
-        /* { id: 'ai_assistant', label: 'Jarves AI 2.0', icon: Sparkles, pageId: 'ai_assistant' }, */
+        { id: 'admindesk', label: 'Admin Desk', icon: Lock, pageId: 'admindesk' },
       ]
     }
   ];
@@ -439,6 +474,28 @@ export default function LegacyLayout({
 
           {/* Top Control Bar Buttons */}
           <div className="flex gap-1.5 shrink-0 z-10 items-center">
+             {effectiveIsAdmin && (
+               <button
+                 type="button"
+                 onClick={handleToggleMaintenance}
+                 title={
+                   maintenanceActive
+                     ? "Turn Server Maintenance Mode OFF so users can log in and use the app"
+                     : "Turn Server Maintenance Mode ON for server updates (locks non-admin users)"
+                 }
+                 className={cn(
+                   "h-7 px-2.5 border rounded-md flex items-center gap-1.5 text-xs font-bold transition-all cursor-pointer shadow-2xs",
+                   maintenanceActive
+                     ? "bg-amber-600 hover:bg-amber-700 text-white border-amber-800"
+                     : "bg-white hover:bg-amber-50 text-slate-800 border-[#CBD5E1]"
+                 )}
+               >
+                 <AlertTriangle className={cn("h-3.5 w-3.5", maintenanceActive ? "text-white" : "text-amber-600")} />
+                 <span className="hidden sm:inline">
+                   {maintenanceActive ? "Maintenance: ON" : "Maintenance Mode"}
+                 </span>
+               </button>
+             )}
              <button
                type="button"
                onClick={() => setIsAuditLogOpen(true)}

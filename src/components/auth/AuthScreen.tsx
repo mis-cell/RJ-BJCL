@@ -8,17 +8,45 @@ const CLOUDINARY_BG_URL = "https://res.cloudinary.com/x6tw39wi/image/upload/v178
 
 interface AuthScreenProps {
   onLogin: (year: string, user: string, pass: string) => void;
+  maintenanceMode?: {
+    enabled: boolean;
+    message: string;
+  };
 }
 
-export function AuthScreen({ onLogin }: AuthScreenProps) {
+export function AuthScreen({ onLogin, maintenanceMode }: AuthScreenProps) {
   const [year, setYear] = useState("2026-2027");
   const [username, setUsername] = useState("ADMIN");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [bgSrc, setBgSrc] = useState(CLOUDINARY_BG_URL);
 
+  const isMaintenanceActive = Boolean(maintenanceMode?.enabled);
+  const maintenanceText =
+    maintenanceMode?.message || "Server update in progress. Please wait and try again shortly.";
+
+  const handleFormSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const cleanUser = username.trim().toUpperCase();
+    if (isMaintenanceActive && cleanUser !== "ADMIN" && cleanUser !== "001" && cleanUser !== "ADMINISTRATOR") {
+      window.alert(maintenanceText);
+      return;
+    }
+    onLogin(year, username, password);
+  };
+
   return (
-    <div className="min-h-screen w-screen bg-[#e2dac8] flex items-center justify-center p-2 sm:p-4 font-sans select-none overflow-hidden">
+    <div className="min-h-screen w-screen bg-[#e2dac8] flex flex-col items-center justify-center p-2 sm:p-4 font-sans select-none overflow-hidden relative">
+      {/* Global Top Maintenance Notice Banner on Login Screen */}
+      {isMaintenanceActive && (
+        <div className="fixed top-0 left-0 right-0 z-50 bg-amber-600 text-white px-4 py-2.5 shadow-lg border-b-2 border-amber-800 flex items-center justify-center gap-3 text-center">
+          <span className="inline-block w-2.5 h-2.5 rounded-full bg-white animate-ping shrink-0" />
+          <span className="text-xs sm:text-sm font-black tracking-wide uppercase">
+            {maintenanceText}
+          </span>
+        </div>
+      )}
+
       {/* Centered Master Card Container - Enforces strict Landscape aspect ratio (1462/962) */}
       
       {/* ================= DESKTOP LOGIN ================= */}
@@ -52,11 +80,19 @@ export function AuthScreen({ onLogin }: AuthScreenProps) {
                 </p>
               </div>
 
+              {isMaintenanceActive && (
+                <div className="mb-3 p-2.5 rounded-lg bg-amber-50 border-2 border-amber-500 text-amber-950 text-center shadow-xs">
+                  <p className="text-xs font-black uppercase tracking-wide text-amber-900">
+                    {maintenanceText}
+                  </p>
+                  <p className="text-[10px] font-semibold text-amber-800 mt-0.5">
+                    User logins are temporarily paused. Administrator (ADMIN / 001) may sign in to manage maintenance mode.
+                  </p>
+                </div>
+              )}
+
               <form
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  onLogin(year, username, password);
-                }}
+                onSubmit={handleFormSubmit}
                 className="space-y-2.5 sm:space-y-3"
               >
 
@@ -161,7 +197,7 @@ export function AuthScreen({ onLogin }: AuthScreenProps) {
                   type="submit"
                   className="w-full p-3 sm:p-3.5 mt-1 rounded-[9px] sm:rounded-[10px] bg-[#D94B5A] hover:bg-[#E85A5A] text-white font-bold text-xs sm:text-sm tracking-wide border-none cursor-pointer transition-all shadow-md active:scale-[0.99] flex items-center justify-center gap-2"
                 >
-                  Login
+                  {isMaintenanceActive ? "Admin Login (Maintenance Active)" : "Login"}
                 </button>
 
               </form>
@@ -191,11 +227,16 @@ export function AuthScreen({ onLogin }: AuthScreenProps) {
 
             </div>
 
+            {isMaintenanceActive && (
+              <div className="mb-4 p-3 rounded-lg bg-amber-50 border-2 border-amber-500 text-amber-950 text-center">
+                <p className="text-xs font-black uppercase tracking-wide text-amber-900">
+                  {maintenanceText}
+                </p>
+              </div>
+            )}
+
             <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                onLogin(year, username, password);
-              }}
+              onSubmit={handleFormSubmit}
               className="space-y-4"
             >
 

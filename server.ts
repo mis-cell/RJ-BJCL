@@ -7,10 +7,69 @@ import aiGatewayRouter from "./src/lib/ai-gateway.ts";
 import nodemailer from "nodemailer";
 import imaps from 'imap-simple';
 import { simpleParser } from 'mailparser';
-import { serverLocalDb, executeSelect, executeInsert, executeUpsert, executeUpdate, executeDelete, executeRpc, syncPendingDataToLocalPostgres, ensureLocalPostgresDatabaseAndHourlyBackup } from "./src/lib/serverPostgresDb.ts";
+import {
+  serverLocalDb,
+  executeSelect,
+  executeInsert,
+  executeUpsert,
+  executeUpdate,
+  executeDelete,
+  executeRpc,
+  syncPendingDataToLocalPostgres,
+  ensureLocalPostgresDatabaseAndHourlyBackup,
+  listPostgresBackups,
+  runVerifiedPostgresBackup,
+  restorePostgresBackup,
+  recoverMissingDataFromAllSources,
+  getBackupDirectory,
+} from "./src/lib/serverPostgresDb.ts";
 
 // Pure Local PostgreSQL database instance (No Supabase connection or dependency)
 const supabase = serverLocalDb;
+
+export interface MaintenanceModeState {
+  enabled: boolean;
+  message: string;
+  updatedBy: string;
+  updatedAt: string;
+}
+
+const DEFAULT_MAINTENANCE_MESSAGE = "Server update in progress. Please wait and try again shortly.";
+const MAINTENANCE_FILE_PATH = path.resolve(process.cwd(), "maintenance_mode.json");
+
+function getMaintenanceState(): MaintenanceModeState {
+  try {
+    if (fs.existsSync(MAINTENANCE_FILE_PATH)) {
+      const raw = JSON.parse(fs.readFileSync(MAINTENANCE_FILE_PATH, "utf8"));
+      return {
+        enabled: Boolean(raw?.enabled),
+        message: String(raw?.message || DEFAULT_MAINTENANCE_MESSAGE).trim() || DEFAULT_MAINTENANCE_MESSAGE,
+        updatedBy: String(raw?.updatedBy || "ADMIN"),
+        updatedAt: String(raw?.updatedAt || new Date().toISOString()),
+      };
+    }
+  } catch (_e) {}
+  return {
+    enabled: false,
+    message: DEFAULT_MAINTENANCE_MESSAGE,
+    updatedBy: "SYSTEM",
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+function setMaintenanceState(next: Partial<MaintenanceModeState>): MaintenanceModeState {
+  const current = getMaintenanceState();
+  const updated: MaintenanceModeState = {
+    enabled: next.enabled !== undefined ? Boolean(next.enabled) : current.enabled,
+    message: String(next.message || current.message || DEFAULT_MAINTENANCE_MESSAGE).trim() || DEFAULT_MAINTENANCE_MESSAGE,
+    updatedBy: String(next.updatedBy || "ADMIN"),
+    updatedAt: new Date().toISOString(),
+  };
+  try {
+    fs.writeFileSync(MAINTENANCE_FILE_PATH, JSON.stringify(updated, null, 2), "utf8");
+  } catch (_e) {}
+  return updated;
+}
 
 
 
@@ -516,6 +575,76 @@ async function startServer() {
     }
   });
 
+  // 2c. Admin-Controlled Server Maintenance Mode & PostgreSQL Backup/Recovery Routes
+  app.get(["/api/maintenance", "/Jute-Purchase-Automation/api/maintenance"], (_req, res) => {
+    return res.json(getMaintenanceState());
+  });
+
+  app.post(["/api/maintenance", "/Jute-Purchase-Automation/api/maintenance"], (req, res) => {
+    const { enabled, message, updatedBy } = req.body || {};
+    const state = setMaintenanceState({
+      enabled: Boolean(enabled),
+      message: message || DEFAULT_MAINTENANCE_MESSAGE,
+      updatedBy: updatedBy || "ADMIN",
+    });
+    console.log(`[Maintenance Mode] Toggled to ${state.enabled ? "ON (ACTIVE)" : "OFF"} by ${state.updatedBy}`);
+    return res.json({ success: true, maintenance: state });
+  });
+
+  app.get(["/api/admin/backups", "/Jute-Purchase-Automation/api/admin/backups"], async (_req, res) => {
+    try {
+      const info = await listPostgresBackups();
+      return res.json({
+        success: true,
+        ...info,
+        dbConnection: {
+          host: process.env.PGHOST || process.env.LOCAL_DB_HOST || "127.0.0.1",
+          port: Number(process.env.PGPORT || process.env.LOCAL_DB_PORT) || 5432,
+          database: process.env.PGDATABASE || process.env.LOCAL_DB_NAME || "bjcl_db",
+          user: process.env.PGUSER || process.env.LOCAL_DB_USER || "postgres",
+          backupDir: getBackupDirectory(),
+        },
+      });
+    } catch (err: any) {
+      return res.status(500).json({ success: false, message: err.message });
+    }
+  });
+
+  app.post(["/api/admin/backups/run", "/Jute-Purchase-Automation/api/admin/backups/run"], async (req, res) => {
+    try {
+      const result = await runVerifiedPostgresBackup({
+        reason: req.body?.reason || "manual_admin_backup",
+        preRestore: Boolean(req.body?.preRestore),
+      });
+      return res.json(result);
+    } catch (err: any) {
+      return res.status(500).json({ success: false, message: err.message });
+    }
+  });
+
+  app.post(["/api/admin/backups/restore", "/Jute-Purchase-Automation/api/admin/backups/restore"], async (req, res) => {
+    try {
+      const { filePath, fileName } = req.body || {};
+      const target = String(filePath || fileName || "").trim();
+      if (!target) {
+        return res.status(400).json({ success: false, message: "Missing backup filePath or fileName to restore." });
+      }
+      const result = await restorePostgresBackup(target);
+      return res.json(result);
+    } catch (err: any) {
+      return res.status(500).json({ success: false, message: err.message });
+    }
+  });
+
+  app.post(["/api/admin/recover-missing-data", "/Jute-Purchase-Automation/api/admin/recover-missing-data"], async (_req, res) => {
+    try {
+      const result = await recoverMissingDataFromAllSources();
+      return res.json(result);
+    } catch (err: any) {
+      return res.status(500).json({ success: false, message: err.message });
+    }
+  });
+
   // 3. Session Token Issuing, Verification, Revocation & Login Rate-Limiting Routes
   app.post(["/api/auth/session", "/api/auth/login", "/Jute-Purchase-Automation/api/auth/session", "/Jute-Purchase-Automation/api/auth/login"], async (req, res) => {
     const clientIp = String(req.headers["x-forwarded-for"] || req.socket.remoteAddress || "local");
@@ -577,6 +706,24 @@ async function startServer() {
       }
     }
 
+    // Maintenance Mode Guard: Prevent non-admin users from logging in while server update is in progress
+    const maintenanceState = getMaintenanceState();
+    const isTargetAdmin =
+      verifiedRole === "ADMIN" ||
+      verifiedRole === "ADMINISTRATOR" ||
+      verifiedLevel === "L5" ||
+      verifiedLevel === "ADMIN" ||
+      targetUser.toUpperCase() === "ADMIN" ||
+      verifiedUserId === "001";
+
+    if (maintenanceState.enabled && !isTargetAdmin) {
+      return res.status(503).json({
+        success: false,
+        maintenance: true,
+        error: maintenanceState.message || DEFAULT_MAINTENANCE_MESSAGE,
+      });
+    }
+
     loginAttemptTracker.delete(clientIp);
     const token = `bjl_sess_${now}_${Math.random().toString(36).substring(2, 15)}`;
     const sessionRecord: ServerSessionRecord = {
@@ -596,6 +743,7 @@ async function startServer() {
       token,
       expiresAt: sessionRecord.expiresAt,
       session: sessionRecord,
+      maintenance: maintenanceState,
     });
   });
 

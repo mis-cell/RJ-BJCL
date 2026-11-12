@@ -348,6 +348,9 @@ export function useAdminDeskData({ isAuthenticated }: UseAdminDeskDataProps) {
       let remoteRecords: any[] = [];
       let localRecords: any[] = [];
 
+      // Always invalidate in-memory cache before Admin Desk fetch so frontend matches PostgreSQL 100%
+      dbModule.invalidateCache(selectedTable.name);
+
       try {
         localRecords = await dbModule.fetchAll(selectedTable.name);
       } catch (e) {}
@@ -357,7 +360,7 @@ export function useAdminDeskData({ isAuthenticated }: UseAdminDeskDataProps) {
           .from(selectedTable.name)
           .select("*")
           .order(selectedTable.pk, { ascending: true })
-          .limit(300);
+          .limit(10000);
 
         if (!error && remoteData) {
           remoteRecords = remoteData;
@@ -366,6 +369,7 @@ export function useAdminDeskData({ isAuthenticated }: UseAdminDeskDataProps) {
 
       const pk = selectedTable.pk;
       const combinedMap = new Map<string, any>();
+      const remoteKeySet = new Set<string>();
 
       const getRowKey = (rec: any, idx: number) => {
         if (rec?.id !== undefined && rec?.id !== null && String(rec.id).trim() !== '') {
@@ -375,17 +379,31 @@ export function useAdminDeskData({ isAuthenticated }: UseAdminDeskDataProps) {
         return pkVal ? `pk:${pkVal}` : `idx:${idx}`;
       };
 
-      // Populate with local client database records first
-      (localRecords || []).forEach((rec: any, idx: number) => {
-        const key = getRowKey(rec, idx);
-        if (key) combinedMap.set(key, rec);
-      });
-
-      // Merge remote records (remote records take precedence if updated)
+      // Track remote PostgreSQL keys first
       (remoteRecords || []).forEach((rec: any, idx: number) => {
         const key = getRowKey(rec, idx);
-        if (key) combinedMap.set(key, rec);
+        if (key) {
+          remoteKeySet.add(key);
+          combinedMap.set(key, rec);
+        }
       });
+
+      // Merge any local records and automatically push unsynced local-only rows into PostgreSQL
+      const unsyncedRows: any[] = [];
+      (localRecords || []).forEach((rec: any, idx: number) => {
+        const key = getRowKey(rec, idx);
+        if (key && !combinedMap.has(key)) {
+          combinedMap.set(key, rec);
+          unsyncedRows.push(rec);
+        }
+      });
+
+      if (unsyncedRows.length > 0 && supabase) {
+        supabase
+          .from(selectedTable.name)
+          .upsert(unsyncedRows, { onConflict: pk })
+          .then(() => {});
+      }
 
       const merged = Array.from(combinedMap.values());
       merged.sort((a, b) => {
