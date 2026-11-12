@@ -2217,7 +2217,7 @@ export async function runVerifiedPostgresBackup(options?: {
       const dumpName = `${prefix}${dbName}_${ts}.dump`;
       const dumpPath = path.join(backupDir, dumpName);
       await execAsync(
-        `PGPASSWORD="${password}" pg_dump -h ${host} -p ${port} -U ${user} -d "${dbName}" -F c -b -f "${dumpPath}"`
+        `PGPASSWORD="${password}" pg_dump -w -h ${host} -p ${port} -U ${user} -d "${dbName}" -F c -b -f "${dumpPath}" || sudo -n -u postgres pg_dump -p ${port} -d "${dbName}" -F c -b -f "${dumpPath}"`
       );
       if (fs.existsSync(dumpPath)) {
         const st = fs.statSync(dumpPath);
@@ -2248,7 +2248,7 @@ export async function runVerifiedPostgresBackup(options?: {
     const allDbName = `${prefix}all_postgres_databases_${ts}.sql.gz`;
     const allDbPath = path.join(backupDir, allDbName);
     await execAsync(
-      `PGPASSWORD="${password}" pg_dumpall -h ${host} -p ${port} -U ${user} --clean --if-exists | gzip -9 > "${allDbPath}"`
+      `(PGPASSWORD="${password}" pg_dumpall -w -h ${host} -p ${port} -U ${user} --clean --if-exists || sudo -n -u postgres pg_dumpall -p ${port} --clean --if-exists) | gzip -9 > "${allDbPath}"`
     );
     if (fs.existsSync(allDbPath)) {
       const st = fs.statSync(allDbPath);
@@ -2377,16 +2377,16 @@ export async function restorePostgresBackup(backupFilePath: string): Promise<{
     if (resolvedPath.endsWith('.dump') || resolvedPath.endsWith('.backup')) {
       await execAsync(`pg_restore --list "${resolvedPath}"`);
       await execAsync(
-        `PGPASSWORD="${password}" pg_restore -h ${host} -p ${port} -U ${user} -d "${targetDb}" --clean --if-exists --no-owner --no-privileges "${resolvedPath}" || true`
+        `PGPASSWORD="${password}" pg_restore -w -h ${host} -p ${port} -U ${user} -d "${targetDb}" --clean --if-exists --no-owner --no-privileges "${resolvedPath}" || sudo -n -u postgres pg_restore -p ${port} -d "${targetDb}" --clean --if-exists --no-owner --no-privileges "${resolvedPath}" || true`
       );
     } else if (resolvedPath.endsWith('.sql.gz')) {
       await execAsync(`gzip -t "${resolvedPath}"`);
       await execAsync(
-        `gunzip -c "${resolvedPath}" | PGPASSWORD="${password}" psql -h ${host} -p ${port} -U ${user} -d "${targetDb}"`
+        `gunzip -c "${resolvedPath}" | (PGPASSWORD="${password}" psql -w -h ${host} -p ${port} -U ${user} -d "${targetDb}" || sudo -n -u postgres psql -p ${port} -d "${targetDb}")`
       );
     } else if (resolvedPath.endsWith('.sql')) {
       await execAsync(
-        `PGPASSWORD="${password}" psql -h ${host} -p ${port} -U ${user} -d "${targetDb}" -f "${resolvedPath}"`
+        `PGPASSWORD="${password}" psql -w -h ${host} -p ${port} -U ${user} -d "${targetDb}" -f "${resolvedPath}" || sudo -n -u postgres psql -p ${port} -d "${targetDb}" -f "${resolvedPath}"`
       );
     } else {
       throw new Error(`Unsupported backup file format: ${resolvedPath}`);
