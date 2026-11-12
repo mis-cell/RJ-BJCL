@@ -1111,10 +1111,11 @@ async function startServer() {
     }
   });
 
-  // Ensure material_inspection schema & triggers exist on startup via exec_sql
-  try {
-    await supabase.rpc('exec_sql', {
-      query: `
+  // Ensure material_inspection schema & triggers exist on startup via exec_sql (non-blocking)
+  Promise.resolve().then(async () => {
+    try {
+      await supabase.rpc('exec_sql', {
+        query: `
         -- Ensure production_records table exists (100% NON-DESTRUCTIVE)
         CREATE TABLE IF NOT EXISTS production_records (
           id TEXT PRIMARY KEY,
@@ -1714,11 +1715,12 @@ async function startServer() {
 
         NOTIFY pgrst, 'reload schema';
       `
-    });
-    console.log("Supabase schema and trigger verified/updated successfully via exec_sql.");
-  } catch (trgErr) {
-    console.warn("Failed to create/verify inspection trigger in Supabase via RPC:", trgErr);
-  }
+      });
+      console.log("Supabase schema and trigger verified/updated successfully via exec_sql.");
+    } catch (trgErr) {
+      console.warn("Failed to create/verify inspection trigger in Supabase via RPC:", trgErr);
+    }
+  });
 
   // Helper date sanitizer for server
   const serverSanitizeDate = (val: any): string | null => {

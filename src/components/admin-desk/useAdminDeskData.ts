@@ -21,11 +21,21 @@ export function useAdminDeskData({ isAuthenticated }: UseAdminDeskDataProps) {
   const [editingRow, setEditingRow] = useState<any>(null);
   const [isNewRow, setIsNewRow] = useState<boolean>(false);
   const lastEditingRowRef = useRef<any>(null);
+  const originalEditingRowRef = useRef<any>(null);
 
   useEffect(() => {
     if (editingRow !== null && lastEditingRowRef.current === null) {
-      const isNew = Object.keys(editingRow).length === 0;
-      setIsNewRow(isNew);
+      const isEmptyRecord =
+        Object.keys(editingRow).length === 0 ||
+        Object.values(editingRow).every((v) => v === "" || v === null || v === undefined);
+      if (isEmptyRecord) {
+        setIsNewRow(true);
+        originalEditingRowRef.current = null;
+      } else {
+        originalEditingRowRef.current = { ...editingRow };
+      }
+    } else if (editingRow === null) {
+      originalEditingRowRef.current = null;
     }
     lastEditingRowRef.current = editingRow;
   }, [editingRow]);
@@ -357,15 +367,23 @@ export function useAdminDeskData({ isAuthenticated }: UseAdminDeskDataProps) {
       const pk = selectedTable.pk;
       const combinedMap = new Map<string, any>();
 
+      const getRowKey = (rec: any, idx: number) => {
+        if (rec?.id !== undefined && rec?.id !== null && String(rec.id).trim() !== '') {
+          return `id:${String(rec.id).trim()}`;
+        }
+        const pkVal = String(rec?.[pk] ?? rec?.user_id ?? '').trim();
+        return pkVal ? `pk:${pkVal}` : `idx:${idx}`;
+      };
+
       // Populate with local client database records first
-      (localRecords || []).forEach((rec: any) => {
-        const key = String(rec[pk] ?? rec.user_id ?? rec.id ?? '').trim();
+      (localRecords || []).forEach((rec: any, idx: number) => {
+        const key = getRowKey(rec, idx);
         if (key) combinedMap.set(key, rec);
       });
 
       // Merge remote records (remote records take precedence if updated)
-      (remoteRecords || []).forEach((rec: any) => {
-        const key = String(rec[pk] ?? rec.user_id ?? rec.id ?? '').trim();
+      (remoteRecords || []).forEach((rec: any, idx: number) => {
+        const key = getRowKey(rec, idx);
         if (key) combinedMap.set(key, rec);
       });
 
@@ -576,17 +594,44 @@ export function useAdminDeskData({ isAuthenticated }: UseAdminDeskDataProps) {
         });
       } else {
         const savePayload = { ...editingRow };
-        if (savePayload.id === "" || savePayload.id === null) {
+        if (savePayload.id === "" || savePayload.id === null || savePayload.id === "AUTO_GENERATED") {
           delete savePayload.id;
+        }
+        if (savePayload.created_at === "" || savePayload.created_at === null) {
+          if (editorColumns.includes("created_at")) {
+            savePayload.created_at = new Date().toISOString();
+          } else {
+            delete savePayload.created_at;
+          }
+        }
+        if (savePayload.updated_at === "" || savePayload.updated_at === null) {
+          if (editorColumns.includes("updated_at")) {
+            savePayload.updated_at = new Date().toISOString();
+          } else {
+            delete savePayload.updated_at;
+          }
+        }
+        if (savePayload.last_login === "" || savePayload.last_login === null) {
+          delete savePayload.last_login;
         }
         delete savePayload.signature_url;
         delete savePayload.digital_signature;
 
-        if (isNew) {
+        const origRow = originalEditingRowRef.current;
+        if (isNew || !origRow) {
           await dbModule.insert(selectedTable.name, savePayload);
         } else {
-          const pkVal = savePayload[pk];
-          await dbModule.update(selectedTable.name, pk, pkVal, savePayload);
+          const origId = origRow.id;
+          const hasOrigId = origId !== undefined && origId !== null && String(origId).trim() !== "";
+          const origPkVal = origRow[pk] ?? savePayload[pk];
+
+          if (hasOrigId && pk !== "id") {
+            await dbModule.update(selectedTable.name, "id", origId, savePayload);
+          } else if (origPkVal !== undefined && origPkVal !== null && String(origPkVal).trim() !== "") {
+            await dbModule.update(selectedTable.name, pk, origPkVal, savePayload);
+          } else {
+            await dbModule.insert(selectedTable.name, savePayload);
+          }
         }
       }
 

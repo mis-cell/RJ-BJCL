@@ -541,7 +541,7 @@ export const dbModule = {
     }
 
     const payload = sanitizePayload(data);
-    const { data: updatedRows, error } = await executeWithSchemaRetry(
+    let { data: updatedRows, error } = await executeWithSchemaRetry(
       table,
       async (pl) => {
         const res = await supabase!.from(table).update(pl).eq(idColumn, idValue).select();
@@ -549,6 +549,45 @@ export const dbModule = {
       },
       payload
     );
+
+    // Fallback 1: If updating by business key (e.g. marka_code, agency_code) matched 0 rows
+    // because the user modified the code of an existing row that has a valid `id`, update by `id`.
+    if ((!updatedRows || updatedRows.length === 0) && idColumn !== "id" && payload.id !== undefined && payload.id !== null && String(payload.id).trim() !== "") {
+      const byIdRes = await executeWithSchemaRetry(
+        table,
+        async (pl) => {
+          const res = await supabase!.from(table).update(pl).eq("id", payload.id).select();
+          return { data: res.data, error: res.error };
+        },
+        payload
+      );
+      if (!byIdRes.error && byIdRes.data && byIdRes.data.length > 0) {
+        updatedRows = byIdRes.data;
+        error = null;
+      }
+    }
+
+    // Fallback 2: If 0 rows matched (e.g. new record saved via update), automatically insert the row!
+    if (!error && (!updatedRows || updatedRows.length === 0)) {
+      const insertPayload = { ...payload };
+      if (insertPayload[idColumn] === undefined && idValue !== undefined && idValue !== null && String(idValue).trim() !== "") {
+        insertPayload[idColumn] = idValue;
+      }
+      const insRes = await executeWithSchemaRetry(
+        table,
+        async (pl) => {
+          const res = await supabase!.from(table).insert([pl]).select();
+          return { data: res.data, error: res.error };
+        },
+        insertPayload
+      );
+      if (!insRes.error && insRes.data && insRes.data.length > 0) {
+        updatedRows = insRes.data;
+        error = null;
+      } else if (insRes.error) {
+        error = insRes.error;
+      }
+    }
 
     if (error) {
       throw new Error(

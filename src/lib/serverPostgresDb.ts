@@ -775,9 +775,9 @@ const TABLE_UNIQUE_KEYS: Record<string, string[]> = {
   supply_master: ['id', 'supp_code'],
   broker_master: ['id', 'brok_code'],
   area_master: ['id', 'area_code'],
-  agency_master: ['id', 'agency_code'],
+  agency_master: ['id'],
   grade_master: ['id', 'grade_code'],
-  marka_master: ['id', 'marka_name'],
+  marka_master: ['id', 'marka_code', 'marka_name'],
   godown_master: ['id', 'gdn_code'],
   batch_master: ['code'],
   department_master: ['dept_code'],
@@ -788,7 +788,8 @@ const TABLE_UNIQUE_KEYS: Record<string, string[]> = {
 // Composite conflict keys for rate/matrix tables
 const TABLE_COMPOSITE_KEYS: Record<string, string[]> = {
   satta_differentials: ['area', 'grade'],
-  satta_calculated_rates: ['start_date', 'area', 'grade']
+  satta_calculated_rates: ['start_date', 'area', 'grade'],
+  agency_master: ['area_name', 'agency_code']
 };
 
 // Database is fixed: only execute the one-time self-deleting agency_master seed if present
@@ -1507,6 +1508,92 @@ async function tryUpdateExistingRowInPlace(
   return updRes.rows.length > 0 ? updRes.rows : null;
 }
 
+async function populateMissingInsertDefaults(
+  table: string,
+  row: Record<string, any>,
+  validCols: Set<string>
+): Promise<void> {
+  const colTypes = tableColumnTypesCache.get(table);
+
+  // 1. Auto-populate missing 'id' column (BIGINT/INTEGER max+1 or UUID)
+  if (validCols.has('id')) {
+    const idType = (colTypes?.get('id') || '').toLowerCase();
+    const isIntId =
+      idType === 'int8' ||
+      idType === 'int4' ||
+      idType === 'int2' ||
+      idType === 'bigint' ||
+      idType === 'integer' ||
+      idType === 'smallint';
+
+    if (isIntId) {
+      if (row.id === undefined || row.id === null || String(row.id).trim() === '' || !Number.isFinite(Number(row.id))) {
+        const maxRes = await pool.query(`SELECT COALESCE(MAX("id"), 0) + 1 AS next_id FROM "${table}"`);
+        row.id = Number(maxRes.rows[0]?.next_id || 1);
+      }
+    } else if (idType === 'uuid') {
+      if (row.id === undefined || row.id === null || String(row.id).trim() === '' || !isValidUuid(String(row.id))) {
+        row.id = crypto.randomUUID();
+      }
+    }
+  }
+
+  // 2. Auto-populate created_at if present on table and missing
+  if (validCols.has('created_at') && (row.created_at === undefined || row.created_at === null || String(row.created_at).trim() === '')) {
+    row.created_at = new Date().toISOString();
+  }
+
+  // 3. Master table NOT NULL / code fallbacks
+  if (table === 'agency_master') {
+    if (!row.agency_code || String(row.agency_code).trim() === '') row.agency_code = String(row.id || Date.now());
+    if (!row.agency_name || String(row.agency_name).trim() === '') row.agency_name = String(row.agency_code);
+  } else if (table === 'area_master') {
+    if (!row.area_code || String(row.area_code).trim() === '') row.area_code = String((Number(row.id) || 1) * 10);
+    if (!row.area_name || String(row.area_name).trim() === '') row.area_name = String(row.area_code);
+  } else if (table === 'batch_master') {
+    if (!row.code || String(row.code).trim() === '') {
+      const maxRes = await pool.query(
+        `SELECT COALESCE(MAX(NULLIF(REGEXP_REPLACE("code", '[^0-9]', '', 'g'), '')::bigint), 0) + 1 AS next_code FROM "batch_master"`
+      );
+      row.code = String(maxRes.rows[0]?.next_code || 1);
+    }
+    if (!row.batch_name || String(row.batch_name).trim() === '') row.batch_name = String(row.code);
+  } else if (table === 'broker_master') {
+    if (!row.brok_code || String(row.brok_code).trim() === '') row.brok_code = String(row.id || Date.now());
+    if (!row.brok_name || String(row.brok_name).trim() === '') row.brok_name = String(row.brok_code);
+  } else if (table === 'customer_master') {
+    if (row.contact_number === undefined || row.contact_number === null) row.contact_number = '';
+  } else if (table === 'department_master') {
+    if ((!row.dept_code || String(row.dept_code).trim() === '') && row.dept_name) {
+      row.dept_code = String(row.dept_name).trim().toUpperCase();
+    } else if (!row.dept_code || String(row.dept_code).trim() === '') {
+      row.dept_code = `DEPT-${Date.now().toString().slice(-4)}`;
+    }
+    if (!row.dept_name || String(row.dept_name).trim() === '') row.dept_name = String(row.dept_code);
+  } else if (table === 'godown_master') {
+    if (!row.gdn_code || String(row.gdn_code).trim() === '') row.gdn_code = String(row.gdn_name || row.id || Date.now());
+    if (!row.gdn_name || String(row.gdn_name).trim() === '') row.gdn_name = String(row.gdn_code);
+  } else if (table === 'grade_master') {
+    if (!row.grade_code || String(row.grade_code).trim() === '') row.grade_code = String((Number(row.id) || 1) * 10);
+    if (!row.grade_name || String(row.grade_name).trim() === '') row.grade_name = String(row.grade_code);
+  } else if (table === 'marka_master') {
+    if (!row.marka_code || String(row.marka_code).trim() === '') row.marka_code = String(row.id || '').padStart(2, '0');
+    if (!row.marka_name || String(row.marka_name).trim() === '') row.marka_name = String(row.marka_code);
+  } else if (table === 'supply_master') {
+    if (!row.supp_code || String(row.supp_code).trim() === '') row.supp_code = String(row.id || Date.now());
+    if (!row.supp_name || String(row.supp_name).trim() === '') row.supp_name = String(row.supp_code);
+  } else if (table === 'unit_master') {
+    if (!row.unit_name || String(row.unit_name).trim() === '') row.unit_name = `UNIT-${String(row.id || '').slice(0, 4).toUpperCase()}`;
+  } else if (table === 'user_master') {
+    if (!row.user_id || String(row.user_id).trim() === '') {
+      const maxRes = await pool.query(
+        `SELECT COALESCE(MAX(NULLIF(REGEXP_REPLACE("user_id", '[^0-9]', '', 'g'), '')::int), 0) + 1 AS next_uid FROM "user_master"`
+      );
+      row.user_id = String(maxRes.rows[0]?.next_uid || 1).padStart(3, '0');
+    }
+  }
+}
+
 export async function executeInsert(payload: QueryPayload) {
   const table = sanitizeIdent(payload.table);
   const rawValues = Array.isArray(payload.values) ? payload.values : [payload.values];
@@ -1524,6 +1611,9 @@ export async function executeInsert(payload: QueryPayload) {
 
   const validCols = await getValidTableColumns(table);
   const cleanedRows = rawValues.map(r => filterRowByValidColumns(r, validCols, table));
+  for (const r of cleanedRows) {
+    await populateMissingInsertDefaults(table, r, validCols);
+  }
 
   const sample = cleanedRows[0];
   const keys = Object.keys(sample).filter(k => sample[k] !== undefined);
@@ -1578,7 +1668,7 @@ export async function executeUpsert(payload: QueryPayload) {
 
   try {
     for (const row of cleanedRows) {
-      const rowKeys = Object.keys(row).filter(k => row[k] !== undefined);
+      let rowKeys = Object.keys(row).filter(k => row[k] !== undefined);
       if (rowKeys.length === 0) continue;
 
       // 1. Check if an existing row already matches by PK or Business Key and update in place
@@ -1594,7 +1684,10 @@ export async function executeUpsert(payload: QueryPayload) {
         continue;
       }
 
-      // 2. Row does not exist yet — perform INSERT
+      // 2. Row does not exist yet — populate missing PK/defaults and perform INSERT
+      await populateMissingInsertDefaults(table, row, validCols);
+      rowKeys = Object.keys(row).filter(k => row[k] !== undefined);
+
       const insParams: any[] = [];
       const insPlaceholders: string[] = [];
       const insColsSql = rowKeys.map(k => `"${sanitizeIdent(k)}"`).join(', ');

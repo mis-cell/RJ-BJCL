@@ -68,12 +68,28 @@ export const AdminDeskRowEditorModal: React.FC<AdminDeskRowEditorModalProps> = (
       if (!editingRow.ip_address) {
         updates = { ...(updates || {}), ip_address: 'Local' };
       }
+    } else if (isNewRow) {
+      if (editorColumns.includes("id") && (editingRow.id === undefined || editingRow.id === "")) {
+        const sampleId = data && data.length > 0 ? data[0]?.id : null;
+        if (typeof sampleId === "number" || (sampleId !== null && sampleId !== undefined && /^\d+$/.test(String(sampleId)))) {
+          const maxId = (data || []).reduce((max, r) => {
+            const n = Number(r?.id);
+            return Number.isFinite(n) && n > max ? n : max;
+          }, 0);
+          updates = { ...(updates || {}), id: maxId + 1 };
+        } else {
+          updates = { ...(updates || {}), id: "AUTO_GENERATED" };
+        }
+      }
+      if (editorColumns.includes("created_at") && !editingRow.created_at) {
+        updates = { ...(updates || {}), created_at: new Date().toISOString() };
+      }
     }
 
     if (updates) {
       setEditingRow((prev: any) => ({ ...prev, ...updates }));
     }
-  }, [selectedTable?.name]);
+  }, [selectedTable?.name, isNewRow]);
 
   if (!editingRow || !selectedTable) return null;
 
