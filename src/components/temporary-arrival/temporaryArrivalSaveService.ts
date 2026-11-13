@@ -106,7 +106,7 @@ export async function saveTemporaryArrivalRecord({
     broker: formData.broker,
     transporter_name: formData.transporter_name,
     challan_rr_no: formData.challan_rr_no || (formData as any).challan_railway_receipt_no || '',
-    challan_railway_receipt_no: (formData as any).challan_railway_receipt_no || formData.challan_rr_no || '',
+    challan_railway_receipt_no: formData.challan_rr_no || (formData as any).challan_railway_receipt_no || '',
     lorry_number: lorryCombined,
     pan_no: formData.pan_no,
     lorry_date: sanitizeDate(formData.lorry_date),

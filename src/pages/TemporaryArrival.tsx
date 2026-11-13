@@ -978,6 +978,9 @@ export default function TemporaryArrival({ onSave, onCancel, initialData }: { on
         ...prev,
         [name]: name.includes('weight') || name.includes('fees') ? (finalValue === '' ? '' : Number(finalValue)) : finalValue
       };
+      if (name === 'challan_rr_no') {
+        updated.challan_railway_receipt_no = finalValue;
+      }
 
       if (name === 'po_no' && finalValue) {
         const matched = purchaseOrders.find((po: any) => String(po.po_no).trim().toUpperCase() === String(finalValue).trim().toUpperCase());

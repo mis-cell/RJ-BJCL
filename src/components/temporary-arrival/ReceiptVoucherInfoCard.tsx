@@ -28,33 +28,39 @@ export const ReceiptVoucherInfoCard: React.FC<ReceiptVoucherInfoCardProps> = ({
   suppliers,
   brokers
 }) => {
-  const [localChallanNo, setLocalChallanNo] = React.useState('');
-  const [localChallanDate, setLocalChallanDate] = React.useState('');
-  const prevFullRef = React.useRef(formData.challan_rr_no);
+  const parseChallanNoAndDate = (rawInput: any): { challanNo: string; challanDate: string } => {
+    const raw = String(rawInput || '').trim();
+    if (!raw) return { challanNo: '', challanDate: '' };
+    const dateMatch = raw.match(/(\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4}|\d{4}[-/.]\d{1,2}[-/.]\d{1,2})$/);
+    if (dateMatch) {
+      const dVal = dateMatch[1];
+      const nVal = raw.substring(0, raw.length - dVal.length).trim();
+      return { challanNo: nVal, challanDate: dVal };
+    }
+    return { challanNo: raw, challanDate: '' };
+  };
 
-  // Sync state from formData.challan_rr_no ONLY when loaded or changed externally
+  const initialChallanRaw = formData.challan_rr_no || formData.challan_railway_receipt_no || initialData?.challan_rr_no || initialData?.challan_railway_receipt_no || '';
+  const [localChallanNo, setLocalChallanNo] = React.useState(() => parseChallanNoAndDate(initialChallanRaw).challanNo);
+  const [localChallanDate, setLocalChallanDate] = React.useState(() => parseChallanNoAndDate(initialChallanRaw).challanDate);
+  const prevFullRef = React.useRef<string>(String(initialChallanRaw || '').trim());
+
+  // Sync state from formData.challan_rr_no when loaded in Edit Mode or changed externally
   React.useEffect(() => {
-    const raw = String(formData.challan_rr_no || '').trim();
+    const raw = String(formData.challan_rr_no || formData.challan_railway_receipt_no || '').trim();
     if (!raw) {
       setLocalChallanNo('');
       setLocalChallanDate('');
       prevFullRef.current = '';
       return;
     }
-    if (prevFullRef.current !== formData.challan_rr_no) {
-      prevFullRef.current = formData.challan_rr_no;
-      const dateMatch = raw.match(/(\d{2}[-/]\d{2}[-/]\d{2,4})$/);
-      if (dateMatch) {
-        const dVal = dateMatch[1];
-        const nVal = raw.substring(0, raw.length - dVal.length).trim();
-        setLocalChallanNo(nVal);
-        setLocalChallanDate(dVal);
-      } else if (!localChallanNo && !localChallanDate) {
-        setLocalChallanNo(raw);
-        setLocalChallanDate('');
-      }
+    if (prevFullRef.current !== raw || (!localChallanNo && !localChallanDate)) {
+      prevFullRef.current = raw;
+      const parsed = parseChallanNoAndDate(raw);
+      setLocalChallanNo(parsed.challanNo);
+      setLocalChallanDate(parsed.challanDate);
     }
-  }, [formData.challan_rr_no]);
+  }, [formData.challan_rr_no, formData.challan_railway_receipt_no, initialData]);
 
   const syncParentChallan = (no: string, date: string) => {
     const cNo = no.trim();
