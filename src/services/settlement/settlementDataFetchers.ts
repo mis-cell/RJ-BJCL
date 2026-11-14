@@ -502,14 +502,31 @@ export const fetchSaudaCheckpointDeduction = async (cleanPoNo: string) => {
 
       let changed = false;
 
-      // Always reconcile against live material_inspection + material_inspection_details so Excess/Short weights match the Sauda Check Point Settlement modal
-      if (supabase && Number(updated.contract_weight_mt) > 0) {
+      // Always reconcile against live PO total_contract_mt + material_inspection + material_inspection_details so Excess/Short weights match PostgreSQL tables
+      if (supabase) {
         try {
-          const [miRes, tmrRes, faRes] = await Promise.all([
+          const [scpRes, pmRes, miRes, tmrRes, faRes] = await Promise.all([
+            supabase.from('sauda_check_point').select('po_no, total_contract_mt').ilike('po_no', `%${rawPoNo}%`).limit(5).then(r => r.data || [], () => []),
+            supabase.from('purchase_master').select('po_no, total_contract_mt').ilike('po_no', `%${rawPoNo}%`).limit(5).then(r => r.data || [], () => []),
             supabase.from('material_inspection').select('mr_no, arrival_no, final_arrival_no, date, mr_date, inspection_date, created_at, receipt_gross_wt, challan_gross_wt, gross_weight, total_final_receipt_wt, final_receipt_wt, weight_reduced, reduced_weight, electronic_net_weight, final_weight_mt, weight_qtl, weight, grid_details, details').ilike('po_no', `%${rawPoNo}%`).then(r => r.data || [], () => []),
             supabase.from('temporary_material_received').select('temporary_arrival_no, amad_no, mr_no, arrival_no, date, arrival_date, created_at, receipt_gross_wt, gross_weight, total_final_receipt_wt, final_receipt_wt, weight_reduced, reduced_weight, electronic_net_weight, final_weight_mt, weight_qtl, weight').ilike('po_no', `%${rawPoNo}%`).then(r => r.data || [], () => []),
             supabase.from('final_arrival').select('final_arrival_no, mr_no, arrival_no, date, arrival_date, created_at, weight_qtl, electronic_net_weight, challan_material_weight, weight').ilike('po_no', `%${rawPoNo}%`).then(r => r.data || [], () => [])
           ]);
+
+          const findExactPo = (rows: any[]) =>
+            (rows || []).find((r: any) => String(r?.po_no || '').trim().replace(/[^a-zA-Z0-9]/g, '').toUpperCase() === cleanAlphaPo) || (rows || [])[0];
+          const liveScp = findExactPo(scpRes as any[]);
+          const livePm = findExactPo(pmRes as any[]);
+          const livePoContractMt =
+            Number(liveScp?.total_contract_mt || 0) > 0
+              ? Number(liveScp.total_contract_mt)
+              : Number(livePm?.total_contract_mt || 0) > 0
+                ? Number(livePm.total_contract_mt)
+                : 0;
+          if (livePoContractMt > 0 && Math.abs(Number(updated.contract_weight_mt || 0) - livePoContractMt) > 0.0005) {
+            updated.contract_weight_mt = livePoContractMt;
+            changed = true;
+          }
 
           const extractMrSeq = (mr: string): number => {
             const m = String(mr || '').trim().match(/(\d+)$/);
@@ -824,12 +841,11 @@ export const fetchSaudaCheckpointDeduction = async (cleanPoNo: string) => {
 
       if (changed) {
         try {
-          localStorage.setItem(`sauda_settlement_${cleanAlphaPo}`, JSON.stringify(updated));
-          localStorage.setItem(`sauda_settlement_${rawPoNo}`, JSON.stringify(updated));
           if (supabase && updated.id) {
             supabase
               .from('sauda_check_point_deductions')
               .update({
+                contract_weight_mt: updated.contract_weight_mt,
                 total_received_mt: updated.total_received_mt,
                 variation_mt: updated.variation_mt,
                 variation_type: updated.variation_type,
@@ -849,7 +865,7 @@ export const fetchSaudaCheckpointDeduction = async (cleanPoNo: string) => {
       return updated;
     };
 
-    // 1. Check Supabase sauda_check_point_deductions table first for authoritative record
+    // 1. Check PostgreSQL sauda_check_point_deductions table directly as sole source of truth
     if (supabase) {
       const { data: directList } = await supabase
         .from('sauda_check_point_deductions')
@@ -871,61 +887,16 @@ export const fetchSaudaCheckpointDeduction = async (cleanPoNo: string) => {
 
         if (found) return await reconcileAndNormalizeRecord(found);
       }
-    }
-
-    // 2. Check local storage cache
-    const localSavedStr = localStorage.getItem(`sauda_settlement_${cleanAlphaPo}`) || 
-                          localStorage.getItem(`sauda_settlement_${rawPoNo}`);
-    if (localSavedStr) {
-      try {
-        const parsed = JSON.parse(localSavedStr);
-        if (parsed && Number(parsed.deduction_amount) >= 0) {
-          return await reconcileAndNormalizeRecord(parsed);
-        }
-      } catch (e) {}
-    }
-
-    // 3. Fallback check from purchase_master or sauda_check_point excess_short_deduction
-    if (supabase) {
-      const { data: poRecord } = await supabase
-        .from('purchase_master')
-        .select('po_no, excess_short_deduction, excess_short_status, total_contract_mt, contract_weight_mt, received_weight_mt, total_received_mt')
-        .or(`po_no.eq.${rawPoNo},po_no.eq.${poWithHash}`)
-        .maybeSingle();
-
-      if (poRecord && Number(poRecord.excess_short_deduction) > 0) {
-        return {
-          po_no: poRecord.po_no || rawPoNo,
-          deduction_amount: Number(poRecord.excess_short_deduction),
-          variation_type: 'short',
-          remarks: 'Auto-retrieved from Sauda Check Point Total Short Weight Deduction'
-        };
+    } else {
+      const localRecords = await dbModule.fetchAll('sauda_check_point_deductions').catch(() => []);
+      if (Array.isArray(localRecords) && localRecords.length > 0) {
+        const found = localRecords.find((r: any) => {
+          const rPo = String(r.po_no || '').trim().replace(/^#/, '').toUpperCase();
+          const rPoClean = rPo.replace(/[^a-zA-Z0-9]/g, '');
+          return rPo === rawPoNo.toUpperCase() || (cleanAlphaPo && rPoClean === cleanAlphaPo);
+        });
+        if (found) return await reconcileAndNormalizeRecord(found);
       }
-
-      const { data: scpRecord } = await supabase
-        .from('sauda_check_point')
-        .select('po_no, excess_short_deduction, excess_short_status')
-        .or(`po_no.eq.${rawPoNo},po_no.eq.${poWithHash}`)
-        .maybeSingle();
-
-      if (scpRecord && Number(scpRecord.excess_short_deduction) > 0) {
-        return {
-          po_no: scpRecord.po_no || rawPoNo,
-          deduction_amount: Number(scpRecord.excess_short_deduction),
-          variation_type: 'short',
-          remarks: 'Auto-retrieved from Sauda Check Point Total Short Weight Deduction'
-        };
-      }
-    }
-
-    const localRecords = await dbModule.fetchAll('sauda_check_point_deductions').catch(() => []);
-    if (Array.isArray(localRecords) && localRecords.length > 0) {
-      const found = localRecords.find((r: any) => {
-        const rPo = String(r.po_no || '').trim().replace(/^#/, '').toUpperCase();
-        const rPoClean = rPo.replace(/[^a-zA-Z0-9]/g, '');
-        return rPo === rawPoNo.toUpperCase() || (cleanAlphaPo && rPoClean === cleanAlphaPo);
-      });
-      if (found) return await reconcileAndNormalizeRecord(found);
     }
   } catch (err) {
     console.warn("Could not fetch sauda checkpoint deduction:", err);

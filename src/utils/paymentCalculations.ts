@@ -201,23 +201,25 @@ export async function resolvePaymentDeductionsForPoAndMr(params: {
       console.warn('Error fetching live PO details for Last M.R. check in payment:', e);
     }
 
+    const resolvedPoContractMt =
+      Number(livePoData?.total_contract_mt || 0) > 0
+        ? Number(livePoData.total_contract_mt)
+        : Number(scpMatch?.total_contract_mt || 0) > 0
+          ? Number(scpMatch.total_contract_mt)
+          : Number(po?.total_contract_mt || 0) > 0
+            ? Number(po.total_contract_mt)
+            : Number(poMatch?.total_contract_mt || 0) > 0
+              ? Number(poMatch.total_contract_mt)
+              : Number(saudaDed?.contract_weight_mt || 0);
+
     const prelimPo = {
       ...(poMatch || {}),
       ...(scpMatch || {}),
       ...(po || {}),
-      contract_weight_mt: Math.max(
-        Number(po?.total_contract_mt || po?.contract_weight_mt || 0),
-        Number(scpMatch?.total_contract_mt || scpMatch?.contract_weight_mt || 0),
-        Number(poMatch?.total_contract_mt || poMatch?.contract_weight_mt || 0),
-        Number(saudaDed?.contract_weight_mt || 0)
-      )
+      contract_weight_mt: resolvedPoContractMt
     };
 
-    const maxContractMt = Math.max(
-      Number(prelimPo.contract_weight_mt || 0),
-      Number(livePoData?.total_contract_mt || livePoData?.contract_weight_mt || 0),
-      Number(saudaDed?.contract_weight_mt || 0)
-    );
+    const maxContractMt = resolvedPoContractMt;
     const maxLorries = Math.max(
       getPoContractLorryCount(poMatch),
       getPoContractLorryCount(scpMatch),

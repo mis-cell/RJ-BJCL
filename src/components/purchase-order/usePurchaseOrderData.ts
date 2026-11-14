@@ -743,107 +743,17 @@ export function usePurchaseOrderData({
 
         if (poNoStr && contractWeight > 0) {
           const targetPoClean = cleanKeyFormat(poNoStr);
-          const targetSaudaClean = cleanKeyFormat(saudaNoStr);
-
-          const saudaTd5Rate = parseFloat(p.b_rate || 0) > 0 ? parseFloat(p.b_rate) : getTd5BaseRateForDate(saudaDateStr);
-          const arrivalTd5Rate = getTd5BaseRateForDate(arrivalDateStr);
-          const shortRateDiff = (arrivalTd5Rate || 0) > (saudaTd5Rate || 0) ? ((arrivalTd5Rate || 0) - (saudaTd5Rate || 0)) : 0;
-          // For Excess: If Last MR Date Rate >= Sauda Date Rate, do NOT deduct (Applicable for Sauda)
-          const excessRateDiff = (saudaTd5Rate || 0) > (arrivalTd5Rate || 0) ? ((saudaTd5Rate || 0) - (arrivalTd5Rate || 0)) : 0;
-
-          let variationType = 'pending_arrival';
-          let deductionQtyMt = 0;
-          let deductionQtyQtl = 0;
-          let penaltyAmount = 0;
-          let effectiveRateDiff = shortRateDiff;
-          let wtStatusRemarks = 'Pending Arrival';
-
-          if (totalReceivedMt > 0) {
-            if (tol.isWithinTolerance) {
-              variationType = 'within_tolerance';
-              wtStatusRemarks = `✓ TOLERABLE (±${tol.toleranceMt.toFixed(2)} MT) | Diff: ${tol.diffMt >= 0 ? `+${tol.diffMt.toFixed(3)}` : tol.diffMt.toFixed(3)} MT`;
-            } else if (tol.isOverDelivery) {
-              variationType = 'excess';
-              effectiveRateDiff = excessRateDiff;
-              // 3% tolerance policy is NOT applied for excess; deduction is Excess in Qtl × Rate Diff/Qtl
-              const excessMt = Math.max(0, Math.round((totalReceivedMt - contractWeight) * 1000) / 1000);
-              const excessQtl = Math.round(excessMt * 10 * 100) / 100;
-              const rawPenalty = excessRateDiff * excessQtl;
-              penaltyAmount = isNaN(rawPenalty) || rawPenalty < 0 ? 0 : Math.round(rawPenalty * 100) / 100;
-              deductionQtyMt = Number(excessMt.toFixed(3));
-              deductionQtyQtl = Number(excessQtl.toFixed(2));
-              wtStatusRemarks = penaltyAmount > 0
-                ? `+${excessMt.toFixed(3)} MT (${excessQtl.toFixed(2)} Qtl) Excess | Penalty: ₹${penaltyAmount.toLocaleString()}`
-                : `+${excessMt.toFixed(3)} MT (${excessQtl.toFixed(2)} Qtl) Excess | Applicable for Sauda (₹0 Deduction)`;
-            } else if (tol.isUnderDelivery) {
-              variationType = 'short';
-              effectiveRateDiff = shortRateDiff;
-              const shortMt = Math.max(0, tol.shortUnderToleranceMt || 0);
-              const shortQtl = Math.max(0, tol.shortUnderToleranceQtl || 0);
-              const rawPenalty = shortRateDiff * shortQtl;
-              penaltyAmount = isNaN(rawPenalty) || rawPenalty < 0 ? 0 : Math.round(rawPenalty * 100) / 100;
-              deductionQtyMt = Number(shortMt.toFixed(3));
-              deductionQtyQtl = Number(shortQtl.toFixed(2));
-              wtStatusRemarks = `-${shortMt.toFixed(3)} MT Short | Beyond Tol. | Penalty: ₹${penaltyAmount}`;
-            } else {
-              variationType = 'within_tolerance';
-              wtStatusRemarks = 'Exact (0.00 MT)';
-            }
-          }
-
-          const linkedMrs = Array.from(new Set([
-            ...matchingMatReceipts.map((insp: any) => String(insp.mr_no || insp.arrival_no || '').trim()),
-            ...matchingFinal.map((ar: any) => String(ar.final_arrival_no || ar.mr_no || ar.arrival_no || '').trim()),
-            ...matchingTemp.map((ar: any) => String(ar.temporary_arrival_no || ar.amad_no || ar.mr_no || '').trim())
-          ].filter(Boolean)));
-          const lastMrNo = lastInspMrNo || linkedMrs[linkedMrs.length - 1] || String(p.last_arrival_mr_no || p.mr_no || 'MR-001').trim();
-          const arrivalNumbersStr = linkedMrs.length > 0 ? linkedMrs.join(', ') : lastMrNo;
-
-          const dedPayload: Record<string, any> = {
-            po_no: poNoStr,
-            sauda_no: saudaNoStr || poNoStr,
-            supplier: String(p.supplier || p.supplier_name || p.supp_name || '').trim(),
-            broker: String(p.broker || p.broker_name || '').trim(),
-            contract_weight_mt: Number(contractWeight.toFixed(3)),
-            tolerance_pct: tol.isOverDelivery ? 0 : 3.0,
-            tolerance_mt: Number(tol.toleranceMt.toFixed(3)),
-            tolerance_type: tol.isOverDelivery ? 'No Tolerance on Excess Weight' : '3% Sauda Total Contract Execution Exemption',
-            min_acceptable_mt: Number(tol.minAcceptableMt.toFixed(3)),
-            max_acceptable_mt: Number(tol.maxAcceptableMt.toFixed(3)),
-            total_received_mt: Number(totalReceivedMt.toFixed(3)),
-            variation_type: variationType,
-            variation_mt: Number((contractWeight - totalReceivedMt).toFixed(3)),
-            selected_grade: p.selected_grade || p.grade || 'TD6',
-            sauda_rate: Number(saudaTd5Rate),
-            satta_rate: Number(arrivalTd5Rate),
-            last_arrival_date: normalizedArrivalDate,
-            last_mr_no: lastMrNo,
-            applicable_rate: Number(effectiveRateDiff),
-            rate_basis: 'rate_difference',
-            rate_difference: Number(effectiveRateDiff),
-            deduction_qty_mt: deductionQtyMt,
-            deduction_qty_qtl: deductionQtyQtl,
-            deduction_amount: penaltyAmount,
-            status: totalReceivedMt > 0 ? 'approved' : 'pending',
-            remarks: wtStatusRemarks,
-            arrival_numbers: arrivalNumbersStr,
-            approved_by: 'System Auto-Calculated',
-            approval_level: 'ADMIN',
-            updated_at: nowIso
-          };
-
           const existingDed = dedMap[poNoStr.toUpperCase()] ||
                               dedMap[targetPoClean] ||
-                              (saudaNoStr ? (dedMap[saudaNoStr.toUpperCase()] || dedMap[targetSaudaClean]) : null);
+                              (saudaNoStr ? (dedMap[saudaNoStr.toUpperCase()] || dedMap[cleanKeyFormat(saudaNoStr)]) : null);
 
-          const isExistingLocked = existingDed &&
-                                   String(existingDed.status || '').toLowerCase() === 'approved' &&
-                                   Number(existingDed.total_received_mt || 0) > 0;
-
-          dedMap[poNoStr.toUpperCase()] = existingDed
-            ? (isExistingLocked ? { ...dedPayload, ...existingDed } : { ...existingDed, ...dedPayload })
-            : dedPayload;
-          dedMap[targetPoClean] = dedMap[poNoStr.toUpperCase()];
+          if (existingDed) {
+            dedMap[poNoStr.toUpperCase()] = {
+              ...existingDed,
+              contract_weight_mt: Number(contractWeight.toFixed(3))
+            };
+            dedMap[targetPoClean] = dedMap[poNoStr.toUpperCase()];
+          }
         }
 
         // 1. Check Temporary Arrival Dashboard

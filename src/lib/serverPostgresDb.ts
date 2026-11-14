@@ -245,46 +245,6 @@ function getLocalSnapshotStore(): Map<string, any[]> {
       localSnapshotStore.set('marka_master', markaRows);
     }
 
-    // Reconcile PO BJCL/2026-2027/0532 contract weight (34.50 MT) and Excess Settlement (38.135 MT received, 36.35 Qtl * 600 = 21,810)
-    // Also convert any 5 Rs delivery_penalty or qty_penalty to 0 in sauda_check_point
-    const scpRows = localSnapshotStore.get('sauda_check_point') || [];
-    for (const r of scpRows) {
-      if (Number(r.delivery_penalty) === 5) r.delivery_penalty = 0;
-      if (Number(r.qty_penalty) === 5) r.qty_penalty = 0;
-      if (String(r.po_no || '').trim() === 'BJCL/2026-2027/0532') {
-        r.total_contract_mt = 34.5;
-        r.contract_weight_mt = 34.5;
-        r.excess_short_deduction = 21810;
-        r.excess_short_status = 'settled';
-        r.is_settled = true;
-      }
-    }
-    const scpdRows = localSnapshotStore.get('sauda_check_point_deductions') || [];
-    for (const r of scpdRows) {
-      if (String(r.po_no || '').trim() === 'BJCL/2026-2027/0532') {
-        r.contract_weight_mt = 34.5;
-        r.tolerance_pct = 0;
-        r.tolerance_mt = 0;
-        r.min_acceptable_mt = 34.5;
-        r.max_acceptable_mt = 34.5;
-        r.total_received_mt = 38.135;
-        r.variation_type = 'excess';
-        r.variation_mt = -3.635;
-        r.sauda_rate = 12900;
-        r.satta_rate = 12300;
-        r.last_arrival_date = '2026-09-16';
-        r.last_mr_no = 'MR01042';
-        r.applicable_rate = 600;
-        r.rate_basis = 'rate_difference';
-        r.rate_difference = 600;
-        r.deduction_qty_mt = 3.635;
-        r.deduction_qty_qtl = 36.35;
-        r.deduction_amount = 21810;
-        r.arrival_numbers = 'MR00999, MR01037, MR01042';
-        r.remarks = 'Excess Weight Deduction: 36.35 Qtl × ₹600/Qtl = ₹21,810.00.';
-      }
-    }
-
     // Reconcile temporary_material_received.po_no with final_arrival.po_no when a temp arrival was promoted/clubbed to a different P.O.
     const faRows = localSnapshotStore.get('final_arrival') || [];
     const faPoByTempNo = new Map<string, string>();
@@ -720,44 +680,11 @@ async function ensureDatabaseIntegrity() {
     }
   }
 
-  // Reconcile sauda_check_point_deductions in PostgreSQL so BJCL/2026-2027/0532 and any stale deduction rows match (38,135 - 34,500 = 3,635 kg = 36.35 Qtl * 600 = 21,810)
+  // Schema integrity checks only (do NOT overwrite or re-seed deleted user records in PostgreSQL)
   try {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
-      await client.query(`
-        UPDATE "sauda_check_point"
-        SET "total_contract_mt" = 34.5,
-            "contract_weight_mt" = 34.5,
-            "excess_short_deduction" = 21810,
-            "excess_short_status" = 'settled',
-            "is_settled" = true
-        WHERE "po_no" = 'BJCL/2026-2027/0532'
-      `);
-      await client.query(`
-        UPDATE "sauda_check_point_deductions"
-        SET "contract_weight_mt" = 34.5,
-            "tolerance_pct" = 0,
-            "tolerance_mt" = 0,
-            "min_acceptable_mt" = 34.5,
-            "max_acceptable_mt" = 34.5,
-            "total_received_mt" = 38.135,
-            "variation_type" = 'excess',
-            "variation_mt" = -3.635,
-            "sauda_rate" = 12900,
-            "satta_rate" = 12300,
-            "last_arrival_date" = '2026-09-16',
-            "last_mr_no" = 'MR01042',
-            "applicable_rate" = 600,
-            "rate_basis" = 'rate_difference',
-            "rate_difference" = 600,
-            "deduction_qty_mt" = 3.635,
-            "deduction_qty_qtl" = 36.35,
-            "deduction_amount" = 21810,
-            "arrival_numbers" = 'MR00999, MR01037, MR01042',
-            "remarks" = 'Excess Weight Deduction: Deductible 36.35 Qtl at ₹600/Qtl = ₹21,810.00.'
-        WHERE "po_no" = 'BJCL/2026-2027/0532'
-      `);
       await client.query(`
         WITH dedup_grid AS (
           SELECT DISTINCT
@@ -876,7 +803,6 @@ export async function syncPendingDataToLocalPostgres(options?: {
         'marka_master',
         'sauda_check_point',
         'sauda_check_point_details',
-        'sauda_check_point_deductions',
         'purchase_master',
         'purchase_detail_master',
         'temporary_material_received',
@@ -2413,10 +2339,9 @@ export async function ensureLocalPostgresDatabaseAndHourlyBackup(): Promise<void
       console.log(`[DB Auto-Restore] Database "${targetDb}" is ready with ${tableCount} tables!`);
     }
 
-    // Ensure Marka Master 3153 and any newer records in local PostgreSQL databases / complete_local_data.sql.gz are synced into bjcl_db
+    // Run non-destructive schema integrity checks only (never re-insert deleted rows from dump into existing PostgreSQL tables)
     integrityInitialized = false;
     await ensureDatabaseIntegrity().catch(() => {});
-    await syncPendingDataToLocalPostgres().catch(() => {});
 
     // Start automatic backup daemon (runs 15s after boot, then every 60 minutes, plus daily full cluster pg_dumpall)
     if (!hourlyBackupTimerStarted) {
