@@ -407,10 +407,11 @@ export async function runDatabaseMigrations() {
           )
           WHERE COALESCE(payable_amt, total_amount, 0) > 0;
 
-          ALTER TABLE IF EXISTS sauda_check_point_deductions ADD COLUMN IF NOT EXISTS is_locked BOOLEAN DEFAULT true;
-          ALTER TABLE IF EXISTS sauda_check_point_deductions ADD COLUMN IF NOT EXISTS is_final BOOLEAN DEFAULT true;
+          ALTER TABLE IF EXISTS sauda_check_point_deductions ADD COLUMN IF NOT EXISTS is_locked BOOLEAN DEFAULT false;
+          ALTER TABLE IF EXISTS sauda_check_point_deductions ADD COLUMN IF NOT EXISTS is_final BOOLEAN DEFAULT false;
           ALTER TABLE IF EXISTS sauda_check_point_deductions ADD COLUMN IF NOT EXISTS settled_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();
           ALTER TABLE IF EXISTS sauda_check_point_deductions ADD COLUMN IF NOT EXISTS settled_by TEXT;
+          ALTER TABLE IF EXISTS sauda_check_point_deductions ADD COLUMN IF NOT EXISTS last_mr_no TEXT;
 
           ALTER TABLE IF EXISTS deduction_master ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT true;
 

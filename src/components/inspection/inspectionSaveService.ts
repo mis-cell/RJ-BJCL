@@ -9,6 +9,7 @@ import {
 } from "../../types/inspection.types";
 import { sanitizeDate } from "../../utils/inspectionCalculations";
 import { checkAndProcessReturnLorryOnInspection } from "../../services/returnLorryService";
+import { syncExcessShortDeductionForSinglePo } from "../../services/excessShortAutoSyncService";
 
 export interface SaveInspectionResult {
   success: boolean;
@@ -490,6 +491,11 @@ export async function saveInspectionRecordToDb(
     headerForm: { ...headerForm, total_actual_weight: totalReceiptGrossMt },
     detailRows: validDetails,
   });
+
+  // Real-time auto-save Excess & Short deduction calculation to sauda_check_point_deductions
+  if (headerForm.po_no && String(headerForm.po_no).trim()) {
+    await syncExcessShortDeductionForSinglePo(String(headerForm.po_no).trim()).catch(() => {});
+  }
 
   return {
     success: true,

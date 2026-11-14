@@ -7,6 +7,7 @@ import { calculateWeightTolerance } from '../../lib/weightTolerance';
 import { comparePoInspection, compareSaudaTempArrival, PoMatchResult } from '../../lib/poMatch';
 import { useLiveAutoRefresh } from '../../hooks/useLiveAutoRefresh';
 import { isInvalidAgency } from '../../services/systemReportEngine';
+import { syncExcessShortDeductionsBatch } from '../../services/excessShortAutoSyncService';
 
 interface UsePurchaseOrderDataOptions {
   isTempPo: boolean;
@@ -944,6 +945,33 @@ export function usePurchaseOrderData({
       setSattaBaseRates(sBasesList);
       setSattaCalculatedRates(sCalculatedList);
       setSattaDifferentials(sDiffsList);
+
+      // Background real-time auto-sync of Excess & Short calculations into sauda_check_point_deductions
+      if (!isArchiveView && pos.length > 0 && allMergedInspections.length > 0) {
+        syncExcessShortDeductionsBatch({
+          pos: mappedPoList,
+          inspections: allMergedInspections,
+          baseRates: sBasesList,
+          existingDeductions: scpDeductions || [],
+          onSynced: (savedRows) => {
+            if (!savedRows || savedRows.length === 0) return;
+            setSettledDeductions((prev) => {
+              const next = { ...prev };
+              savedRows.forEach((d: any) => {
+                if (d?.po_no) {
+                  next[String(d.po_no).trim().toUpperCase()] = d;
+                  next[cleanKeyFormat(d.po_no)] = d;
+                }
+                if (d?.sauda_no) {
+                  next[String(d.sauda_no).trim().toUpperCase()] = d;
+                  next[cleanKeyFormat(d.sauda_no)] = d;
+                }
+              });
+              return next;
+            });
+          }
+        }).catch(() => {});
+      }
     } catch (err) {
       console.error('Failed to load masters data:', err);
     } finally {

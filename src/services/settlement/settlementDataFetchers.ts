@@ -1,6 +1,7 @@
 import { supabase } from '../../lib/supabase';
 import { dbModule } from '../dbModule';
 import { resolveGradeName, resolveAgencyName } from './settlementResolvers';
+import { syncExcessShortDeductionForSinglePo } from '../excessShortAutoSyncService';
 
 const parseGridOrItems = (raw: any): any[] => {
   if (!raw) return [];
@@ -886,6 +887,12 @@ export const fetchSaudaCheckpointDeduction = async (cleanPoNo: string) => {
         });
 
         if (found) return await reconcileAndNormalizeRecord(found);
+      }
+
+      // If no row exists yet in sauda_check_point_deductions, calculate & auto-save it in real time from PostgreSQL tables
+      const autoSaved = await syncExcessShortDeductionForSinglePo(rawPoNo);
+      if (autoSaved) {
+        return await reconcileAndNormalizeRecord(autoSaved);
       }
     } else {
       const localRecords = await dbModule.fetchAll('sauda_check_point_deductions').catch(() => []);

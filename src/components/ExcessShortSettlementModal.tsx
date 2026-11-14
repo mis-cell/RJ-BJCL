@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { 
   X, 
   Scale, 
@@ -34,6 +34,10 @@ import {
 type TolerancePolicy = TolerancePolicyItem;
 import { cn } from '../lib/utils';
 import { logChange } from '../services/auditLogService';
+import {
+  isManualLockedDeduction,
+  saveDeductionRowRealtime
+} from '../services/excessShortAutoSyncService';
 
 interface ExcessShortSettlementModalProps {
   po: any;
@@ -120,9 +124,14 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
   // Existing record detection & state (Authoritative PostgreSQL sauda_check_point_deductions only)
   const [existingRecordId, setExistingRecordId] = useState<string | null>(null);
   const [isSettled, setIsSettled] = useState<boolean>(false);
+  const [isAutoSaved, setIsAutoSaved] = useState<boolean>(false);
+  const [isAutoSaving, setIsAutoSaving] = useState<boolean>(false);
+  const [dataLoaded, setDataLoaded] = useState<boolean>(false);
   const [settledAt, setSettledAt] = useState<string | null>(null);
   const [settledBy, setSettledBy] = useState<string | null>('Operator');
   const [approvalLevel, setApprovalLevel] = useState<string>('ADMIN');
+  const lastAutoSavedFingerprintRef = useRef<string>('');
+  const hasAutoSyncedRef = useRef<boolean>(false);
 
   // Applicable Rate Selection Mode
   type RateMode = 'rate_difference' | 'last_mr_satta' | 'sauda_satta' | 'custom';
@@ -167,6 +176,8 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
   // Load lightweight targeted records for this PO/Sauda without full-table dumps
   useEffect(() => {
     let cancelled = false;
+    setDataLoaded(false);
+    lastAutoSavedFingerprintRef.current = '';
     const fetchData = async () => {
       try {
         const clean = (s: any) => String(s || '').trim().replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
@@ -182,9 +193,11 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
             s.includes('TOLERABLE') ||
             s.includes('Within 3% Exemption') ||
             s.includes('Applicable for Sauda') ||
-            s.startsWith('Short Weight Deduction:') ||
+            s.startsWith('Short Weight Deduction') ||
             s.startsWith('Excess Addition') ||
-            s.startsWith('Excess Weight Deduction:')
+            s.startsWith('Excess Weight Deduction') ||
+            s.startsWith('Final MR Rate') ||
+            s.startsWith('Exact Weight')
           );
         };
 
@@ -318,13 +331,37 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
           if (matchedDeduction.rate_basis) {
             setSelectedRateMode(matchedDeduction.rate_basis as RateMode);
           }
-          setIsSettled(true);
+          const manuallyLocked = isManualLockedDeduction(matchedDeduction);
+          setIsSettled(manuallyLocked);
+          setIsAutoSaved(true);
           setSettledAt(matchedDeduction.settled_at || matchedDeduction.updated_at || matchedDeduction.created_at);
-          setSettledBy(matchedDeduction.approved_by || matchedDeduction.settled_by || 'Operator');
+          setSettledBy(matchedDeduction.approved_by || matchedDeduction.settled_by || 'System Auto-Sync');
           if (matchedDeduction.approval_level) setApprovalLevel(matchedDeduction.approval_level);
+
+          // Record existing DB fingerprint so identical values don't trigger a redundant write immediately on open
+          lastAutoSavedFingerprintRef.current = JSON.stringify([
+            String(matchedDeduction.po_no || poNo).trim(),
+            Number(Number(matchedDeduction.contract_weight_mt || 0).toFixed(3)),
+            Number(Number(matchedDeduction.total_received_mt || 0).toFixed(3)),
+            String(matchedDeduction.variation_type || ''),
+            Number(Number(matchedDeduction.deduction_qty_mt || 0).toFixed(3)),
+            Number(Number(matchedDeduction.deduction_qty_qtl || 0).toFixed(2)),
+            Number(matchedDeduction.sauda_rate || 0),
+            Number(matchedDeduction.satta_rate || 0),
+            Number(matchedDeduction.rate_difference || 0),
+            Number(matchedDeduction.applicable_rate || 0),
+            Number(matchedDeduction.deduction_amount || 0),
+            String(matchedDeduction.rate_basis || 'rate_difference'),
+            String(matchedDeduction.arrival_numbers || ''),
+            normalizeToYMD(matchedDeduction.last_arrival_date || ''),
+            String(matchedDeduction.remarks || ''),
+            String(matchedDeduction.approval_level || 'ADMIN'),
+            manuallyLocked
+          ]);
         } else {
           setExistingRecordId(null);
           setIsSettled(false);
+          setIsAutoSaved(false);
           setSettledAt(null);
         }
 
@@ -407,6 +444,10 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
         }
       } catch (err) {
         console.error("Error fetching settlement data:", err);
+      } finally {
+        if (!cancelled) {
+          setDataLoaded(true);
+        }
       }
     };
 
@@ -1026,55 +1067,164 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
     return linkedMrNosList.length > 0 ? linkedMrNosList.join(', ') : (lastMrNo || 'MR-001');
   }, [linkedMrNosList, lastMrNo]);
 
-  // Sync existing PostgreSQL sauda_check_point_deductions row when viewing a locked DB record
+  const handleCloseModal = useCallback(() => {
+    if (hasAutoSyncedRef.current && onSaveSuccess) {
+      onSaveSuccess();
+    }
+    onClose();
+  }, [onClose, onSaveSuccess]);
+
+  // Real-time auto-save to PostgreSQL sauda_check_point_deductions without requiring manual lock
   useEffect(() => {
-    if (!isSettled || !existingRecordId || contractMt <= 0 || isSaving) return;
+    if (!dataLoaded || !poNo || contractMt <= 0 || isSaving) return;
+    if (totalFinalReceiptClaimMt <= 0) return;
+    if (selectedRateMode === 'custom' && (customRateInput <= 0 || isNaN(customRateInput)) && finalDeductibleQtyQtl > 0) {
+      return;
+    }
 
-    const defaultRemark = isExcessApplicableForSauda
-      ? `Applicable for Sauda – No Deduction: Last MR Rate (₹${lastMrDateSattaRate}) >= Sauda Rate (₹${saudaDateSattaRate})`
-      : `${policyStatusText}: Deductible ${finalDeductibleQtyQtl.toFixed(2)} Qtl at ₹${applicableRate}/Qtl = ₹${totalCalculatedAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}.`;
+    const defaultRemark =
+      isExcessApplicableForSauda && selectedRateMode === 'rate_difference'
+        ? `Applicable for Sauda – No Deduction: Last MR Rate (₹${lastMrDateSattaRate}) >= Sauda Rate (₹${saudaDateSattaRate})`
+        : isWithin3PctExemption
+        ? `${policyStatusText} (Deductible: 0.00 Qtl)`
+        : `${policyStatusText}: Deductible ${finalDeductibleQtyQtl.toFixed(2)} Qtl at ₹${applicableRate}/Qtl = ₹${totalCalculatedAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}.`;
 
-    try {
-      if (supabase && existingRecordId && selectedRateMode !== 'custom' && totalFinalReceiptClaimMt > 0) {
-        supabase
-          .from('sauda_check_point_deductions')
-          .update({
-            contract_weight_mt: Number(contractMt.toFixed(3)),
-            total_received_mt: Number(totalFinalReceiptClaimMt.toFixed(3)),
-            variation_type: isWithin3PctExemption ? 'within_tolerance' : (isGrossExcess ? 'excess' : 'short'),
-            variation_mt: Number(grossVarianceMt.toFixed(3)),
-            deduction_qty_mt: Number(finalDeductibleQtyMt.toFixed(3)),
-            deduction_qty_qtl: Number(finalDeductibleQtyQtl.toFixed(2)),
-            rate_difference: Number(rateDifference),
-            applicable_rate: Number(applicableRate),
-            deduction_amount: Number(totalCalculatedAmount),
-            remarks: remarks || defaultRemark,
-            grade_breakdown: JSON.stringify(gradeWiseInspectionRows)
-          })
-          .eq('id', existingRecordId)
-          .then(() => {}, () => {});
+    const resolvedRemark = remarks && remarks.trim() ? remarks.trim() : defaultRemark;
+    const variationType = isWithin3PctExemption ? 'within_tolerance' : isGrossExcess ? 'excess' : 'short';
+    const normalizedLastDate = normalizeToYMD(lastMrDate) || '';
+
+    const fingerprint = JSON.stringify([
+      poNo,
+      Number(contractMt.toFixed(3)),
+      Number(totalFinalReceiptClaimMt.toFixed(3)),
+      variationType,
+      Number(finalDeductibleQtyMt.toFixed(3)),
+      Number(finalDeductibleQtyQtl.toFixed(2)),
+      Number(saudaDateSattaRate),
+      Number(lastMrDateSattaRate),
+      Number(rateDifference),
+      Number(applicableRate),
+      Number(totalCalculatedAmount),
+      selectedRateMode,
+      arrivalNumbersString,
+      normalizedLastDate,
+      resolvedRemark,
+      approvalLevel || 'ADMIN',
+      Boolean(isSettled)
+    ]);
+
+    if (lastAutoSavedFingerprintRef.current === fingerprint) {
+      return;
+    }
+
+    let cancelled = false;
+    const timer = window.setTimeout(async () => {
+      if (cancelled || !supabase) return;
+      setIsAutoSaving(true);
+      try {
+        const nowIso = new Date().toISOString();
+        const actorName = isSettled ? (settledBy || 'Operator') : 'System Auto-Sync';
+        const autoPayload: Record<string, any> = {
+          po_no: poNo,
+          sauda_no: saudaNo || poNo,
+          supplier: supplierName,
+          broker: brokerName,
+          contract_weight_mt: Number(contractMt.toFixed(3)),
+          tolerance_pct: exemptionPct,
+          tolerance_mt: Number(exemptionMt.toFixed(3)),
+          tolerance_type: isGrossExcess ? 'No Tolerance on Excess Weight' : '3% Sauda Total Contract Execution Exemption',
+          min_acceptable_mt: Number(Math.max(0, contractMt - tolerance3PctMt).toFixed(3)),
+          max_acceptable_mt: Number(contractMt.toFixed(3)),
+          total_received_mt: Number(totalFinalReceiptClaimMt.toFixed(3)),
+          variation_type: variationType,
+          variation_mt: Number(grossVarianceMt.toFixed(3)),
+          selected_grade: po.selected_grade || po.grade || 'TD6',
+          sauda_rate: Number(saudaDateSattaRate),
+          satta_rate: Number(lastMrDateSattaRate),
+          last_arrival_date: normalizedLastDate || null,
+          last_mr_no: lastMrNo,
+          applicable_rate: Number(applicableRate),
+          rate_basis: selectedRateMode,
+          rate_difference: Number(rateDifference),
+          deduction_qty_mt: Number(finalDeductibleQtyMt.toFixed(3)),
+          deduction_qty_qtl: Number(finalDeductibleQtyQtl.toFixed(2)),
+          deduction_amount: Number(totalCalculatedAmount),
+          status: isSettled ? 'approved' : 'auto_saved',
+          is_locked: Boolean(isSettled),
+          is_final: Boolean(isSettled),
+          settled_at: settledAt || nowIso,
+          settled_by: actorName,
+          remarks: resolvedRemark,
+          arrival_numbers: arrivalNumbersString,
+          grade_breakdown: JSON.stringify(gradeWiseInspectionRows),
+          approved_by: actorName,
+          approval_level: approvalLevel || 'ADMIN',
+          updated_at: nowIso
+        };
+        if (!existingRecordId) {
+          autoPayload.created_at = nowIso;
+        }
+
+        const saved = await saveDeductionRowRealtime(autoPayload, existingRecordId);
+        if (!cancelled && saved) {
+          lastAutoSavedFingerprintRef.current = fingerprint;
+          hasAutoSyncedRef.current = true;
+          if (saved.id && saved.id !== existingRecordId) {
+            setExistingRecordId(saved.id);
+          }
+          setIsAutoSaved(true);
+        }
+      } catch (err) {
+        console.warn('Real-time auto-save to sauda_check_point_deductions failed:', err);
+      } finally {
+        if (!cancelled) setIsAutoSaving(false);
       }
-    } catch (_e) {}
+    }, 350);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
   }, [
+    dataLoaded,
+    poNo,
+    saudaNo,
+    supplierName,
+    brokerName,
     contractMt,
+    exemptionPct,
+    exemptionMt,
+    tolerance3PctMt,
     totalFinalReceiptClaimMt,
-    totalCalculatedAmount,
+    grossVarianceMt,
+    saudaDateSattaRate,
+    lastMrDateSattaRate,
+    lastMrDate,
+    lastMrNo,
     applicableRate,
     selectedRateMode,
+    customRateInput,
+    rateDifference,
+    finalDeductibleQtyMt,
+    finalDeductibleQtyQtl,
+    totalCalculatedAmount,
+    policyStatusText,
+    remarks,
+    arrivalNumbersString,
+    gradeWiseInspectionRows,
+    approvalLevel,
     isWithin3PctExemption,
     isExcessApplicableForSauda,
     isGrossExcess,
-    isGrossShort,
-    poNo,
-    saudaNo,
-    cleanKey,
-    cleanSaudaKey,
-    totalFinalPayable,
+    isSettled,
+    settledBy,
+    settledAt,
     existingRecordId,
-    isSettled
+    isSaving,
+    po
   ]);
 
-  // Handle Save Settlement into sauda_check_point_deductions
+  // Handle Save & Lock Settlement into sauda_check_point_deductions
   const handleSaveSettlement = async () => {
     if (isSettled) return;
 
@@ -1105,7 +1255,7 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
       selected_grade: po.selected_grade || po.grade || 'TD6',
       sauda_rate: Number(saudaDateSattaRate),
       satta_rate: Number(lastMrDateSattaRate),
-      last_arrival_date: normalizeToYMD(lastMrDate),
+      last_arrival_date: normalizeToYMD(lastMrDate) || null,
       last_mr_no: lastMrNo,
       applicable_rate: Number(applicableRate),
       rate_basis: selectedRateMode,
@@ -1114,10 +1264,14 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
       deduction_qty_qtl: Number(finalDeductibleQtyQtl.toFixed(2)),
       deduction_amount: Number(totalCalculatedAmount),
       status: 'approved',
+      is_locked: true,
+      is_final: true,
+      settled_at: nowIso,
+      settled_by: 'Operator',
       remarks: remarks || `${policyStatusText}: Deductible ${finalDeductibleQtyQtl.toFixed(2)} Qtl at ₹${applicableRate}/Qtl = ₹${totalCalculatedAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}.`,
       arrival_numbers: arrivalNumbersString,
       grade_breakdown: JSON.stringify(gradeWiseInspectionRows),
-      approved_by: settledBy || 'Operator',
+      approved_by: 'Operator',
       approval_level: approvalLevel || 'ADMIN',
       created_at: nowIso,
       updated_at: nowIso
@@ -1126,9 +1280,10 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
     try {
       if (supabase) {
         if (existingRecordId) {
-          await dbModule.update('sauda_check_point_deductions', 'id', existingRecordId, payload);
+          const updated = await dbModule.update('sauda_check_point_deductions', 'id', existingRecordId, payload);
+          if (updated?.id) setExistingRecordId(updated.id);
         } else {
-          const data = await dbModule.insert('sauda_check_point_deductions', payload);
+          const data = await dbModule.upsert('sauda_check_point_deductions', payload, 'po_no');
           if (data?.id) setExistingRecordId(data.id);
         }
 
@@ -1142,7 +1297,7 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
           field_label: `${isGrossExcess ? 'Excess Addition' : 'Short Deduction'} (PO ${poNo})`,
           old_value: existingRecordId ? 'Previous Settlement' : 'None',
           new_value: `₹${Number(totalCalculatedAmount).toLocaleString('en-IN')}`,
-          user_name: settledBy || 'Operator',
+          user_name: 'Operator',
           remarks: `${payload.variation_type.toUpperCase()}: ${finalDeductibleQtyQtl.toFixed(2)} Qtl @ ₹${applicableRate}/Qtl for Supplier ${supplierName}`
         });
 
@@ -1160,7 +1315,7 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
           await dbModule.update('sauda_master', 'sauda_no', saudaNo, masterSettleUpdate).catch(() => {});
         }
       } else {
-        await dbModule.insert('sauda_check_point_deductions', payload);
+        await dbModule.upsert('sauda_check_point_deductions', payload, 'po_no');
       }
 
       // Ensure no stale localStorage keys remain; PostgreSQL is the sole source of truth
@@ -1173,9 +1328,11 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
         }
       } catch (_e) {}
 
+      hasAutoSyncedRef.current = false;
       setIsSettled(true);
+      setIsAutoSaved(true);
       setSettledAt(nowIso);
-      setSettledBy(settledBy || 'Operator');
+      setSettledBy('Operator');
       setApprovalLevel(approvalLevel || 'ADMIN');
       setSaveMessage("✓ Settlement record saved and locked into sauda_check_point_deductions!");
 
@@ -1196,7 +1353,7 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
     <div 
       onClick={(e) => {
         if (e.target === e.currentTarget) {
-          onClose();
+          handleCloseModal();
         }
       }}
       className="fixed inset-0 z-[1000] bg-slate-950/75 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4 overflow-y-auto animate-in fade-in duration-150"
@@ -1320,11 +1477,19 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
                 <span className="px-1.5 py-0.2 rounded text-[9px] font-black bg-amber-400 text-slate-950 uppercase tracking-tight">
                   sauda_check_point_deductions
                 </span>
-                {isSettled && (
+                {isSettled ? (
                   <span className="px-1.5 py-0.2 rounded text-[9px] font-black bg-emerald-500 text-white uppercase flex items-center gap-1">
                     <Check className="w-2.5 h-2.5" /> SAVED &amp; LOCKED
                   </span>
-                )}
+                ) : isAutoSaving ? (
+                  <span className="px-1.5 py-0.2 rounded text-[9px] font-black bg-sky-500 text-white uppercase flex items-center gap-1">
+                    <RefreshCw className="w-2.5 h-2.5 animate-spin" /> AUTO-SAVING...
+                  </span>
+                ) : isAutoSaved ? (
+                  <span className="px-1.5 py-0.2 rounded text-[9px] font-black bg-emerald-500 text-white uppercase flex items-center gap-1">
+                    <Check className="w-2.5 h-2.5" /> AUTO-SAVED REAL-TIME
+                  </span>
+                ) : null}
               </div>
               <p className="text-[10.5px] text-slate-300 flex flex-wrap items-center gap-x-2 mt-0.5 font-mono">
                 <span>PO: <strong className="text-white">{poNo || saudaNo}</strong></span>
@@ -1349,7 +1514,7 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
               <Printer className="w-3.5 h-3.5" /> Print
             </button>
             <button
-              onClick={onClose}
+              onClick={handleCloseModal}
               className="p-1 rounded text-slate-400 hover:text-white hover:bg-white/10 transition cursor-pointer"
               title="Close popup"
             >
@@ -1916,11 +2081,20 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
         {/* Modal Footer */}
         <div className="px-4 py-2.5 bg-slate-100 border-t border-slate-200 flex items-center justify-between select-none">
           <div className="text-[10.5px] text-slate-600 font-mono flex items-center gap-1.5">
-            <span className={cn("w-2 h-2 rounded-full inline-block", isSettled ? "bg-emerald-600" : "bg-amber-500")}></span>
+            <span
+              className={cn(
+                "w-2 h-2 rounded-full inline-block",
+                isSettled || isAutoSaved ? "bg-emerald-600" : isAutoSaving ? "bg-sky-500 animate-pulse" : "bg-amber-500"
+              )}
+            ></span>
             <span>
-              {isSettled 
-                ? 'Record finalized and locked in sauda_check_point_deductions table' 
-                : 'Pending settlement confirmation'}
+              {isSettled
+                ? 'Record finalized and locked in sauda_check_point_deductions table'
+                : isAutoSaving
+                ? 'Auto-saving calculation to sauda_check_point_deductions table...'
+                : isAutoSaved
+                ? 'Auto-saved in real time to sauda_check_point_deductions table'
+                : 'Ready to auto-save calculation to sauda_check_point_deductions'}
             </span>
           </div>
 
@@ -1935,7 +2109,7 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
                     );
                     if (confirmUnlock) {
                       setIsSettled(false);
-                      setSaveMessage("⚠️ Record unlocked. Update your parameters and click 'Save & Lock Settlement' to commit.");
+                      setSaveMessage("⚠️ Record unlocked. Changes will auto-save in real time to sauda_check_point_deductions.");
                     }
                   }}
                   className="px-3 py-1.5 rounded-lg border border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-900 text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-2xs"
@@ -1952,7 +2126,7 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
                 </button>
                 <button
                   type="button"
-                  onClick={onClose}
+                  onClick={handleCloseModal}
                   className="px-4 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-900 text-white text-xs font-bold transition cursor-pointer shadow-xs"
                 >
                   Close
@@ -1962,10 +2136,17 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
               <>
                 <button
                   type="button"
-                  onClick={onClose}
+                  onClick={handlePrint}
+                  className="px-3 py-1.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-slate-800 text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-2xs"
+                >
+                  <Printer className="w-3.5 h-3.5 text-slate-600" /> Print Voucher
+                </button>
+                <button
+                  type="button"
+                  onClick={handleCloseModal}
                   className="px-3 py-1.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold transition cursor-pointer shadow-2xs"
                 >
-                  Cancel
+                  Close
                 </button>
                 <button
                   type="button"
@@ -1977,7 +2158,7 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
                   )}
                 >
                   <Save className="w-3.5 h-3.5" />
-                  {isSaving ? 'Saving...' : 'Save & Lock Settlement'}
+                  {isSaving ? 'Locking...' : 'Save & Lock Settlement'}
                 </button>
               </>
             )}
