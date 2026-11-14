@@ -28,6 +28,9 @@ interface FinalArrivalDataTableProps {
   setCurrentPage: (p: number) => void;
   pageSize: number;
   setPageSize: (size: number) => void;
+  sortField: 'date' | 'arrival';
+  sortDirection: 'asc' | 'desc';
+  onSort: (field: 'date' | 'arrival') => void;
   onEditRecord: (record: FinalArrivalRecord) => void;
   onViewSlip: (record: FinalArrivalRecord) => void;
   onPrintSlip: (record: FinalArrivalRecord) => void;
@@ -45,6 +48,9 @@ export function FinalArrivalDataTable({
   setCurrentPage,
   pageSize,
   setPageSize,
+  sortField,
+  sortDirection,
+  onSort,
   onEditRecord,
   onViewSlip,
   onPrintSlip,
@@ -70,8 +76,30 @@ export function FinalArrivalDataTable({
           <table className="w-full border-collapse text-xs font-sans min-w-[1100px]">
             <thead className="bg-[#D94B5A] text-white font-serif sticky top-0 z-10">
               <tr className="border-b border-[#FBCFCB] h-10 text-white">
-                <th className="px-3 border-r border-[#D94B5A] font-bold text-center w-24 whitespace-nowrap">Voucher Date</th>
-                <th className="px-3 border-r border-[#D94B5A] font-bold text-center w-24 whitespace-nowrap">Arrival</th>
+                <th
+                  onClick={() => onSort('date')}
+                  className="px-3 border-r border-[#D94B5A] font-bold text-center w-24 whitespace-nowrap cursor-pointer select-none hover:bg-[#E85A5A] transition-colors"
+                  title="Sort by Voucher Date"
+                >
+                  <div className="inline-flex items-center justify-center gap-1">
+                    <span>Voucher Date</span>
+                    <span className="text-[10px] font-sans opacity-90">
+                      {sortField === 'date' ? (sortDirection === 'asc' ? '↑' : '↓') : '⇅'}
+                    </span>
+                  </div>
+                </th>
+                <th
+                  onClick={() => onSort('arrival')}
+                  className="px-3 border-r border-[#D94B5A] font-bold text-center w-24 whitespace-nowrap cursor-pointer select-none hover:bg-[#E85A5A] transition-colors"
+                  title="Sort by Arrival"
+                >
+                  <div className="inline-flex items-center justify-center gap-1">
+                    <span>Arrival</span>
+                    <span className="text-[10px] font-sans opacity-90">
+                      {sortField === 'arrival' ? (sortDirection === 'asc' ? '↑' : '↓') : '⇅'}
+                    </span>
+                  </div>
+                </th>
                 <th className="px-3 border-r border-[#D94B5A] font-bold text-center w-28 whitespace-nowrap">PO</th>
                 <th className="px-3 border-r border-[#D94B5A] font-bold text-left whitespace-nowrap">Supplier Name</th>
                 <th className="px-3 border-r border-[#D94B5A] font-bold text-left whitespace-nowrap">Broker Reference</th>

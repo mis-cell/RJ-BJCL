@@ -32,6 +32,18 @@ export function useFinalArrivalRegisterLogic({ isArchiveView = false }: UseFinal
   // Pagination (100 rows per page)
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(100);
+  const [sortField, setSortField] = useState<'date' | 'arrival'>('date');
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
+
+  const handleSort = (field: 'date' | 'arrival') => {
+    if (sortField === field) {
+      setSortDirection(prev => (prev === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortField(field);
+      setSortDirection('desc');
+    }
+    setCurrentPage(1);
+  };
 
   useEffect(() => {
     setCurrentPage(1);
@@ -726,6 +738,24 @@ export function useFinalArrivalRegisterLogic({ isArchiveView = false }: UseFinal
 
     return matchSearch && matchDateRange;
   }).sort((a, b) => {
+    const dir = sortDirection === 'asc' ? 1 : -1;
+
+    if (sortField === 'date') {
+      const timeA = new Date(a.date || 0).getTime() || 0;
+      const timeB = new Date(b.date || 0).getTime() || 0;
+      if (timeA !== timeB) return (timeA - timeB) * dir;
+    } else if (sortField === 'arrival') {
+      const arrA = String(a.final_arrival_no || a.mr_no || a.final_arrival_id || '').replace(/^#+/, '').trim().toUpperCase();
+      const arrB = String(b.final_arrival_no || b.mr_no || b.final_arrival_id || '').replace(/^#+/, '').trim().toUpperCase();
+      const numA = parseInt(arrA.replace(/[^0-9]/g, ''), 10);
+      const numB = parseInt(arrB.replace(/[^0-9]/g, ''), 10);
+      if (!isNaN(numA) && !isNaN(numB) && numA !== numB) {
+        return (numA - numB) * dir;
+      }
+      const cmp = arrA.localeCompare(arrB, undefined, { numeric: true });
+      if (cmp !== 0) return cmp * dir;
+    }
+
     const dateDiff = new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime();
     if (dateDiff !== 0) return dateDiff;
 
@@ -767,6 +797,9 @@ export function useFinalArrivalRegisterLogic({ isArchiveView = false }: UseFinal
     setCurrentPage,
     pageSize,
     setPageSize,
+    sortField,
+    sortDirection,
+    handleSort,
     stats,
     totalBales,
     totalWeightMt,

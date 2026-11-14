@@ -56,6 +56,9 @@ export default function FinalArrival({ onClose, isArchiveView = false, initialDa
     setCurrentPage,
     pageSize,
     setPageSize,
+    sortField,
+    sortDirection,
+    handleSort,
     stats,
     totalBales,
     totalWeightMt,
@@ -178,6 +181,9 @@ export default function FinalArrival({ onClose, isArchiveView = false, initialDa
           setCurrentPage={setCurrentPage}
           pageSize={pageSize}
           setPageSize={setPageSize}
+          sortField={sortField}
+          sortDirection={sortDirection}
+          onSort={handleSort}
           onEditRecord={(record) => {
             setEditingRecord(record);
             setViewState('entry');
