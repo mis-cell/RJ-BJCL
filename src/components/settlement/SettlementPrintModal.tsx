@@ -72,7 +72,7 @@ export const SettlementPrintModal: React.FC<SettlementPrintModalProps> = ({
           if (res.ok) {
             const text = await res.text();
             if (text && text.includes("BALLY JUTE COMPANY LIMITED") && active) {
-              setRawTemplateCsv(text);
+              setRawTemplateCsv((prev) => (prev === text ? prev : text));
               return;
             }
           }
@@ -110,9 +110,9 @@ export const SettlementPrintModal: React.FC<SettlementPrintModalProps> = ({
               Number(r.paid_amount || 0) > 0
           );
           const topDecision = String(paymentRows[0].advance_payment_done || "Yes").trim();
-          setAdvancePaymentDone(
-            topDecision.toLowerCase() === "no" && !hasAnyYes ? "No" : "Yes"
-          );
+          const nextAdvDecision =
+            topDecision.toLowerCase() === "no" && !hasAnyYes ? "No" : "Yes";
+          setAdvancePaymentDone((prev) => (prev === nextAdvDecision ? prev : nextAdvDecision));
         }
 
         const { data } = await supabase
@@ -121,7 +121,8 @@ export const SettlementPrintModal: React.FC<SettlementPrintModalProps> = ({
           .eq("mr_no", mrNo)
           .maybeSingle();
         if (data && data.print_count !== null && data.print_count !== undefined) {
-          if (isMounted) setPersistedPrintCount(Number(data.print_count));
+          const nextDbCount = Number(data.print_count);
+          if (isMounted) setPersistedPrintCount((prev) => (prev === nextDbCount ? prev : nextDbCount));
           return;
         }
 
@@ -132,7 +133,8 @@ export const SettlementPrintModal: React.FC<SettlementPrintModalProps> = ({
           .order("print_count", { ascending: false })
           .limit(1);
         if (histData && histData.length > 0 && histData[0].print_count !== undefined) {
-          if (isMounted) setPersistedPrintCount(Number(histData[0].print_count));
+          const nextHistCount = Number(histData[0].print_count);
+          if (isMounted) setPersistedPrintCount((prev) => (prev === nextHistCount ? prev : nextHistCount));
         }
       } catch {
         // ignore
@@ -658,7 +660,7 @@ export const SettlementPrintModal: React.FC<SettlementPrintModalProps> = ({
         <div className="pdf-embed-container no-print w-full bg-[#323639] flex flex-col items-center">
           <iframe
             ref={pdfIframeRef}
-            src={`${pdfBlobUrl}#toolbar=1&navpanes=0&view=FitH`}
+            src={`${pdfBlobUrl}#toolbar=1&navpanes=0&zoom=100`}
             title={`Settlement PDF - ${master.mr_no || ""}`}
             onLoad={() => {
               try {

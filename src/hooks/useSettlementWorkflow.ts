@@ -1049,7 +1049,14 @@ export function useSettlementWorkflow({ onClose, onLogEvent }: { onClose?: () =>
   const [deductionMasterList, setDeductionMasterList] = useState<any[]>([]);
 
   
-  useLiveAutoRefresh(initPage, [], { 
+  const suppressAutoRefreshUntilRef = useRef<number>(0);
+
+  useLiveAutoRefresh(() => {
+    if (Date.now() < suppressAutoRefreshUntilRef.current) return;
+    return initPage();
+  }, [], { 
+    enabled: viewMode === 'dashboard' && !showViewModal,
+    skipInitialLoad: true,
     tables: [
       'mr_settlement_master', 
       'm_r_settlement', 
@@ -3316,6 +3323,7 @@ export function useSettlementWorkflow({ onClose, onLogEvent }: { onClose?: () =>
     // Close overwrite modal if open
     setShowAuditOverwriteModal(false);
 
+    suppressAutoRefreshUntilRef.current = Date.now() + 8000;
     setLoading(true);
     setErrorMessage('');
     setSuccessMessage('');
@@ -3389,7 +3397,7 @@ export function useSettlementWorkflow({ onClose, onLogEvent }: { onClose?: () =>
         payment_status: masterData.payment_status || 'Pending'
       };
 
-      await dbModule.upsert('mr_settlement_master', masterPayload, 'mr_no');
+      const savedMasterRow = await dbModule.upsert('mr_settlement_master', masterPayload, 'mr_no');
 
       try {
         await supabase.rpc('exec_sql', {
@@ -3521,22 +3529,39 @@ export function useSettlementWorkflow({ onClose, onLogEvent }: { onClose?: () =>
 
 
 
+      const finalSavedRecord = (savedMasterRow && typeof savedMasterRow === 'object')
+        ? { ...masterPayload, ...savedMasterRow }
+        : masterPayload;
+      setSettledList((prev) => {
+        const cleanTarget = String(targetMrNo).trim().toUpperCase();
+        const existingIdx = prev.findIndex(
+          (r) => String(r?.mr_no || '').trim().toUpperCase() === cleanTarget
+        );
+        if (existingIdx >= 0) {
+          const next = [...prev];
+          next[existingIdx] = { ...next[existingIdx], ...finalSavedRecord };
+          return next;
+        }
+        return [finalSavedRecord, ...prev];
+      });
+
       if (onLogEvent) {
         onLogEvent('MR_SETTLEMENT', `Archived settlement for MR [MR: ${masterData.mr_no}] against PO [PO: ${masterData.po_no}] with Payment Status: ${masterData.payment_status || 'Pending'}. Settle Quantity: ${totalSettleQty} MT`);
       }
 
+      suppressAutoRefreshUntilRef.current = Date.now() + 5000;
       setSuccessMessage(`M.R. Settlement [MR No ${masterData.mr_no}] finalized and archived successfully !`);
       setLastSyncTime(new Date().toLocaleTimeString());
       setShowSuccessAnim(true);
       setTimeout(() => {
         setShowSuccessAnim(false);
         setViewMode('dashboard');
-        initPage();
       }, 2500);
 
     } catch (err: any) {
       setErrorMessage("Save failed: " + err.message);
     } finally {
+      suppressAutoRefreshUntilRef.current = Date.now() + 5000;
       setLoading(false);
     }
   };
