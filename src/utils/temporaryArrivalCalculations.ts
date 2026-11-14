@@ -17,14 +17,19 @@ export const getPaddedDetails = (initialAmad?: Amad): ArrivalDetailRow[] => {
     }
   }
   
+  const formatPhotaVal = (val: any): string => {
+    if (val === undefined || val === null) return '';
+    if (Array.isArray(val)) return val.map(v => String(v ?? '').trim()).filter(Boolean).join(', ');
+    return String(val);
+  };
+
   // Ensure agency and numeric fields are cleanly mapped
   pDetails = pDetails.map((d, idx) => {
     const agencyName = d.agency_name || (d as any).agency || '';
     const agencyCode = d.agency_code || '';
-    const rowPhota =
-      d.phota !== undefined && d.phota !== null && String(d.phota).trim() !== ''
-        ? String(d.phota)
-        : (idx === 0 && initialAmad?.phota ? String(initialAmad.phota) : '');
+    const dPhota = formatPhotaVal(d.phota);
+    const headerPhota = idx === 0 ? formatPhotaVal(initialAmad?.phota) : '';
+    const rowPhota = dPhota.trim() !== '' ? dPhota : headerPhota;
     return { 
       ...d, 
       agency_name: agencyName, 
@@ -51,7 +56,7 @@ export const getPaddedDetails = (initialAmad?: Amad): ArrivalDetailRow[] => {
       netto_pnto: 0,
       quantity_chln: 0,
       quantity_rcpt: 0,
-      phota: initialAmad?.phota ? String(initialAmad.phota) : '',
+      phota: formatPhotaVal(initialAmad?.phota),
       remarks: ''
     });
   }

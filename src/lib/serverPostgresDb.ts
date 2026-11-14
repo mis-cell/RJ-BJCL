@@ -412,7 +412,12 @@ async function getValidTableColumns(table: string): Promise<Set<string>> {
       const typeMap = new Map<string, string>();
       for (const r of res.rows) {
         const cName = String(r.column_name);
-        const dType = String(r.udt_name || r.data_type || '').toLowerCase();
+        const rawUdt = String(r.udt_name || '').toLowerCase();
+        const rawDataType = String(r.data_type || '').toLowerCase();
+        const dType =
+          rawDataType === 'array' && !rawUdt.startsWith('_')
+            ? (rawUdt ? `_${rawUdt}` : 'array')
+            : (rawUdt || rawDataType);
         colSet.add(cName);
         typeMap.set(cName, dType);
       }
@@ -439,6 +444,82 @@ function filterRowByValidColumns(
     if (rawVal === undefined) continue;
 
     const cType = (colTypes?.get(k) || '').toLowerCase();
+
+    // 0. PostgreSQL ARRAY column sanitization (e.g. text[], varchar[], int4[], numeric[], uuid[], jsonb[])
+    if (cType.startsWith('_') || cType === 'array') {
+      const elemType = cType.startsWith('_') ? cType.slice(1) : 'text';
+
+      const sanitizeArrayElement = (item: any): any => {
+        if (item === undefined || item === null) return null;
+        if (elemType === 'uuid') {
+          const s = String(item).trim();
+          if (!s) return null;
+          return isValidUuid(s) ? s : toDeterministicUuid(s);
+        }
+        if (elemType === 'int8' || elemType === 'int4' || elemType === 'int2') {
+          const n = Number(item);
+          return Number.isFinite(n) ? Math.round(n) : null;
+        }
+        if (elemType === 'numeric' || elemType === 'float8' || elemType === 'float4') {
+          const n = Number(item);
+          return Number.isFinite(n) ? n : null;
+        }
+        if (elemType === 'bool') {
+          if (typeof item === 'boolean') return item;
+          const s = String(item).trim().toLowerCase();
+          return s === 'true' || s === '1' || s === 'yes' || s === 't';
+        }
+        if (elemType === 'date' || elemType.startsWith('timestamp')) {
+          const s = String(item).trim();
+          return !s || s.toLowerCase() === 'null' || s.toLowerCase() === 'invalid date' ? null : item;
+        }
+        if (elemType === 'jsonb' || elemType === 'json') {
+          if (typeof item === 'string') {
+            try {
+              JSON.parse(item);
+              return item;
+            } catch (_) {
+              return JSON.stringify(item);
+            }
+          }
+          return JSON.stringify(item);
+        }
+        return item;
+      };
+
+      if (rawVal === null) {
+        filtered[k] = null;
+      } else if (Array.isArray(rawVal)) {
+        filtered[k] = rawVal.map(sanitizeArrayElement).filter((v) => v !== undefined);
+      } else if (typeof rawVal === 'string') {
+        const trimmed = rawVal.trim();
+        if (!trimmed || trimmed.toLowerCase() === 'null') {
+          filtered[k] = [];
+        } else if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
+          try {
+            const parsed = JSON.parse(trimmed);
+            if (Array.isArray(parsed)) {
+              filtered[k] = parsed.map(sanitizeArrayElement).filter((v) => v !== undefined);
+            } else {
+              const single = sanitizeArrayElement(parsed);
+              filtered[k] = single === null ? [] : [single];
+            }
+          } catch (_) {
+            const single = sanitizeArrayElement(trimmed);
+            filtered[k] = single === null ? [] : [single];
+          }
+        } else if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+          filtered[k] = trimmed;
+        } else {
+          const single = sanitizeArrayElement(trimmed);
+          filtered[k] = single === null ? [] : [single];
+        }
+      } else {
+        const single = sanitizeArrayElement(rawVal);
+        filtered[k] = single === null ? [] : [single];
+      }
+      continue;
+    }
 
     // 1. UUID column sanitization (prevents 'invalid input syntax for type uuid: "sauda-..."')
     if (cType === 'uuid') {
@@ -534,6 +615,20 @@ function filterRowByValidColumns(
   }
 
   return filtered;
+}
+
+function serializeParamValue(val: any, cType?: string): any {
+  if (val === undefined) return null;
+  if (val === null || val instanceof Date) return val;
+  const normalizedType = (cType || '').toLowerCase();
+  if (normalizedType.startsWith('_') || normalizedType === 'array') {
+    // node-postgres natively serializes JS Arrays into PostgreSQL array literals ({...})
+    return val;
+  }
+  if (typeof val === 'object') {
+    return JSON.stringify(val);
+  }
+  return val;
 }
 
 function buildWhereClause(
@@ -709,13 +804,10 @@ async function tryUpdateExistingRowInPlace(
 
   const updParams: any[] = [];
   const setClauses: string[] = [];
+  const colTypes = tableColumnTypesCache.get(sanitizeIdent(table));
 
   for (const k of updateKeys) {
-    let val = row[k];
-    if (typeof val === 'object' && val !== null && !(val instanceof Date)) {
-      val = JSON.stringify(val);
-    }
-    updParams.push(val);
+    updParams.push(serializeParamValue(row[k], colTypes?.get(k)));
     setClauses.push(`"${sanitizeIdent(k)}" = $${updParams.length}`);
   }
 
@@ -836,6 +928,7 @@ export async function executeInsert(payload: QueryPayload) {
   const keys = Object.keys(sample).filter(k => sample[k] !== undefined);
   if (keys.length === 0) return { data: [], error: null };
 
+  const colTypes = tableColumnTypesCache.get(table);
   const colsSql = keys.map(k => `"${sanitizeIdent(k)}"`).join(', ');
   const params: any[] = [];
   const valueRows: string[] = [];
@@ -843,11 +936,7 @@ export async function executeInsert(payload: QueryPayload) {
   for (const row of cleanedRows) {
     const rowPlaceholders: string[] = [];
     for (const k of keys) {
-      let val = row[k];
-      if (typeof val === 'object' && val !== null && !(val instanceof Date)) {
-        val = JSON.stringify(val);
-      }
-      params.push(val === undefined ? null : val);
+      params.push(serializeParamValue(row[k], colTypes?.get(k)));
       rowPlaceholders.push(`$${params.length}`);
     }
     valueRows.push(`(${rowPlaceholders.join(', ')})`);
@@ -902,16 +991,13 @@ export async function executeUpsert(payload: QueryPayload) {
       await populateMissingInsertDefaults(table, row, validCols);
       rowKeys = Object.keys(row).filter(k => row[k] !== undefined);
 
+      const colTypes = tableColumnTypesCache.get(table);
       const insParams: any[] = [];
       const insPlaceholders: string[] = [];
       const insColsSql = rowKeys.map(k => `"${sanitizeIdent(k)}"`).join(', ');
 
       for (const k of rowKeys) {
-        let val = row[k];
-        if (typeof val === 'object' && val !== null && !(val instanceof Date)) {
-          val = JSON.stringify(val);
-        }
-        insParams.push(val);
+        insParams.push(serializeParamValue(row[k], colTypes?.get(k)));
         insPlaceholders.push(`$${insParams.length}`);
       }
 
@@ -945,11 +1031,7 @@ export async function executeUpdate(payload: QueryPayload) {
   const setClauses: string[] = [];
 
   for (const k of keys) {
-    let val = values[k];
-    if (typeof val === 'object' && val !== null && !(val instanceof Date)) {
-      val = JSON.stringify(val);
-    }
-    params.push(val);
+    params.push(serializeParamValue(values[k], colTypes?.get(k)));
     setClauses.push(`"${sanitizeIdent(k)}" = $${params.length}`);
   }
 
