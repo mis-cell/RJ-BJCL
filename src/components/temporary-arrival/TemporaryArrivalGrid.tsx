@@ -68,6 +68,7 @@ export const TemporaryArrivalGrid: React.FC<TemporaryArrivalGridProps> = ({
               <th className="p-1 border border-gray-400 text-center w-48" colSpan={2}>Challan Marka</th>
               <th className="p-1 border border-gray-400 w-24" rowSpan={2}>Netto (M.T)</th>
               <th className="p-1 border border-gray-400 w-32" colSpan={2}>Quantity</th>
+              <th className="p-1 border border-gray-400 w-24" rowSpan={2}>Phota</th>
               <th className="p-1 border border-gray-400 w-36" rowSpan={2}>Remarks</th>
               <th className="p-1 border border-gray-400 w-20 text-center" rowSpan={2}>Action</th>
             </tr>
@@ -297,6 +298,16 @@ export const TemporaryArrivalGrid: React.FC<TemporaryArrivalGridProps> = ({
                   />
                 </td>
 
+                {/* Phota */}
+                <td className="p-0.5 border border-gray-300 w-24">
+                  <input
+                    type="text"
+                    value={detail.phota || ''}
+                    onChange={(e) => onDetailChange(idx, 'phota', e.target.value)}
+                    className="w-full bg-white border border-gray-300 text-center font-bold text-gray-900 outline-none px-1 h-6"
+                  />
+                </td>
+
                 {/* Remarks */}
                 <td className="p-0.5 border border-gray-300 w-36">
                   <input
@@ -340,7 +351,7 @@ export const TemporaryArrivalGrid: React.FC<TemporaryArrivalGridProps> = ({
               </td>
               <td className="px-2 text-right font-black text-rose-700 border-r border-slate-300">
               </td>
-              <td colSpan={2} className="px-2 text-slate-500 text-[10px]">
+              <td colSpan={3} className="px-2 text-slate-500 text-[10px]">
               </td>
             </tr>
           </tbody>

@@ -810,6 +810,11 @@ async function ensureDatabaseIntegrity() {
         `SELECT setval(pg_get_serial_sequence('"marka_master"', 'id'), COALESCE((SELECT MAX("id") FROM "marka_master"), 3153), true)`
       ).catch(() => {});
 
+      await client.query(
+        `ALTER TABLE IF EXISTS "temporary_material_received" ADD COLUMN IF NOT EXISTS "phota" TEXT`
+      ).catch(() => {});
+      tableColumnsCache.delete('temporary_material_received');
+
       await client.query('COMMIT');
     } catch (_) {
       await client.query('ROLLBACK').catch(() => {});

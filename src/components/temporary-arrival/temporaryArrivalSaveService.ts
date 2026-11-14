@@ -94,6 +94,11 @@ export async function saveTemporaryArrivalRecord({
   const lorryCombined = `${formData.lorry_prefix}-${formData.lorry_suffix}`.trim();
   const primaryRow = activeRows.find(r => (Number(r.netto_pnto) > 0 || Number(r.quantity_chln) > 0 || Number(r.quantity_rcpt) > 0)) || activeRows[0];
 
+  const combinedPhota = activeRows
+    .map(row => String(row.phota || '').trim())
+    .filter(Boolean)
+    .join(', ');
+
   const payload = {
     financial_year: formData.financial_year,
     amad_no: formData.arrival_no,
@@ -126,11 +131,13 @@ export async function saveTemporaryArrivalRecord({
     way_bill_no: formData.way_bill_no,
     way_bill_date: sanitizeDate(formData.way_bill_date),
     apmc_fees: Number(formData.apmc_fees) || 0,
+    phota: combinedPhota,
     remarks: formData.remarks,
     total_packets: totalPacketsSum,
     weight_qtl: totalWeightSum * 10,
     grid_details: activeRows.map(row => ({
       srl_no: Number(row.srl_no) || 1,
+      phota: row.phota || '',
       remarks: row.remarks || '',
       crop_year: row.crop_year || '2026-27',
       netto_pnto: Number(row.netto_pnto) || 0,

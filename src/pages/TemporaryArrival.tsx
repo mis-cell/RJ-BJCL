@@ -57,7 +57,8 @@ export default function TemporaryArrival({ onSave, onCancel, initialData }: { on
     agency: '',
     marka: '',
     bales: 0,
-    wt: 0
+    wt: 0,
+    phota: ''
   } as any);
 
   const handleAddRow = () => {
@@ -76,6 +77,7 @@ export default function TemporaryArrival({ onSave, onCancel, initialData }: { on
         netto_pnto: 0,
         quantity_chln: 0,
         quantity_rcpt: 0,
+        phota: '',
         remarks: ''
       }
     ]);
@@ -105,6 +107,7 @@ export default function TemporaryArrival({ onSave, onCancel, initialData }: { on
           netto_pnto: 0,
           quantity_chln: 0,
           quantity_rcpt: 0,
+          phota: '',
           remarks: ''
         }];
       }
@@ -944,6 +947,7 @@ export default function TemporaryArrival({ onSave, onCancel, initialData }: { on
             netto_pnto: weightVal,
             quantity_chln: qtyVal,
             quantity_rcpt: qtyVal,
+            phota: fd.phota || '',
             remarks: fd.remarks || ''
           };
         });
@@ -1139,6 +1143,7 @@ export default function TemporaryArrival({ onSave, onCancel, initialData }: { on
       netto_pnto: 0,
       quantity_chln: 0,
       quantity_rcpt: 0,
+      phota: '',
       remarks: ''
     }]);
     setFormData(prev => ({

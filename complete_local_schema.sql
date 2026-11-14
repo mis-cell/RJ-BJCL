@@ -2341,6 +2341,7 @@ CREATE TABLE IF NOT EXISTS "temporary_material_received" (
   "agency_name" TEXT,
   "consignment_note" TEXT,
   "challan_railway_receipt_no" TEXT,
+  "phota" TEXT,
   PRIMARY KEY ("amad_id")
 );
 

@@ -31,6 +31,7 @@ export interface ArrivalDetailRow {
   quantity_chln: number;
   quantity_rcpt: number;
   unit?: string;
+  phota?: string;
   remarks: string;
   marks_phota?: string;
 }
@@ -71,6 +72,7 @@ export interface Amad {
   way_bill_no?: string;
   way_bill_date?: string;
   apmc_fees?: number;
+  phota?: string;
   remarks?: string;
   total_packets?: number;
   weight_qtl?: number;

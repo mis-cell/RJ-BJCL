@@ -18,13 +18,18 @@ export const getPaddedDetails = (initialAmad?: Amad): ArrivalDetailRow[] => {
   }
   
   // Ensure agency and numeric fields are cleanly mapped
-  pDetails = pDetails.map(d => {
+  pDetails = pDetails.map((d, idx) => {
     const agencyName = d.agency_name || (d as any).agency || '';
     const agencyCode = d.agency_code || '';
+    const rowPhota =
+      d.phota !== undefined && d.phota !== null && String(d.phota).trim() !== ''
+        ? String(d.phota)
+        : (idx === 0 && initialAmad?.phota ? String(initialAmad.phota) : '');
     return { 
       ...d, 
       agency_name: agencyName, 
       agency_code: agencyCode,
+      phota: rowPhota,
       quantity_chln: d.quantity_chln !== undefined && d.quantity_chln !== null ? Number(d.quantity_chln) : 0,
       quantity_rcpt: d.quantity_rcpt !== undefined && d.quantity_rcpt !== null ? Number(d.quantity_rcpt) : 0,
       netto_pnto: d.netto_pnto !== undefined && d.netto_pnto !== null ? Number(d.netto_pnto) : 0
@@ -46,6 +51,7 @@ export const getPaddedDetails = (initialAmad?: Amad): ArrivalDetailRow[] => {
       netto_pnto: 0,
       quantity_chln: 0,
       quantity_rcpt: 0,
+      phota: initialAmad?.phota ? String(initialAmad.phota) : '',
       remarks: ''
     });
   }
