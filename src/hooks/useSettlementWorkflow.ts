@@ -1276,23 +1276,6 @@ export function useSettlementWorkflow({ onClose, onLogEvent }: { onClose?: () =>
           }
         }
 
-        // Check local storage cache as well
-        try {
-          const cachedMat = localStorage.getItem("material_inspection_records");
-          if (cachedMat) {
-            const parsed = JSON.parse(cachedMat);
-            if (Array.isArray(parsed)) {
-              parsed.forEach((item: any) => {
-                const mrKey = item.mr_no || item.final_arrival_no || item.arrival_no;
-                if (mrKey && !checkAndMarkSeen(item)) {
-                  const boundPo = resolveBoundPoForItem(item);
-                  combinedInspections.push(boundPo ? { ...item, po_no: boundPo } : item);
-                }
-              });
-            }
-          }
-        } catch (e) {}
-
         setInspections(combinedInspections);
 
         // 3. Fetch purchase orders list for selection from Final P.O and Sauda Check Point

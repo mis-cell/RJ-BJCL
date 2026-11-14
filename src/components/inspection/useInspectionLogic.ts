@@ -484,13 +484,6 @@ export function useInspectionLogic() {
         }
       }
 
-      if (inspectionList.length === 0) {
-        try {
-          const cached = localStorage.getItem("material_inspection_records") || localStorage.getItem("inspection_master_records");
-          if (cached) inspectionList = JSON.parse(cached);
-        } catch (e) {}
-      }
-
       setFinalArrivalList(faList);
 
       const map = new Map<string, InspectionMasterRecord>();

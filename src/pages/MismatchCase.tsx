@@ -148,12 +148,7 @@ export default function MismatchCase({ onClose, variant = 'satta' }: { onClose?:
 
       const inspMasterRows = [...(matInspRows || []), ...(millInspRows || [])];
 
-      let localSmsSaudas: any[] = [];
-      try {
-        localSmsSaudas = JSON.parse(localStorage.getItem('po_auto_sms_saudas') || '[]');
-      } catch (e) {}
-
-      const combinedSmsSaudas = [...smsSaudaDbRows, ...localSmsSaudas];
+      const combinedSmsSaudas = [...smsSaudaDbRows];
 
       const items: MaterialMismatchItem[] = [];
 
@@ -217,10 +212,7 @@ export default function MismatchCase({ onClose, variant = 'satta' }: { onClose?:
               Boolean(dbMm.approved_by) ||
               String(dbMm.remarks || '').toLowerCase().includes('approved') ||
               String(dbMm.remarks || '').toLowerCase().includes('resolved')
-            )) ||
-            localStorage.getItem(`material_resolved_${poNo.toUpperCase()}`) ||
-            (poNo.split('/').pop() && localStorage.getItem(`material_resolved_${poNo.split('/').pop()?.toUpperCase()}`)) ||
-            localStorage.getItem(`material_resolved_MIS-${poNo.toUpperCase()}`)
+            ))
           );
 
           const mismatchedLabels = matchRes.mismatches.map(m => m.mismatchLabel || `${m.field} mismatch`);
@@ -458,13 +450,7 @@ export default function MismatchCase({ onClose, variant = 'satta' }: { onClose?:
             Boolean(dbSattaMm.approved_by) ||
             String(dbSattaMm.remarks || '').toLowerCase().includes('approved') ||
             String(dbSattaMm.remarks || '').toLowerCase().includes('resolved')
-          )) ||
-          localStorage.getItem(`satta_resolved_${cleanPoNo}`) ||
-          localStorage.getItem(`satta_resolved_${cleanSaudaNo}`) ||
-          (poSuffix && localStorage.getItem(`satta_resolved_${poSuffix}`)) ||
-          (saudaSuffix && localStorage.getItem(`satta_resolved_${saudaSuffix}`)) ||
-          (cleanRefNo && localStorage.getItem(`satta_resolved_${cleanRefNo}`)) ||
-          localStorage.getItem(`satta_resolved_${itemId.toUpperCase()}`)
+          ))
         );
 
         sattaItems.push({
@@ -545,13 +531,7 @@ export default function MismatchCase({ onClose, variant = 'satta' }: { onClose?:
                   Boolean(dbSattaMm.approved_by) ||
                   String(dbSattaMm.remarks || '').toLowerCase().includes('approved') ||
                   String(dbSattaMm.remarks || '').toLowerCase().includes('resolved')
-                )) ||
-                (cleanPoNo && localStorage.getItem(`satta_resolved_${cleanPoNo}`)) ||
-                (cleanSaudaNo && localStorage.getItem(`satta_resolved_${cleanSaudaNo}`)) ||
-                (poSuffix && localStorage.getItem(`satta_resolved_${poSuffix}`)) ||
-                (saudaSuffix && localStorage.getItem(`satta_resolved_${saudaSuffix}`)) ||
-                (entryId && localStorage.getItem(`satta_resolved_${entryId}`)) ||
-                localStorage.getItem(`satta_resolved_${itemId.toUpperCase()}`)
+                ))
               );
 
               sattaItems.push({
@@ -634,12 +614,7 @@ export default function MismatchCase({ onClose, variant = 'satta' }: { onClose?:
                   Boolean(dbSattaMm.approved_by) ||
                   String(dbSattaMm.remarks || '').toLowerCase().includes('approved') ||
                   String(dbSattaMm.remarks || '').toLowerCase().includes('resolved')
-                )) ||
-                (cleanPoNo && localStorage.getItem(`satta_resolved_${cleanPoNo}`)) ||
-                (cleanSaudaNo && localStorage.getItem(`satta_resolved_${cleanSaudaNo}`)) ||
-                (poSuffix && localStorage.getItem(`satta_resolved_${poSuffix}`)) ||
-                (saudaSuffix && localStorage.getItem(`satta_resolved_${saudaSuffix}`)) ||
-                localStorage.getItem(`satta_resolved_${itemId.toUpperCase()}`)
+                ))
               );
 
               sattaItems.push({
@@ -732,7 +707,6 @@ export default function MismatchCase({ onClose, variant = 'satta' }: { onClose?:
 
     const targetItem = mismatchList.find(i => i.id === itemId || i.poNo === itemPoNo);
 
-    // Save resolution in localStorage immediately for resilient offline/local caching
     const poTokens = [
       itemPoNo,
       itemPoNo.split('/').pop() || '',
@@ -741,23 +715,6 @@ export default function MismatchCase({ onClose, variant = 'satta' }: { onClose?:
       itemId,
       itemId.replace(/^MIS-/i, '')
     ].filter(Boolean);
-
-    poTokens.forEach(token => {
-      try {
-        const tu = token.toUpperCase();
-        const payload = JSON.stringify({
-          resolvedBy: username,
-          resolvedAt: nowIso,
-          approvalLevel,
-          remarks: remarks.trim(),
-          status: 'resolved'
-        });
-        localStorage.setItem(`material_resolved_${tu}`, payload);
-        localStorage.setItem(`mismatch_resolved_${tu}`, payload);
-        localStorage.setItem(`mismatch_cleared_${tu}`, 'true');
-        localStorage.setItem(`pass_status_${tu}`, 'pass');
-      } catch (e) {}
-    });
 
     // 1. Base record (compatible with standard PostgreSQL table schema)
     const baseMaterialRecord: Record<string, any> = {
@@ -895,7 +852,6 @@ export default function MismatchCase({ onClose, variant = 'satta' }: { onClose?:
 
       const targetItem = sattaMismatchList.find(i => i.id === itemId || i.poNo === itemPoNo || i.saudaNo === itemPoNo);
 
-      // Save resolution in localStorage immediately for resilient caching
       const saudaTokens = [
         itemPoNo, 
         targetItem?.saudaNo, 
@@ -905,21 +861,6 @@ export default function MismatchCase({ onClose, variant = 'satta' }: { onClose?:
         (targetItem?.saudaNo || '').replace(/^BJCL\//i, ''),
         itemId
       ].filter(Boolean);
-
-      saudaTokens.forEach(token => {
-        try {
-          const payload = JSON.stringify({
-            resolvedBy: username,
-            resolvedAt: nowIso,
-            approvalLevel,
-            remarks: remarks.trim(),
-            status: 'resolved'
-          });
-          localStorage.setItem(`satta_resolved_${String(token).toUpperCase()}`, payload);
-          localStorage.setItem(`mismatch_resolved_${String(token).toUpperCase()}`, payload);
-          localStorage.setItem(`mismatch_cleared_${String(token).toUpperCase()}`, 'true');
-        } catch (e) {}
-      });
 
       // Generate a stable UUID for new records
       const recordUuid = typeof crypto !== 'undefined' && crypto.randomUUID
@@ -1093,34 +1034,8 @@ export default function MismatchCase({ onClose, variant = 'satta' }: { onClose?:
         groupKey
       ].filter(Boolean);
 
-      // Save tokens in localStorage for instant persistent caching
-      saudaTokens.forEach(token => {
-        try {
-          const payload = JSON.stringify({
-            resolvedBy: username,
-            resolvedAt: nowIso,
-            approvalLevel,
-            remarks: remarks.trim(),
-            status: 'resolved'
-          });
-          localStorage.setItem(`satta_resolved_${String(token).toUpperCase()}`, payload);
-          localStorage.setItem(`mismatch_resolved_${String(token).toUpperCase()}`, payload);
-          localStorage.setItem(`mismatch_cleared_${String(token).toUpperCase()}`, 'true');
-        } catch (e) {}
-      });
-
       // Save each item resolution
       for (const item of group.items) {
-        try {
-          const itemPayload = JSON.stringify({
-            resolvedBy: username,
-            resolvedAt: nowIso,
-            approvalLevel,
-            remarks: remarks.trim(),
-            status: 'resolved'
-          });
-          localStorage.setItem(`satta_resolved_${item.id.toUpperCase()}`, itemPayload);
-        } catch (e) {}
 
         const recordUuid = typeof crypto !== 'undefined' && crypto.randomUUID
           ? crypto.randomUUID()

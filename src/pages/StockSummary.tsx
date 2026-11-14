@@ -209,6 +209,7 @@ export default function StockSummary({ onClose, initialSubTab = 'opening' }: Sto
         isOpen={stockData.showCapacityPopup}
         onClose={() => stockData.setShowCapacityPopup(false)}
         filteredSavedStocks={stockData.filteredSavedStocks}
+        godowns={stockData.godowns}
         getGodownCapacityAndName={stockData.getGodownCapacityAndName}
         popupSearchQuery={stockData.popupSearchQuery}
         setPopupSearchQuery={stockData.setPopupSearchQuery}

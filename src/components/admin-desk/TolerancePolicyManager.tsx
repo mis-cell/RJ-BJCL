@@ -98,7 +98,9 @@ export const TolerancePolicyManager: React.FC = () => {
             <h2 className="text-sm font-black uppercase text-indigo-950 tracking-wide flex items-center gap-2">
               <span>Tolerance Policy Master &amp; Live Configuration</span>
               <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300">
-                Live Active Policy: {activePolicy.tolerance_pct}% or {activePolicy.max_weight_limit_kg} KG
+                {activePolicy.id
+                  ? `Live Active Policy: ${activePolicy.tolerance_pct}% or ${activePolicy.max_weight_limit_kg ?? 0} KG`
+                  : 'No Active Policy in DB'}
               </span>
             </h2>
             <p className="text-[11px] text-slate-600">

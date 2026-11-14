@@ -10,38 +10,6 @@ import {
   QuickReportState
 } from './types';
 
-const FALLBACK_GODOWNS_WITH_CAPACITY = [
-  { gdn_code: "1", gdn_name: "1", gdn_capacity: 600, gdn_short_name: "1" },
-  { gdn_code: "2", gdn_name: "3", gdn_capacity: 450, gdn_short_name: "3" },
-  { gdn_code: "3", gdn_name: "3A", gdn_capacity: 450, gdn_short_name: "3A" },
-  { gdn_code: "4", gdn_name: "4", gdn_capacity: 450, gdn_short_name: "4" },
-  { gdn_code: "5", gdn_name: "4A", gdn_capacity: 450, gdn_short_name: "4A" },
-  { gdn_code: "6", gdn_name: "4B", gdn_capacity: 600, gdn_short_name: "4B" },
-  { gdn_code: "7", gdn_name: "4C", gdn_capacity: 600, gdn_short_name: "4C" },
-  { gdn_code: "8", gdn_name: "5", gdn_capacity: 450, gdn_short_name: "5" },
-  { gdn_code: "9", gdn_name: "6", gdn_capacity: 450, gdn_short_name: "6" },
-  { gdn_code: "10", gdn_name: "6A", gdn_capacity: 450, gdn_short_name: "6A" },
-  { gdn_code: "11", gdn_name: "7", gdn_capacity: 450, gdn_short_name: "7" },
-  { gdn_code: "12", gdn_name: "7A", gdn_capacity: 450, gdn_short_name: "7A" },
-  { gdn_code: "13", gdn_name: "8", gdn_capacity: 450, gdn_short_name: "8" },
-  { gdn_code: "14", gdn_name: "8A", gdn_capacity: 450, gdn_short_name: "8A" },
-  { gdn_code: "15", gdn_name: "9", gdn_capacity: 450, gdn_short_name: "9" },
-  { gdn_code: "16", gdn_name: "9A", gdn_capacity: 450, gdn_short_name: "9A" },
-  { gdn_code: "17", gdn_name: "10", gdn_capacity: 450, gdn_short_name: "10" },
-  { gdn_code: "18", gdn_name: "2", gdn_capacity: 450, gdn_short_name: "2" },
-  { gdn_code: "19", gdn_name: "1A", gdn_capacity: 450, gdn_short_name: "1A" },
-  { gdn_code: "20", gdn_name: "OUTSIDE", gdn_capacity: 500, gdn_short_name: "OS" },
-  { gdn_code: "21", gdn_name: "2A", gdn_capacity: 450, gdn_short_name: "2A" },
-  { gdn_code: "22", gdn_name: "INSP. MILL", gdn_capacity: 450, gdn_short_name: "IM" },
-  { gdn_code: "23", gdn_name: "KATARI", gdn_capacity: 450, gdn_short_name: "KATA" },
-  { gdn_code: "24", gdn_name: "MILL", gdn_capacity: 450, gdn_short_name: "MILL" },
-  { gdn_code: "26", gdn_name: "STB", gdn_capacity: 450, gdn_short_name: "STB" },
-  { gdn_code: "27", gdn_name: "INSP. STB", gdn_capacity: 450, gdn_short_name: "ISTB" },
-  { gdn_code: "29", gdn_name: "INSP. KATARI", gdn_capacity: 450, gdn_short_name: "IKAT" },
-  { gdn_code: "30", gdn_name: "SELECTION SHED", gdn_capacity: 450, gdn_short_name: "SHED" },
-  { gdn_code: "31", gdn_name: "8B", gdn_capacity: 450, gdn_short_name: "8B" }
-];
-
 export function useDashboardData(isActive: boolean = true) {
   const [stats, setStats] = React.useState<DashboardStats>({
     arrivals: '...',
@@ -332,26 +300,15 @@ export function useDashboardData(isActive: boolean = true) {
         stock_date: r.stock_date || r.opening_date || new Date().toISOString().split('T')[0]
       }));
 
-      const localStoredOp = (function() {
-        try {
-          const stored = localStorage.getItem('po_auto_opening_stock');
-          if (stored && stored !== 'undefined' && stored !== 'null') {
-            const parsed = JSON.parse(stored === "undefined" ? "null" : stored);
-            return Array.isArray(parsed) ? parsed : [];
-          }
-        } catch (_) {}
-        return [];
-      })();
-
       const combined = [...gdnData, ...opData];
       const unique = combined.filter((v, i, a) => a.findIndex(t => t.id === v.id) === i);
-      const finalOpList = unique.length > 0 ? unique : localStoredOp;
+      const finalOpList = unique;
 
       setAllOpeningStocks(finalOpList);
       setMillIssueMasters(mimRes || []);
       setMillIssueDetails(midRes || []);
 
-      const mergedGdns = (godownsRes && godownsRes.length > 0) ? godownsRes : FALLBACK_GODOWNS_WITH_CAPACITY;
+      const mergedGdns = godownsRes || [];
       setGodowns(mergedGdns);
 
       const stocks = finalOpList || [];

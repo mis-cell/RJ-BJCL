@@ -3,13 +3,6 @@ import Papa from 'papaparse';
 import { sanitizeCsvData, canDeleteData } from '../../lib/utils';
 import { dbModule } from '../../services/dbModule';
 import { supabase } from '../../lib/supabase';
-import { 
-  FALLBACK_GODOWNS, 
-  FALLBACK_GRADES, 
-  FALLBACK_AREAS, 
-  FALLBACK_UNITS, 
-  DEFAULT_GODOWNS 
-} from '../../utils/stockSummaryConstants';
 import {
   StockTab,
   StockSubTab,
@@ -131,30 +124,21 @@ export function useStockSummaryData(initialSubTab: StockSubTab = 'opening') {
     if (!valStr) {
       return { name: "No Godown Selected", capacity: 0 };
     }
-    let found = DEFAULT_GODOWNS.find(
+    let found = godowns.find(
       g => String(g.gdn_name || '').trim().toLowerCase() === valStr.toLowerCase() ||
            String(g.gdn_short_name || '').trim().toLowerCase() === valStr.toLowerCase()
     );
     if (!found) {
-      found = DEFAULT_GODOWNS.find(
+      found = godowns.find(
         g => String(g.gdn_code || '').trim().toLowerCase() === valStr.toLowerCase()
       );
     }
     if (found) {
       return {
-        name: found.gdn_name,
+        name: found.gdn_name || valStr,
         capacity: Number(found.gdn_capacity || 450)
       };
     }
-
-    if (valStr === '1' || valStr.toUpperCase() === 'GDN-01') return { name: "1", capacity: 600 };
-    if (valStr === '2') return { name: "2", capacity: 450 };
-    if (valStr === '3') return { name: "3", capacity: 450 };
-    if (valStr === '3A') return { name: "3A", capacity: 450 };
-    if (valStr === '4') return { name: "4", capacity: 450 };
-    if (valStr === '4A') return { name: "4A", capacity: 450 };
-    if (valStr === '4B') return { name: "4B", capacity: 600 };
-    if (valStr === '5') return { name: "5", capacity: 450 };
 
     return {
       name: valStr,
@@ -204,19 +188,19 @@ export function useStockSummaryData(initialSubTab: StockSubTab = 'opening') {
         supabase.from('area_master').select('*').limit(150),
       ]);
 
-      if (gdnRes.data && gdnRes.data.length > 0) {
+      if (gdnRes.data) {
         const sortedGodowns = [...gdnRes.data].sort((a, b) => 
           String(a.gdn_name || '').localeCompare(String(b.gdn_name || ''))
         );
         setGodowns(sortedGodowns);
       }
-      if (grdRes.data && grdRes.data.length > 0) {
+      if (grdRes.data) {
         const sortedGrades = [...grdRes.data].sort((a, b) => 
           String(a.grade_name || a.name || '').localeCompare(String(b.grade_name || b.name || ''))
         );
         setGrades(sortedGrades);
       }
-      if (arRes.data && arRes.data.length > 0) {
+      if (arRes.data) {
         const sortedAreas = [...arRes.data].sort((a, b) => 
           String(a.area_name || a.name || '').localeCompare(String(b.area_name || b.name || ''))
         );
@@ -243,10 +227,10 @@ export function useStockSummaryData(initialSubTab: StockSubTab = 'opening') {
         const uniqueUnits = sortedUnits.filter((v, i, a) => a.findIndex(t => t.unit_name === v.unit_name) === i);
         setUnits(uniqueUnits);
       } else {
-        setUnits(FALLBACK_UNITS);
+        setUnits([]);
       }
     } catch (err) {
-      console.warn("Could not pre-fetch some metadata tables, using dynamic values.", err);
+      console.warn("Could not pre-fetch some metadata tables.", err);
     }
   };
 
@@ -273,28 +257,14 @@ export function useStockSummaryData(initialSubTab: StockSubTab = 'opening') {
           stock_date: r.stock_date || r.opening_date || new Date().toISOString().split('T')[0]
         }));
         
-        // Combine them and remove duplicates by ID just in case
         const combined = [...gdnData, ...opData];
         const unique = combined.filter((v, i, a) => a.findIndex(t => t.id === v.id) === i);
         
         setOpeningStocks(unique);
-        localStorage.setItem('po_auto_opening_stock', JSON.stringify(unique));
         return;
       }
     } catch (err) {
-      console.warn("Error loading saved opening stocks from Supabase, using localStorage fallback:", err);
-    }
-
-    // Local fallback
-    const stored = localStorage.getItem('po_auto_opening_stock');
-    if (stored && stored !== 'undefined' && stored !== 'null') {
-      try {
-        setOpeningStocks(JSON.parse(stored === "undefined" ? "null" : stored));
-      } catch (e) {
-        console.error("Failed to parse opening stocks from localStorage", e);
-        setOpeningStocks([]);
-      }
-    } else {
+      console.error("Error loading saved opening stocks from PostgreSQL:", err);
       setOpeningStocks([]);
     }
   };
@@ -312,17 +282,8 @@ export function useStockSummaryData(initialSubTab: StockSubTab = 'opening') {
         return;
       }
     } catch (err) {
-      console.warn("Error loading closing stocks from Supabase, using localStorage fallback:", err);
-    }
-
-    // Fallback local storage
-    const stored = localStorage.getItem('po_auto_closing_stock');
-    if (stored && stored !== 'undefined' && stored !== 'null') {
-      try {
-        setClosingStocks(JSON.parse(stored === "undefined" ? "null" : stored));
-      } catch (e) {
-        console.error(e);
-      }
+      console.error("Error loading closing stocks from PostgreSQL:", err);
+      setClosingStocks([]);
     }
   };
 
@@ -548,11 +509,10 @@ export function useStockSummaryData(initialSubTab: StockSubTab = 'opening') {
     }
   };
 
-  // Combine fetched metadata with static defaults so the dropdown is never empty
-  const mergedGodowns = godowns.length > 0 ? godowns : FALLBACK_GODOWNS;
-  const mergedGrades = grades.length > 0 ? grades : FALLBACK_GRADES;
-  const mergedAreas = areas.length > 0 ? areas : FALLBACK_AREAS;
-  const mergedUnits = units.length > 0 ? units : FALLBACK_UNITS;
+  const mergedGodowns = godowns;
+  const mergedGrades = grades;
+  const mergedAreas = areas;
+  const mergedUnits = units;
 
   const resetForm = () => {
     setFormState({
@@ -647,59 +607,31 @@ export function useStockSummaryData(initialSubTab: StockSubTab = 'opening') {
     };
 
     try {
-      let success = false;
-      if (supabase && !String(recordId).startsWith('local-')) {
-        try {
-          const payloadOp = { ...payload };
-          const payloadGdn = {
-            id: recordId,
-            stock_date: formState.opening_date,
-            godown: finalGodown,
-            area: finalArea,
-            grade: finalGrade,
-            jci: formState.jci,
-            unit: finalUnit,
-            quantity: qty,
-            weight: wt,
-            avg_weight: calculatedAvg
-          };
+      const payloadOp = { ...payload };
+      const payloadGdn = {
+        id: recordId,
+        stock_date: formState.opening_date,
+        godown: finalGodown,
+        area: finalArea,
+        grade: finalGrade,
+        jci: formState.jci,
+        unit: finalUnit,
+        quantity: qty,
+        weight: wt,
+        avg_weight: calculatedAvg
+      };
 
-          const [opRes, gdnRes] = await Promise.all([
-            supabase.from('opening_stock').upsert(payloadOp),
-            supabase.from('godown_wise_stock').upsert(payloadGdn)
-          ]);
-          
-          if (opRes.error) throw opRes.error;
-          if (gdnRes.error) throw gdnRes.error;
-          success = true;
-        } catch (dbErr) {
-          console.warn("Database operation failed for opening stock, utilizing local storage fallback:", dbErr);
-        }
-      }
+      const [opRes, gdnRes] = await Promise.all([
+        supabase.from('opening_stock').upsert(payloadOp),
+        supabase.from('godown_wise_stock').upsert(payloadGdn)
+      ]);
+      
+      if (opRes.error) throw opRes.error;
+      if (gdnRes.error) throw gdnRes.error;
 
-      if (!success) {
-        const stored = localStorage.getItem('po_auto_opening_stock');
-        let current: any[] = [];
-        if (stored && stored !== 'undefined' && stored !== 'null') {
-          try { current = JSON.parse(stored === "undefined" ? "null" : stored); } catch (e) { console.error(e); }
-        }
-        if (isEditing && formState.id) {
-          current = current.map(item => item.id === formState.id ? { ...item, ...payload } : item);
-          logOpeningStockAudit('UPDATE', `[Local] Updated Opening Stock: ${finalGrade} @ ${finalGodown}`);
-          alert("Opening Stock record updated locally!");
-        } else {
-          const newRecord = { ...payload, created_at: new Date().toISOString() };
-          current = [newRecord, ...current];
-          logOpeningStockAudit('CREATE', `[Local] Created Opening Stock: ${finalGrade} @ ${finalGodown}`);
-          alert("New Opening Stock master record created locally!");
-        }
-        localStorage.setItem('po_auto_opening_stock', JSON.stringify(current));
-        setOpeningStocks(current);
-      } else {
-        logOpeningStockAudit(isEditing ? 'UPDATE' : 'CREATE', `${isEditing ? 'Updated' : 'Created'} Opening Stock: ${finalGrade} @ ${finalGodown} [Qty: ${qty} ${finalUnit}, Wt: ${wt} Qtl]`);
-        alert(isEditing ? "Opening Stock record updated successfully!" : "New Opening Stock master record created successfully!");
-        await loadOpeningStocks();
-      }
+      logOpeningStockAudit(isEditing ? 'UPDATE' : 'CREATE', `${isEditing ? 'Updated' : 'Created'} Opening Stock: ${finalGrade} @ ${finalGodown} [Qty: ${qty} ${finalUnit}, Wt: ${wt} Qtl]`);
+      alert(isEditing ? "Opening Stock record updated successfully!" : "New Opening Stock master record created successfully!");
+      await loadOpeningStocks();
       setIsFormModalOpen(false);
       resetForm();
     } catch (err: any) {

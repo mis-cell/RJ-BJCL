@@ -792,33 +792,6 @@ export default function SaudaRegister({ onClose, onNew, isActive = true }: { onC
           s.rejected_at = null;
         }
 
-        const cleanKey = String(s.sauda_no || s.sauda_id || '').trim().toUpperCase();
-        const idKey = s.sauda_id ? String(s.sauda_id).trim().toUpperCase() : '';
-        if (cleanKey) {
-          try {
-            const cachedStr = localStorage.getItem(`sauda_check_status_${cleanKey}`);
-            if (cachedStr) {
-              const cachedObj = JSON.parse(cachedStr);
-              const cachedStatus = String(cachedObj.status || cachedObj.approval_status || '').toUpperCase();
-              const dbUpdatedTime = new Date(s.last_updated_at || s.submitted_at || 0).getTime();
-              const cacheUpdatedTime = new Date(cachedObj.last_updated_at || cachedObj.rejected_at || cachedObj.approved_at || 0).getTime();
-
-              // Discard stale REJECTED cache if DB shows PENDING resubmission or newer update
-              const isStaleRejectedCache =
-                cachedStatus === 'REJECTED' &&
-                dbStatus === 'PENDING' &&
-                (!s.rejected_by || (Number(s.resubmission_count) || 0) > 0 || (dbUpdatedTime > 0 && dbUpdatedTime >= cacheUpdatedTime));
-
-              if (isStaleRejectedCache || dbStatus === 'APPROVED') {
-                localStorage.removeItem(`sauda_check_status_${cleanKey}`);
-                if (idKey) localStorage.removeItem(`sauda_check_status_${idKey}`);
-                return s;
-              }
-
-              return { ...s, ...cachedObj };
-            }
-          } catch (_e) {}
-        }
         return s;
       });
 

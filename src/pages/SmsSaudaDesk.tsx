@@ -167,7 +167,7 @@ export default function SmsSaudaDesk({ onClose, onNavigate }: { onClose?: () => 
 
   // 2. Load marked / completed SMS map keyed strictly by unique sms_id
   const loadMarkedSmsRecords = async () => {
-    let loadedMap: Record<string, { 
+    const loadedMap: Record<string, { 
       sauda_no: string; 
       sauda_id?: string;
       match_percent?: number;
@@ -176,13 +176,6 @@ export default function SmsSaudaDesk({ onClose, onNavigate }: { onClose?: () => 
       db_id?: string;
     }> = {};
 
-    const cachedMap = localStorage.getItem('sms_sauda_marked_map');
-    if (cachedMap) {
-      try {
-        loadedMap = JSON.parse(cachedMap);
-      } catch(e) {}
-    }
-
     if (supabase) {
       try {
         const { data, error } = await supabase
@@ -190,10 +183,9 @@ export default function SmsSaudaDesk({ onClose, onNavigate }: { onClose?: () => 
           .select('*');
 
         if (!error && data) {
-          const freshDbMap: typeof loadedMap = {};
           data.forEach((rec: any) => {
             if ((rec.sauda_no || rec.sauda_created) && rec.sms_id) {
-              freshDbMap[String(rec.sms_id)] = {
+              loadedMap[String(rec.sms_id)] = {
                 sauda_no: rec.sauda_no,
                 sauda_id: rec.sauda_id,
                 match_percent: rec.match_percent || rec.match_score || 100,
@@ -203,15 +195,13 @@ export default function SmsSaudaDesk({ onClose, onNavigate }: { onClose?: () => 
               };
             }
           });
-          loadedMap = { ...loadedMap, ...freshDbMap };
         }
       } catch (err) {
-        console.warn("Error loading marked SMS records from Supabase:", err);
+        console.warn("Error loading marked SMS records from PostgreSQL:", err);
       }
     }
 
     setMarkedSmsMap(loadedMap);
-    localStorage.setItem('sms_sauda_marked_map', JSON.stringify(loadedMap));
   };
 
   // 3. Fetch Google Sheet Raw SMS Feed

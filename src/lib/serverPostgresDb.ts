@@ -97,363 +97,7 @@ export interface QueryPayload {
   onConflictCols?: string[];
 }
 
-// Pure Local PostgreSQL Only — lazy in-memory snapshot fallback parsed from complete_local_data.sql.gz only if local PostgreSQL is not yet initialized
-let localSnapshotStore: Map<string, any[]> | null = null;
-
-function parseSqlScalar(raw: string): any {
-  const t = raw.trim();
-  if (t === 'NULL' || t === 'null') return null;
-  if (t === 'TRUE' || t === 'true') return true;
-  if (t === 'FALSE' || t === 'false') return false;
-  if (t.startsWith("'") && t.endsWith("'")) {
-    const inner = t.slice(1, -1).replace(/''/g, "'");
-    if ((inner.startsWith('[') && inner.endsWith(']')) || (inner.startsWith('{') && inner.endsWith('}'))) {
-      try {
-        return JSON.parse(inner);
-      } catch {
-        return inner;
-      }
-    }
-    return inner;
-  }
-  const num = Number(t);
-  return Number.isFinite(num) ? num : t;
-}
-
-function getLocalSnapshotStore(): Map<string, any[]> {
-  if (localSnapshotStore) return localSnapshotStore;
-  localSnapshotStore = new Map<string, any[]>();
-  try {
-    const gzPath = path.resolve(process.cwd(), 'complete_local_data.sql.gz');
-    if (!fs.existsSync(gzPath)) return localSnapshotStore;
-    const sqlText = zlib.gunzipSync(fs.readFileSync(gzPath)).toString('utf8');
-    const sections = sqlText.split('-- Table: "');
-
-    for (let sIdx = 1; sIdx < sections.length; sIdx++) {
-      const sec = sections[sIdx];
-      const qEnd = sec.indexOf('"');
-      if (qEnd === -1) continue;
-      const tbl = sec.slice(0, qEnd);
-      // Skip huge audit log tables in fallback memory store for speed
-      if (tbl === 'user_activity_logs' || tbl === 'app_audit_logs') {
-        localSnapshotStore.set(tbl, []);
-        continue;
-      }
-      const rows: any[] = [];
-      const chunks = sec.split(`INSERT INTO "${tbl}"`).slice(1);
-      for (const ch of chunks) {
-        const vIdx = ch.indexOf(') VALUES');
-        if (vIdx === -1) continue;
-        const cStart = ch.indexOf('(');
-        if (cStart === -1 || cStart > vIdx) continue;
-        const cols = ch
-          .slice(cStart + 1, vIdx)
-          .split(',')
-          .map(s => s.trim().replace(/^"|"$/g, ''));
-        const onConflictIdx = ch.lastIndexOf('ON CONFLICT');
-        const body = (onConflictIdx !== -1 ? ch.slice(vIdx + 8, onConflictIdx) : ch.slice(vIdx + 8)).trim();
-
-        let i = 0;
-        let inStr = false;
-        let depth = 0;
-        let cur = '';
-        let tuple: string[] = [];
-
-        while (i < body.length) {
-          const c = body[i];
-          if (inStr) {
-            cur += c;
-            if (c === "'") {
-              if (body[i + 1] === "'") {
-                cur += "'";
-                i++;
-              } else {
-                inStr = false;
-              }
-            }
-          } else {
-            if (c === "'") {
-              inStr = true;
-              cur += c;
-            } else if (c === '(') {
-              if (depth === 0) {
-                cur = '';
-                tuple = [];
-              } else {
-                cur += c;
-              }
-              depth++;
-            } else if (c === ')') {
-              depth--;
-              if (depth === 0) {
-                tuple.push(cur);
-                const obj: Record<string, any> = {};
-                for (let k = 0; k < cols.length; k++) {
-                  obj[cols[k]] = tuple[k] !== undefined ? parseSqlScalar(tuple[k]) : null;
-                }
-                rows.push(obj);
-              } else {
-                cur += c;
-              }
-            } else if (c === ',' && depth === 1) {
-              tuple.push(cur);
-              cur = '';
-            } else {
-              cur += c;
-            }
-          }
-          i++;
-        }
-      }
-      localSnapshotStore.set(tbl, rows);
-    }
-
-    // Backfill material_inspection top-level challan_gross_wt and final_receipt_wt from grid_details
-    const miRows = localSnapshotStore.get('material_inspection') || [];
-    for (const r of miRows) {
-      const gd = Array.isArray(r.grid_details) ? r.grid_details : (Array.isArray(r.details) ? r.details : []);
-      if (gd.length > 0) {
-        const sumGross = gd.reduce((acc: number, it: any) => acc + (Number(it?.challan_gross_wt ?? it?.receipt_gross_wt ?? 0) || 0), 0);
-        const sumNet = gd.reduce((acc: number, it: any) => acc + (Number(it?.final_receipt_wt ?? it?.reduced_weight ?? 0) || 0), 0);
-        const sumBags = gd.reduce((acc: number, it: any) => acc + (Number(it?.quantity ?? it?.packets ?? 0) || 0), 0);
-        if (sumGross > 0 && (!Number(r.challan_gross_wt) || Number(r.challan_gross_wt) <= 0)) {
-          r.challan_gross_wt = Number(sumGross.toFixed(3));
-          r.receipt_gross_wt = Number(sumGross.toFixed(3));
-          r.gross_weight = Number(sumGross.toFixed(3));
-        }
-        if (sumNet > 0 && (!Number(r.final_receipt_wt) || Number(r.final_receipt_wt) <= 0)) {
-          r.final_receipt_wt = Number(sumNet.toFixed(3));
-          r.total_final_receipt_wt = Number(sumNet.toFixed(3));
-          r.reduced_weight = Number(sumNet.toFixed(3));
-        }
-        if (sumBags > 0 && (!Number(r.quantity) || Number(r.quantity) <= 0)) {
-          r.quantity = sumBags;
-          r.total_quantity = sumBags;
-        }
-      }
-    }
-
-    // Ensure marka_master ID 3153 (MARKA_CODE: T1007, MARKA_NAME: TEST) is present in snapshot store
-    const markaRows = localSnapshotStore.get('marka_master') || [];
-    if (!markaRows.some((m: any) => Number(m.id) === 3153 || String(m.marka_code || '').trim().toUpperCase() === 'T1007')) {
-      markaRows.push({
-        id: 3153,
-        marka_code: 'T1007',
-        marka_name: 'TEST',
-        created_at: '2026-11-12T11:55:00.000Z'
-      });
-      localSnapshotStore.set('marka_master', markaRows);
-    }
-
-    // Reconcile temporary_material_received.po_no with final_arrival.po_no when a temp arrival was promoted/clubbed to a different P.O.
-    const faRows = localSnapshotStore.get('final_arrival') || [];
-    const faPoByTempNo = new Map<string, string>();
-    for (const f of faRows) {
-      const fPo = String(f?.po_no || '').trim();
-      if (!fPo) continue;
-      const tNo = String(f?.temporary_arrival_no || '').trim().toUpperCase();
-      if (tNo) faPoByTempNo.set(tNo, fPo);
-    }
-    const tmrRows = localSnapshotStore.get('temporary_material_received') || [];
-    for (const t of tmrRows) {
-      const tNo = String(t?.temporary_arrival_no || '').trim().toUpperCase();
-      if (tNo && faPoByTempNo.has(tNo)) {
-        const promotedPo = faPoByTempNo.get(tNo)!;
-        if (String(t.po_no || '').trim().toUpperCase() !== promotedPo.toUpperCase()) {
-          t.po_no = promotedPo;
-        }
-      }
-    }
-  } catch (err) {
-    console.warn('Could not load local snapshot fallback:', err);
-  }
-  return localSnapshotStore;
-}
-
-function matchesSnapshotFilter(row: any, f: QueryFilter): boolean {
-  if (!f.column) return true;
-  const rv = row[f.column];
-  const fv = f.value;
-  switch (f.op) {
-    case 'eq':
-      return String(rv ?? '').trim().toUpperCase() === String(fv ?? '').trim().toUpperCase();
-    case 'neq':
-      return String(rv ?? '').trim().toUpperCase() !== String(fv ?? '').trim().toUpperCase();
-    case 'gt':
-      return Number(rv) > Number(fv);
-    case 'gte':
-      return Number.isFinite(Number(rv)) && Number.isFinite(Number(fv)) ? Number(rv) >= Number(fv) : String(rv ?? '') >= String(fv ?? '');
-    case 'lt':
-      return Number(rv) < Number(fv);
-    case 'lte':
-      return Number.isFinite(Number(rv)) && Number.isFinite(Number(fv)) ? Number(rv) <= Number(fv) : String(rv ?? '') <= String(fv ?? '');
-    case 'like':
-    case 'ilike': {
-      const pattern = String(fv ?? '').replace(/^[%(]+|[%)]+$/g, '').toLowerCase();
-      return String(rv ?? '').toLowerCase().includes(pattern);
-    }
-    case 'is':
-      if (fv === null || fv === 'null') return rv === null || rv === undefined;
-      if (fv === true || fv === 'true') return Boolean(rv) === true;
-      if (fv === false || fv === 'false') return Boolean(rv) === false;
-      return rv === fv;
-    case 'in':
-      if (!Array.isArray(fv)) return false;
-      return fv.some(item => String(item ?? '').trim().toUpperCase() === String(rv ?? '').trim().toUpperCase());
-    default:
-      return true;
-  }
-}
-
-function queryLocalSnapshot(payload: QueryPayload) {
-  const store = getLocalSnapshotStore();
-  const table = sanitizeIdent(payload.table);
-  const sourceRows = store.get(table) || [];
-  let filtered = sourceRows.filter(row => {
-    if (Array.isArray(payload.filters)) {
-      for (const f of payload.filters) {
-        if (!matchesSnapshotFilter(row, f)) return false;
-      }
-    }
-    if (Array.isArray(payload.orFilters) && payload.orFilters.length > 0) {
-      for (const orStr of payload.orFilters) {
-        const parts = orStr.split(',');
-        let anyMatch = false;
-        for (const p of parts) {
-          const [c, op, ...rest] = p.split('.');
-          const val = rest.join('.').replace(/^"|"$/g, '');
-          const col = sanitizeIdent(c);
-          if (!col) continue;
-          if (matchesSnapshotFilter(row, { column: col, op: (op as any) || 'eq', value: val })) {
-            anyMatch = true;
-            break;
-          }
-        }
-        if (!anyMatch) return false;
-      }
-    }
-    return true;
-  });
-
-  const totalCount = filtered.length;
-
-  if (Array.isArray(payload.orders) && payload.orders.length > 0) {
-    filtered = [...filtered].sort((a, b) => {
-      for (const o of payload.orders!) {
-        const col = sanitizeIdent(o.column);
-        const va = a[col];
-        const vb = b[col];
-        if (va === vb) continue;
-        if (va === null || va === undefined) return 1;
-        if (vb === null || vb === undefined) return -1;
-        const cmp = typeof va === 'number' && typeof vb === 'number'
-          ? va - vb
-          : String(va).localeCompare(String(vb), undefined, { numeric: true });
-        return o.ascending ? cmp : -cmp;
-      }
-      return 0;
-    });
-  }
-
-  const offset = typeof payload.offset === 'number' ? payload.offset : 0;
-  const limit = typeof payload.limit === 'number' ? payload.limit : filtered.length;
-  const sliced = filtered.slice(offset, offset + limit);
-
-  return {
-    data: sliced,
-    count: totalCount,
-    error: null
-  };
-}
-
-function isConnectionError(err: any): boolean {
-  if (!err) return false;
-  const msg = String(err.message || '').toLowerCase();
-  return (
-    msg.includes('econnrefused') ||
-    msg.includes('connection refused') ||
-    msg.includes('enotfound') ||
-    msg.includes('etimedout') ||
-    msg.includes('timeout') ||
-    msg.includes('connect') ||
-    msg.includes('failed to connect') ||
-    msg.includes('password authentication failed') ||
-    msg.includes('database "bjcl_db" does not exist') ||
-    msg.includes('relation') && msg.includes('does not exist')
-  );
-}
-
-async function querySupabaseFallback(payload: QueryPayload) {
-  return queryLocalSnapshot(payload);
-}
-
-async function insertSupabaseFallback(payload: QueryPayload) {
-  const table = sanitizeIdent(payload.table);
-  const rawValues = Array.isArray(payload.values) ? payload.values : [payload.values];
-  const store = getLocalSnapshotStore();
-  const list = store.get(table) || [];
-  const uniqueKeys = [
-    ...(payload.onConflictCols || []),
-    ...(TABLE_UNIQUE_KEYS[table] || [])
-  ];
-  for (const r of rawValues) {
-    if (!r) continue;
-    let updated = false;
-    for (const uk of uniqueKeys) {
-      if (r[uk] !== undefined && r[uk] !== null && String(r[uk]).trim() !== '') {
-        const idx = list.findIndex(item => String(item?.[uk] ?? '').trim().toUpperCase() === String(r[uk]).trim().toUpperCase());
-        if (idx !== -1) {
-          list[idx] = { ...list[idx], ...r };
-          updated = true;
-          break;
-        }
-      }
-    }
-    if (!updated) {
-      list.unshift({ ...r });
-    }
-  }
-  store.set(table, list);
-  return { data: rawValues, error: null };
-}
-
-async function updateSupabaseFallback(payload: QueryPayload) {
-  const table = sanitizeIdent(payload.table);
-  const store = getLocalSnapshotStore();
-  const list = store.get(table) || [];
-  const updatedRows: any[] = [];
-  for (let i = 0; i < list.length; i++) {
-    const row = list[i];
-    const matches = (payload.filters || []).every(f => matchesSnapshotFilter(row, f));
-    if (matches) {
-      list[i] = { ...row, ...(payload.values || {}) };
-      updatedRows.push(list[i]);
-    }
-  }
-  store.set(table, list);
-  return { data: updatedRows, error: null };
-}
-
-async function deleteSupabaseFallback(payload: QueryPayload) {
-  const table = sanitizeIdent(payload.table);
-  const store = getLocalSnapshotStore();
-  const list = store.get(table) || [];
-  const deletedRows: any[] = [];
-  const remaining = list.filter(row => {
-    const matches = (payload.filters || []).length > 0 && (payload.filters || []).every(f => matchesSnapshotFilter(row, f));
-    if (matches) {
-      deletedRows.push(row);
-      return false;
-    }
-    return true;
-  });
-  store.set(table, remaining);
-  return { data: deletedRows, error: null };
-}
-
-async function rpcSupabaseFallback(_funcName: string, _args: any) {
-  return { data: { success: true }, error: null };
-}
+// Pure Local PostgreSQL Only — all queries and mutations execute directly against live PostgreSQL tables without any dump or snapshot fallback.
 
 export async function executeSelect(payload: QueryPayload) {
   const table = sanitizeIdent(payload.table);
@@ -522,9 +166,6 @@ export async function executeSelect(payload: QueryPayload) {
       error: null
     };
   } catch (err: any) {
-    if (isConnectionError(err)) {
-      return querySupabaseFallback(payload);
-    }
     console.warn(`[Local DB Select Notice on table ${table}]:`, err.message);
     return {
       data: [],
@@ -603,84 +244,12 @@ const TABLE_COMPOSITE_KEYS: Record<string, string[]> = {
   agency_master: ['area_name', 'agency_code']
 };
 
-// Database is fixed: only execute the one-time self-deleting agency_master seed if present
+// Non-destructive schema integrity checks only (never seeds, overwrites, or re-inserts rows from dumps/JSON)
 let integrityInitialized = false;
 async function ensureDatabaseIntegrity() {
   if (integrityInitialized) return;
   integrityInitialized = true;
 
-  const oncePath = path.resolve(process.cwd(), 'scripts/agency_master_once.json');
-  if (!fs.existsSync(oncePath)) return;
-
-  try {
-    const raw = fs.readFileSync(oncePath, 'utf8');
-    const rows = JSON.parse(raw);
-    if (!Array.isArray(rows) || rows.length === 0) return;
-
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
-      await client.query('DELETE FROM "agency_master"');
-
-      for (const r of rows) {
-        await client.query(
-          `INSERT INTO "agency_master" ("id", "area_code", "area_name", "agency_code", "agency_name")
-           VALUES ($1, $2, $3, $4, $5)`,
-          [
-            Number(r.id),
-            r.area_code ?? null,
-            r.area_name ?? null,
-            String(r.agency_code ?? ''),
-            String(r.agency_name ?? ''),
-          ]
-        );
-      }
-
-      await client
-        .query(
-          `SELECT setval('agency_master_id_auto_seq', COALESCE((SELECT MAX(id) FROM "agency_master"), 1) + 1, false)`
-        )
-        .catch(() => {});
-
-      await client.query('COMMIT');
-      tableColumnsCache.delete('agency_master');
-
-      // Delete the one-time seed file immediately after successful database injection
-      fs.unlinkSync(oncePath);
-      console.log(`[agency_master] One-time overwrite complete (${rows.length} rows injected) and seed file deleted.`);
-    } catch (txErr) {
-      await client.query('ROLLBACK').catch(() => {});
-      throw txErr;
-    } finally {
-      client.release();
-    }
-  } catch (_) {
-    // If local PostgreSQL is not reachable in preview mode, keep file for target server deployment
-  }
-
-  const penaltyOncePath = path.resolve(process.cwd(), 'scripts/sauda_penalty_5_to_0_once.json');
-  if (fs.existsSync(penaltyOncePath)) {
-    try {
-      const client = await pool.connect();
-      try {
-        await client.query('BEGIN');
-        await client.query(`UPDATE "sauda_check_point" SET "delivery_penalty" = 0 WHERE "delivery_penalty" = 5`);
-        await client.query(`UPDATE "sauda_check_point" SET "qty_penalty" = 0 WHERE "qty_penalty" = 5`);
-        await client.query('COMMIT');
-        fs.unlinkSync(penaltyOncePath);
-        console.log('[sauda_check_point] One-time penalty update (5 -> 0 for delivery_penalty & qty_penalty) complete and marker deleted.');
-      } catch (txErr) {
-        await client.query('ROLLBACK').catch(() => {});
-        throw txErr;
-      } finally {
-        client.release();
-      }
-    } catch (_) {
-      // Keep marker file if local PostgreSQL is not reachable in preview mode
-    }
-  }
-
-  // Schema integrity checks only (do NOT overwrite or re-seed deleted user records in PostgreSQL)
   try {
     const client = await pool.connect();
     try {
@@ -713,29 +282,7 @@ async function ensureDatabaseIntegrity() {
         FROM summed s
         WHERE m."id" = s."id"
           AND s.total_final_wt > 0
-      `);
-      // Ensure marka_master ID 3153 (MARKA_CODE: T1007, MARKA_NAME: TEST) is persisted in PostgreSQL bjcl_db
-      // (Fixes discrepancy where ID 3153 was saved to fallback cache while bjcl_db was being recreated)
-      await client.query(`
-        INSERT INTO "marka_master" ("id", "marka_code", "marka_name")
-        VALUES (3153, 'T1007', 'TEST')
-        ON CONFLICT ("id") DO UPDATE
-        SET "marka_code" = EXCLUDED."marka_code",
-            "marka_name" = EXCLUDED."marka_name"
-      `).catch(async () => {
-        const existsRes = await client.query(
-          `SELECT 1 FROM "marka_master" WHERE "id" = 3153 OR UPPER(TRIM("marka_code")) = 'T1007' LIMIT 1`
-        ).catch(() => ({ rowCount: 0 }));
-        if (!existsRes.rowCount) {
-          await client.query(
-            `INSERT INTO "marka_master" ("id", "marka_code", "marka_name") VALUES (3153, 'T1007', 'TEST')`
-          ).catch(() => {});
-        }
-      });
-
-      await client.query(
-        `SELECT setval(pg_get_serial_sequence('"marka_master"', 'id'), COALESCE((SELECT MAX("id") FROM "marka_master"), 3153), true)`
-      ).catch(() => {});
+      `).catch(() => {});
 
       await client.query(
         `ALTER TABLE IF EXISTS "temporary_material_received" ADD COLUMN IF NOT EXISTS "phota" TEXT`
@@ -752,12 +299,8 @@ async function ensureDatabaseIntegrity() {
 }
 
 /**
- * One-time / On-demand migration helper that syncs all pending `temporary_material_received`
- * (and related `sauda_check_point`, `sauda_check_point_details`, `final_arrival`, `material_inspection`, `mr_settlement_master`, `mr_settlement_detail`, `lorry_weighments`)
- * rows from:
- * 1) `complete_local_data.sql.gz` (all 1,385 rows including both MR00400 & MR00408 UUID rows, plus 844 settlements & 1,839 settlement details) with ON CONFLICT DO NOTHING
- * 2) Direct CSV/JSON rows uploaded from Supabase Table Editor (`options.importedRows`)
- * 3) Live Supabase Cloud (`https://lxuapkccxaadwixjpirs.supabase.co`) if a Supabase Anon/Service Key is provided or present in env.
+ * Accepts direct user-uploaded CSV/JSON rows into local PostgreSQL (`temporary_material_received`).
+ * Never imports or merges rows from static SQL dump files (`complete_local_data.sql.gz`).
  */
 export async function syncPendingDataToLocalPostgres(options?: {
   supabaseUrl?: string;
@@ -777,7 +320,6 @@ export async function syncPendingDataToLocalPostgres(options?: {
   let cloudSyncedCount = 0;
 
   try {
-    // Ensure idx_unique_temp_arrival_no is dropped so all 1,398 rows (keyed by amad_id UUID primary key) can be stored
     await pool.query(`
       DROP INDEX IF EXISTS idx_unique_temp_arrival_no;
       ALTER TABLE IF EXISTS "temporary_material_received" ALTER COLUMN "date" SET DEFAULT CURRENT_DATE;
@@ -788,57 +330,7 @@ export async function syncPendingDataToLocalPostgres(options?: {
     const beforeRes = await pool.query(`SELECT COUNT(*)::int AS cnt FROM "temporary_material_received"`).catch(() => ({ rows: [{ cnt: 0 }] }));
     beforeCount = beforeRes.rows?.[0]?.cnt ?? 0;
 
-    // Step 1: Sync missing rows from local complete_local_data.sql.gz (safe ON CONFLICT DO NOTHING)
-    const gzPath = path.resolve(process.cwd(), 'complete_local_data.sql.gz');
-    if (fs.existsSync(gzPath)) {
-      const compressed = fs.readFileSync(gzPath);
-      const sqlText = zlib.gunzipSync(compressed).toString('utf8');
-
-      const targetTables = [
-        'supply_master',
-        'broker_master',
-        'grade_master',
-        'agency_master',
-        'area_master',
-        'marka_master',
-        'sauda_check_point',
-        'sauda_check_point_details',
-        'purchase_master',
-        'purchase_detail_master',
-        'temporary_material_received',
-        'final_arrival',
-        'material_inspection',
-        'material_inspection_details',
-        'mill_inspection_master',
-        'mill_inspection_detail',
-        'mr_settlement_master',
-        'mr_settlement_detail',
-        'payment_master',
-        'payment_details',
-        'satta_base_rates',
-        'satta_differentials'
-      ];
-
-      for (const tbl of targetTables) {
-        const marker = `-- Table: "${tbl}"`;
-        const startIdx = sqlText.indexOf(marker);
-        if (startIdx === -1) continue;
-        const nextTableIdx = sqlText.indexOf('-- Table: "', startIdx + marker.length);
-        const section = nextTableIdx !== -1 ? sqlText.slice(startIdx, nextTableIdx) : sqlText.slice(startIdx);
-
-        const rawChunks = section
-          .split(`INSERT INTO "${tbl}"`)
-          .map(s => s.trim())
-          .filter(s => s && !s.startsWith('--'));
-
-        for (const chunk of rawChunks) {
-          const fullInsertSql = `INSERT INTO "${tbl}" ${chunk}`;
-          await pool.query(fullInsertSql).catch(() => {});
-        }
-      }
-    }
-
-    // Step 2: If CSV/JSON rows were uploaded directly from Supabase Table Editor (`temporary_material_received`)
+    // Only accept explicit user-uploaded rows (never read dumped SQL files)
     if (Array.isArray(options?.importedRows) && options!.importedRows.length > 0) {
       const cleanedRows = options!.importedRows
         .map((r: any) => {
@@ -1373,9 +865,6 @@ export async function executeInsert(payload: QueryPayload) {
   } catch (err: any) {
     tableColumnsCache.delete(table);
     tableColumnTypesCache.delete(table);
-    if (isConnectionError(err)) {
-      return insertSupabaseFallback(payload);
-    }
     console.warn(`[Local DB Insert Notice on table ${table}]:`, err.message);
     return { data: [], error: { message: err.message } };
   }
@@ -1437,9 +926,6 @@ export async function executeUpsert(payload: QueryPayload) {
   } catch (err: any) {
     tableColumnsCache.delete(table);
     tableColumnTypesCache.delete(table);
-    if (isConnectionError(err)) {
-      return insertSupabaseFallback(payload);
-    }
     console.warn(`[Local DB Upsert Notice on table ${table}]:`, err.message);
     return { data: [], error: { message: err.message } };
   }
@@ -1509,9 +995,6 @@ export async function executeUpdate(payload: QueryPayload) {
   } catch (err: any) {
     tableColumnsCache.delete(table);
     tableColumnTypesCache.delete(table);
-    if (isConnectionError(err)) {
-      return updateSupabaseFallback(payload);
-    }
     console.warn(`[Local DB Update Notice on table ${table}]:`, err.message);
     return { data: [], error: { message: err.message } };
   }
@@ -1532,9 +1015,6 @@ export async function executeDelete(payload: QueryPayload) {
     const result = await pool.query(deleteSql, params);
     return { data: result.rows, error: null };
   } catch (err: any) {
-    if (isConnectionError(err)) {
-      return deleteSupabaseFallback(payload);
-    }
     console.warn(`[Local DB Delete Notice on table ${table}]:`, err.message);
     return { data: [], error: { message: err.message } };
   }
@@ -1595,9 +1075,6 @@ export async function executeRpc(funcName: string, args: any) {
       return { data: res.rows, error: null };
     }
   } catch (err: any) {
-    if (isConnectionError(err)) {
-      return rpcSupabaseFallback(funcName, args);
-    }
     console.warn(`[Local DB RPC Notice on function ${funcName}]:`, err.message);
     return { data: null, error: { message: err.message } };
   }
@@ -2202,44 +1679,21 @@ export async function recoverMissingDataFromAllSources(): Promise<{
     }
   }
 
-  // 2. Run syncPendingDataToLocalPostgres (merges complete_local_data.sql.gz + sibling local PostgreSQL databases)
-  const syncRes = await syncPendingDataToLocalPostgres().catch((err: any) => ({
-    success: false,
-    addedCount: 0,
-    cloudSyncedCount: 0,
-    message: err?.message || 'failed',
-  }));
-  sourcesChecked.push({
-    source: 'Local Snapshot (complete_local_data.sql.gz) + Local PostgreSQL Sync',
-    status: syncRes.success ? 'Verified & Merged' : syncRes.message,
-    rowsRecovered: (syncRes.addedCount || 0) + (syncRes.cloudSyncedCount || 0),
-  });
-  totalRowsRecovered += (syncRes.addedCount || 0) + (syncRes.cloudSyncedCount || 0);
-
-  // 3. Ensure Marka Master ID 3153 (T1007 / TEST) is present in PostgreSQL bjcl_db
   integrityInitialized = false;
   await ensureDatabaseIntegrity().catch(() => {});
-  let marka3153Present = false;
-  try {
-    const mRes = await pool.query(`SELECT * FROM "marka_master" WHERE "id" = 3153 OR UPPER(TRIM("marka_code")) = 'T1007' LIMIT 1`);
-    marka3153Present = (mRes.rowCount || 0) > 0;
-  } catch (_) {
-    const memMarka = getLocalSnapshotStore().get('marka_master') || [];
-    marka3153Present = memMarka.some((m: any) => Number(m.id) === 3153);
-  }
 
   return {
     success: true,
     safetyBackupCreated: safetyRes.filesCreated.map(f => f.filePath),
     sourcesChecked,
     totalRowsRecovered,
-    marka3153Present,
-    message: `Pre-recovery safety backup created. Checked ${sourcesChecked.length} local PostgreSQL data sources, recovered ${totalRowsRecovered} missing row(s), and verified marka_master ID 3153 (T1007 / TEST) in PostgreSQL.`,
+    marka3153Present: false,
+    message: `Pre-recovery safety backup created. Checked ${sourcesChecked.length} live PostgreSQL data sources and recovered ${totalRowsRecovered} row(s). No static dump files were used.`,
   };
 }
 
 /**
- * Ensures local PostgreSQL database `bjcl_db` exists (restoring from latest backup, `postgres` DB, or local snapshot if missing/empty)
+ * Ensures local PostgreSQL database `bjcl_db` exists (creating schema-only tables if empty, never loading static dump data)
  * and schedules automatic hourly + daily pg_dump / pg_dumpall backups to /home/ubuntu/backups with 30-day retention.
  */
 export async function ensureLocalPostgresDatabaseAndHourlyBackup(): Promise<void> {
@@ -2268,11 +1722,11 @@ export async function ensureLocalPostgresDatabaseAndHourlyBackup(): Promise<void
   try {
     const dbCheck = await maintPool.query(`SELECT 1 FROM pg_database WHERE datname = $1`, [targetDb]);
     if (dbCheck.rowCount === 0) {
-      console.log(`[DB Auto-Restore] Database "${targetDb}" does not exist. Creating "${targetDb}" now...`);
+      console.log(`[DB Init] Database "${targetDb}" does not exist. Creating "${targetDb}" now...`);
       await maintPool.query(`CREATE DATABASE "${targetDb.replace(/"/g, '')}"`);
     }
 
-    // Check if targetDb has all tables (at least 50 tables including sauda_check_point)
+    // Check if targetDb has all schema tables (schema-only DDL, never auto-import static dump files)
     const countTablesInDb = async (dbName: string): Promise<number> => {
       const p = new Pool({ host, port, database: dbName, user, password, connectionTimeoutMillis: 3000 });
       try {
@@ -2290,56 +1744,16 @@ export async function ensureLocalPostgresDatabaseAndHourlyBackup(): Promise<void
     let tableCount = await countTablesInDb(targetDb);
 
     if (tableCount < 50) {
-      console.log(`[DB Auto-Restore] Database "${targetDb}" has only ${tableCount} tables. Restoring full schema and data...`);
-      const homeDir = process.env.HOME || '/home/ubuntu';
-      const candidateDirs = ['/home/ubuntu/backups', path.join(homeDir, 'backups'), '/var/backups', process.cwd()];
-      let newestDump = '';
-      let newestMtime = 0;
-
-      for (const dir of candidateDirs) {
-        if (!fs.existsSync(dir)) continue;
-        const files = fs.readdirSync(dir);
-        for (const f of files) {
-          if (f.endsWith('.dump') || f.endsWith('.backup')) {
-            const full = path.join(dir, f);
-            try {
-              const st = fs.statSync(full);
-              // Only consider valid non-empty dumps larger than 500 KB
-              if (st.size > 500 * 1024 && st.mtimeMs > newestMtime) {
-                newestMtime = st.mtimeMs;
-                newestDump = full;
-              }
-            } catch (_e) {}
-          }
-        }
-      }
-
-      if (newestDump) {
-        console.log(`[DB Auto-Restore] Attempting restore of "${targetDb}" from backup: ${newestDump}`);
-        await execAsync(
-          `PGPASSWORD="${password}" pg_restore -h ${host} -p ${port} -U ${user} -d ${targetDb} --no-owner --no-privileges "${newestDump}" || true`
-        );
+      const schemaPath = path.resolve(process.cwd(), 'complete_local_schema.sql');
+      if (fs.existsSync(schemaPath)) {
+        console.log(`[DB Init] Applying schema-only DDL (complete_local_schema.sql) to "${targetDb}"...`);
+        await execAsync(`PGPASSWORD="${password}" psql -h ${host} -p ${port} -U ${user} -d ${targetDb} -f "${schemaPath}"`);
         tableCount = await countTablesInDb(targetDb);
       }
-
-      // If still fewer than 50 tables, always load complete_local_schema.sql + complete_local_data.sql.gz
-      if (tableCount < 50) {
-        const schemaPath = path.resolve(process.cwd(), 'complete_local_schema.sql');
-        const dataGzPath = path.resolve(process.cwd(), 'complete_local_data.sql.gz');
-        if (fs.existsSync(schemaPath)) {
-          console.log(`[DB Auto-Restore] Applying complete_local_schema.sql (82 tables) to "${targetDb}"...`);
-          await execAsync(`PGPASSWORD="${password}" psql -h ${host} -p ${port} -U ${user} -d ${targetDb} -f "${schemaPath}"`);
-        }
-        if (fs.existsSync(dataGzPath)) {
-          console.log(`[DB Auto-Restore] Streaming complete_local_data.sql.gz (85,143 rows) into "${targetDb}"...`);
-          await execAsync(`gunzip -c "${dataGzPath}" | PGPASSWORD="${password}" psql -h ${host} -p ${port} -U ${user} -d ${targetDb}`);
-        }
-        tableCount = await countTablesInDb(targetDb);
-      }
-      console.log(`[DB Auto-Restore] Database "${targetDb}" is ready with ${tableCount} tables!`);
+      console.log(`[DB Init] Database "${targetDb}" schema is ready with ${tableCount} tables (no static dump rows loaded).`);
     }
 
-    // Run non-destructive schema integrity checks only (never re-insert deleted rows from dump into existing PostgreSQL tables)
+    // Run non-destructive schema integrity checks only
     integrityInitialized = false;
     await ensureDatabaseIntegrity().catch(() => {});
 

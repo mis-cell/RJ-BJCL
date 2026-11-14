@@ -1,15 +1,14 @@
 import { supabase } from '../lib/supabase';
-import { AREA_LOGIC_MASTER_DATA, AreaLogicRecord } from '../data/areaLogicMasterData';
+import type { AreaLogicRecord } from '../data/areaLogicMasterData';
 
-let inMemoryAreaLogic: AreaLogicRecord[] = [...AREA_LOGIC_MASTER_DATA];
+let inMemoryAreaLogic: AreaLogicRecord[] = [];
 let isLoadedFromSupabase = false;
 
 /**
- * Fetch Area-Agency mapping records from Supabase area_logic table.
- * Falls back seamlessly to AREA_LOGIC_MASTER_DATA if the table is empty or unavailable.
+ * Fetch Area-Agency mapping records exclusively from PostgreSQL area_logic and agency_master tables.
  */
 export async function fetchAreaLogic(): Promise<AreaLogicRecord[]> {
-  if (!supabase) return inMemoryAreaLogic;
+  if (!supabase) return [];
 
   try {
     const allRecords: AreaLogicRecord[] = [];
@@ -26,11 +25,6 @@ export async function fetchAreaLogic(): Promise<AreaLogicRecord[]> {
 
       if (error || !data || data.length === 0) {
         hasMore = false;
-        if (error && page === 0) {
-          console.warn('[areaLogicService] area_logic table query returned notice/error, using bundled master mapping:', error.message);
-          // Try auto-seeding if table exists but needs data
-          seedAreaLogicToSupabase().catch(() => {});
-        }
       } else {
         data.forEach((r: any) => {
           allRecords.push({
@@ -50,28 +44,6 @@ export async function fetchAreaLogic(): Promise<AreaLogicRecord[]> {
     }
 
     const masterMap = new Map<string, AreaLogicRecord>();
-    AREA_LOGIC_MASTER_DATA.forEach(r => {
-      const aCode = String(r.AREA_CODE || '').trim().toUpperCase();
-      const aName = String(r.AREA_NAME || '').trim().toUpperCase();
-      const agCode = String(r.AGENCY_CODE || '').trim().toUpperCase();
-      const agName = String(r.AGENCY_NAME || '').trim().toUpperCase();
-      if (aName && agName) {
-        masterMap.set(`${aName}__${agName}__${agCode}`, {
-          AREA_CODE: String(r.AREA_CODE || '').trim(),
-          AREA_NAME: String(r.AREA_NAME || '').trim(),
-          AGENCY_CODE: String(r.AGENCY_CODE || '').trim(),
-          AGENCY_NAME: String(r.AGENCY_NAME || '').trim()
-        });
-      } else if (aCode && agCode) {
-        masterMap.set(`${aCode}__${agCode}`, {
-          AREA_CODE: String(r.AREA_CODE || '').trim(),
-          AREA_NAME: String(r.AREA_NAME || '').trim(),
-          AGENCY_CODE: String(r.AGENCY_CODE || '').trim(),
-          AGENCY_NAME: String(r.AGENCY_NAME || '').trim()
-        });
-      }
-    });
-
     allRecords.forEach(r => {
       const aCode = String(r.AREA_CODE || '').trim().toUpperCase();
       const aName = String(r.AREA_NAME || '').trim().toUpperCase();
@@ -112,64 +84,14 @@ export async function fetchAreaLogic(): Promise<AreaLogicRecord[]> {
     inMemoryAreaLogic = Array.from(masterMap.values());
     isLoadedFromSupabase = true;
   } catch (err) {
-    console.warn('[areaLogicService] Failed to query Supabase area_logic table, using bundled master data:', err);
+    console.warn('[areaLogicService] Failed to query PostgreSQL area_logic/agency_master:', err);
   }
 
   return inMemoryAreaLogic;
 }
 
-/**
-  * Seeds bundled Area-Agency master mappings to Supabase area_logic and agency_master tables if empty or missing.
- */
 export async function seedAreaLogicToSupabase(): Promise<boolean> {
-  if (!supabase) return false;
-
-  try {
-    // 1. Seed agency_master if missing records
-    const { data: existingAgencies } = await supabase
-      .from('agency_master')
-      .select('id')
-      .limit(600);
-
-    if (!existingAgencies || existingAgencies.length < 600) {
-      console.log('[areaLogicService] Seeding agency_master table with AREA_LOGIC_MASTER_DATA...');
-      const agencyRecords = AREA_LOGIC_MASTER_DATA.map(r => ({
-        area_code: String(r.AREA_CODE).trim(),
-        area_name: String(r.AREA_NAME).trim().toUpperCase(),
-        agency_code: String(r.AGENCY_CODE).trim(),
-        agency_name: String(r.AGENCY_NAME).trim()
-      }));
-
-      const batchSize = 100;
-      for (let i = 0; i < agencyRecords.length; i += batchSize) {
-        const batch = agencyRecords.slice(i, i + batchSize);
-        await supabase.from('agency_master').insert(batch).catch(() => {});
-      }
-    }
-
-    // 2. Seed area_logic if table exists
-    const { data: existing, error: checkErr } = await supabase
-      .from('area_logic')
-      .select('id')
-      .limit(600);
-
-    if (!checkErr && (!existing || existing.length < 600)) {
-      console.log('[areaLogicService] Seeding 657 Area-Agency records into Supabase area_logic table...');
-      const batchSize = 100;
-      for (let i = 0; i < AREA_LOGIC_MASTER_DATA.length; i += batchSize) {
-        const batch = AREA_LOGIC_MASTER_DATA.slice(i, i + batchSize);
-        await supabase
-          .from('area_logic')
-          .upsert(batch, { onConflict: 'AREA_CODE,AGENCY_CODE' })
-          .catch(() => {});
-      }
-    }
-
-    return true;
-  } catch (err) {
-    console.error('[areaLogicService] Seeding error:', err);
-    return false;
-  }
+  return false;
 }
 
 export interface MappedAgency {

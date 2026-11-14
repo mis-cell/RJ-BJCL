@@ -58,7 +58,6 @@ import MainGateSection from "../components/MainGateSection";
 import MillWeighmentSection from "../components/MillWeighmentSection";
 import ElectricWeighbridgeSection from "../components/ElectricWeighbridgeSection";
 import DepartmentDashboardSection from "../components/DepartmentDashboardSection";
-import { MASTER_BROKERS, MASTER_QUALITIES, MASTER_MOKAMS, MASTER_MARKAS } from "../data/masterData";
 
 // ==========================================
 // TYPES & INTERFACES (MODULARIZED)
@@ -106,19 +105,13 @@ const DEFAULT_SETTINGS: SystemSettings = {
 };
 
 const DEFAULT_MASTERS: MasterOptions = {
-  brokers: MASTER_BROKERS,
-  qualities: MASTER_QUALITIES,
-  mokams: MASTER_MOKAMS,
-  markas: MASTER_MARKAS,
+  brokers: [],
+  qualities: [],
+  mokams: [],
+  markas: [],
 };
 
-const DEFAULT_USERS: SystemUser[] = [
-  { id: "usr_1", username: "admin", name: "Super Admin (System)", role: "SUPER_ADMIN", active: true, lastActive: "Just now" },
-  { id: "usr_2", username: "gate1", name: "Ramesh Sharma (Main Gate)", role: "MAIN_GATE", active: true, lastActive: "2 mins ago" },
-  { id: "usr_3", username: "mill_wb", name: "Suresh Patel (Mill Weighment)", role: "MILL_WEIGHTMENT", active: true, lastActive: "5 mins ago" },
-  { id: "usr_4", username: "elec_wb", name: "Amit Mukherji (Electric WB)", role: "ELECTRIC_WEIGHTMENT", active: true, lastActive: "1 min ago" },
-  { id: "usr_5", username: "store_mgr", name: "Pradeep Ghosh (Store/Yard)", role: "STORE_DEPT", active: true, lastActive: "10 mins ago" },
-];
+const DEFAULT_USERS: SystemUser[] = [];
 
 const INITIAL_LORRIES: LorryRecord[] = [];
 
@@ -157,27 +150,7 @@ export default function LorryDispatchSystem({
   const [activeTab, setActiveTab] = useState<"operations" | "settings" | "masters" | "users" | "audit">("operations");
   
   // System Data
-  const [lorries, setLorries] = useState<LorryRecord[]>(() => {
-    const saved = localStorage.getItem("bjl_lorries");
-    if (saved) {
-      try {
-        const parsed: LorryRecord[] = JSON.parse(saved);
-        const filtered = parsed.filter(
-          (l) =>
-            l.id !== "lorry_101" &&
-            l.id !== "lorry_102" &&
-            l.id !== "lorry_103" &&
-            l.lorryNo !== "WB-04-E-8821" &&
-            l.lorryNo !== "WB-25-C-4410" &&
-            l.lorryNo !== "WB-19-B-1192"
-        );
-        if (filtered.length > 0) return filtered;
-      } catch (e) {
-        console.warn("Error parsing saved lorries:", e);
-      }
-    }
-    return INITIAL_LORRIES;
-  });
+  const [lorries, setLorries] = useState<LorryRecord[]>(INITIAL_LORRIES);
 
   // Load live data from Supabase table lorry_weighments
   async function loadLorryWeighments() {
@@ -281,12 +254,9 @@ export default function LorryDispatchSystem({
     return { ...DEFAULT_SETTINGS, allowScreenCapture: true };
   });
 
-  const [masters, setMasters] = useState<MasterOptions>(() => {
-    const saved = localStorage.getItem("bjl_masters");
-    return saved ? JSON.parse(saved) : DEFAULT_MASTERS;
-  });
+  const [masters, setMasters] = useState<MasterOptions>(DEFAULT_MASTERS);
 
-  // Fetch reference tables from Supabase and merge with DEFAULT_MASTERS so dropdown options are never blank
+  // Fetch reference tables strictly from PostgreSQL
   useEffect(() => {
     async function loadMasterDataFromSupabase() {
       if (!supabase) return;
@@ -309,10 +279,10 @@ export default function LorryDispatchSystem({
           fetchSafe(() => supabase.from("sauda_master").select("broker, supplier")),
         ]);
 
-        const brokersSet = new Set<string>(MASTER_BROKERS);
-        const qualitiesSet = new Set<string>(MASTER_QUALITIES);
-        const mokamsSet = new Set<string>(MASTER_MOKAMS);
-        const markasSet = new Set<string>(MASTER_MARKAS);
+        const brokersSet = new Set<string>();
+        const qualitiesSet = new Set<string>();
+        const mokamsSet = new Set<string>();
+        const markasSet = new Set<string>();
 
         if (Array.isArray(bRes)) {
           bRes.forEach((r: any) => {

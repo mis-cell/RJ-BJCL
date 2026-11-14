@@ -7,7 +7,6 @@ import { calculateWeightTolerance } from '../../lib/weightTolerance';
 import { comparePoInspection, compareSaudaTempArrival, PoMatchResult } from '../../lib/poMatch';
 import { useLiveAutoRefresh } from '../../hooks/useLiveAutoRefresh';
 import { isInvalidAgency } from '../../services/systemReportEngine';
-import { MASTER_MARKAS } from '../../data/masterData';
 
 interface UsePurchaseOrderDataOptions {
   isTempPo: boolean;
@@ -163,17 +162,6 @@ export function usePurchaseOrderData({
     for (let i = 0; i < tokens.length; i++) {
       const tu = tokens[i].toUpperCase();
       if (resolvedTokens.has(tu)) return true;
-      if (
-        localStorage.getItem(`material_resolved_${tu}`) ||
-        localStorage.getItem(`satta_resolved_${tu}`) ||
-        localStorage.getItem(`material_resolved_MIS-${tu}`) ||
-        localStorage.getItem(`mismatch_resolved_${tu}`) ||
-        localStorage.getItem(`mismatch_cleared_${tu}`) ||
-        localStorage.getItem(`pass_status_${tu}`) ||
-        localStorage.getItem(`sauda_resolved_${tu}`)
-      ) {
-        return true;
-      }
     }
 
     return false;
@@ -811,43 +799,23 @@ export function usePurchaseOrderData({
         if (typeof parsedOpenRemarks === 'string') {
           try { parsedOpenRemarks = JSON.parse(parsedOpenRemarks); } catch (_e) { parsedOpenRemarks = null; }
         }
-        if (!parsedOpenRemarks) {
-          try {
-            const localRemarks = localStorage.getItem(`sauda_open_remarks_${cleanPoKey}`) || (cleanSaudaKey ? localStorage.getItem(`sauda_open_remarks_${cleanSaudaKey}`) : null);
-            if (localRemarks) parsedOpenRemarks = JSON.parse(localRemarks);
-          } catch (_e) {}
-        }
 
-        let cachedDeliveryDates: any = null;
-        try {
-          const rawDates = localStorage.getItem(`sauda_delivery_dates_${cleanPoKey}`) || (cleanSaudaKey ? localStorage.getItem(`sauda_delivery_dates_${cleanSaudaKey}`) : null);
-          if (rawDates) cachedDeliveryDates = JSON.parse(rawDates);
-        } catch (_e) {}
+        const cachedDeliveryDates: any = null;
 
         const statusLower = String(p.status || '').trim().toLowerCase();
-        const isCancelledLocal = statusLower === 'cancelled' ||
-                                 p.is_cancelled === true ||
-                                 localStorage.getItem(`sauda_cancelled_${cleanPoKey}`) === 'true' ||
-                                 (cleanSaudaKey ? localStorage.getItem(`sauda_cancelled_${cleanSaudaKey}`) === 'true' : false);
+        const isCancelledLocal = statusLower === 'cancelled' || p.is_cancelled === true;
 
-        const isForceClosedLocal = localStorage.getItem(`sauda_closed_${cleanPoKey}`) === 'true' ||
-                                   (cleanSaudaKey ? localStorage.getItem(`sauda_closed_${cleanSaudaKey}`) === 'true' : false);
-        const isReopenedLocal = localStorage.getItem(`sauda_reopened_${cleanPoKey}`) === 'true' ||
-                                (cleanSaudaKey ? localStorage.getItem(`sauda_reopened_${cleanSaudaKey}`) === 'true' : false);
-
-        const isExplicitReopened = !isCancelledLocal && !isForceClosedLocal && statusLower !== 'closed' && (
+        const isExplicitReopened = !isCancelledLocal && statusLower !== 'closed' && (
                                    p.is_reopened === true ||
                                    p.reopened === true ||
                                    statusLower === 'open' ||
-                                   Boolean(parsedOpenRemarks && typeof parsedOpenRemarks === 'object' && Object.keys(parsedOpenRemarks).length > 0) ||
-                                   isReopenedLocal
+                                   Boolean(parsedOpenRemarks && typeof parsedOpenRemarks === 'object' && Object.keys(parsedOpenRemarks).length > 0)
         );
 
         const isExplicitClosed = !isExplicitReopened && (
                                  p.is_closed === true ||
                                  p.sauda_closed === true ||
-                                 statusLower === 'closed' ||
-                                 isForceClosedLocal
+                                 statusLower === 'closed'
         );
 
         const isLorryClosed = contractLorries > 0 && receivedLorries >= contractLorries;
@@ -954,14 +922,6 @@ export function usePurchaseOrderData({
       })));
       setGradeList(grades || []);
       const markaMap = new Map<string, any>();
-      MASTER_MARKAS.forEach((m, idx) => {
-        const u = m.toUpperCase();
-        markaMap.set(u, {
-          marka_name: m,
-          marka_code: u === 'DAKALIA' ? 'M201' : (u === 'NR' ? 'M202' : `M${idx + 1}`),
-          area_name: u === 'DAKALIA' ? 'BIHAR' : (u === 'NR' ? 'DAISEE' : '')
-        });
-      });
       (markas || []).forEach((m: any) => {
         const name = typeof m === 'string' ? m.trim() : String(m.marka_name || m.name || m.code || '').trim();
         if (!name) return;
@@ -971,7 +931,7 @@ export function usePurchaseOrderData({
         markaMap.set(u, {
           marka_name: name,
           marka_code: code,
-          area_name: area || (u === 'DAKALIA' ? 'BIHAR' : (u === 'NR' ? 'DAISEE' : ''))
+          area_name: area
         });
       });
       setMarkaList(Array.from(markaMap.values()));

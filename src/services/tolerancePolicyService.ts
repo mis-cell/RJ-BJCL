@@ -20,65 +20,7 @@ export interface TolerancePolicyItem {
 
 export type TolerancePolicy = TolerancePolicyItem;
 
-export const DEFAULT_TOLERANCE_POLICIES: TolerancePolicyItem[] = [
-  {
-    id: 'pol_bales',
-    unit_type: 'BALES',
-    label: 'Bales Contract (Standard)',
-    tolerance_pct: 5,
-    tolerance_mt: 1.5,
-    min_lorries: 1,
-    max_lorries: 50,
-    is_active: true,
-    remarks: '±5% or ±1.500 MT weight tolerance for Bales contracts'
-  },
-  {
-    id: 'pol_loose',
-    unit_type: 'LOOSE',
-    label: 'Loose Jute Contract',
-    tolerance_pct: 5,
-    tolerance_mt: 1.5,
-    min_lorries: 1,
-    max_lorries: 50,
-    is_active: true,
-    remarks: '±5% or ±1.500 MT weight tolerance for Loose contracts'
-  },
-  {
-    id: 'pol_pbales',
-    unit_type: 'P.BALES',
-    label: 'Pucca Bales (P.Bales)',
-    tolerance_pct: 5,
-    tolerance_mt: 1.0,
-    min_lorries: 1,
-    max_lorries: 50,
-    is_active: true,
-    remarks: '±5% or ±1.000 MT weight tolerance for P.Bales'
-  },
-  {
-    id: 'pol_hbales',
-    unit_type: 'H.BALES',
-    label: 'Half Bales (H.Bales)',
-    tolerance_pct: 5,
-    tolerance_mt: 1.0,
-    min_lorries: 1,
-    max_lorries: 50,
-    is_active: true,
-    remarks: '±5% or ±1.000 MT weight tolerance for H.Bales'
-  },
-  {
-    id: 'pol_drums',
-    unit_type: 'DRUMS',
-    label: 'Drums / Other Units',
-    tolerance_pct: 5,
-    tolerance_mt: 1.0,
-    min_lorries: 1,
-    max_lorries: 50,
-    is_active: true,
-    remarks: '±5% weight tolerance for Drum units'
-  }
-];
-
-const LOCAL_STORAGE_KEY = 'bally_tolerance_policies_v1';
+export const DEFAULT_TOLERANCE_POLICIES: TolerancePolicyItem[] = [];
 
 let cachedPolicies: TolerancePolicyItem[] | null = null;
 
@@ -114,22 +56,7 @@ function normalizePolicyRow(d: any): TolerancePolicyItem {
 }
 
 export function getTolerancePoliciesSync(): TolerancePolicyItem[] {
-  if (cachedPolicies && cachedPolicies.length > 0) {
-    return cachedPolicies;
-  }
-  if (typeof window !== 'undefined') {
-    try {
-      const raw = localStorage.getItem(LOCAL_STORAGE_KEY);
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          cachedPolicies = parsed.map(normalizePolicyRow);
-          return cachedPolicies;
-        }
-      }
-    } catch (_e) {}
-  }
-  return DEFAULT_TOLERANCE_POLICIES;
+  return cachedPolicies || [];
 }
 
 export async function fetchTolerancePolicies(): Promise<TolerancePolicyItem[]> {
@@ -139,18 +66,13 @@ export async function fetchTolerancePolicies(): Promise<TolerancePolicyItem[]> {
       .select('*')
       .order('unit_type', { ascending: true });
 
-    if (!error && data && data.length > 0) {
+    if (!error && data) {
       const normalized = data.map(normalizePolicyRow);
       cachedPolicies = normalized;
-      if (typeof window !== 'undefined') {
-        try {
-          localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(normalized));
-        } catch (_e) {}
-      }
       return normalized;
     }
   }
-  return getTolerancePoliciesSync();
+  return [];
 }
 
 export async function saveTolerancePolicies(policies: TolerancePolicyItem[]): Promise<boolean> {
@@ -185,23 +107,32 @@ export async function saveTolerancePolicies(policies: TolerancePolicyItem[]): Pr
   cachedPolicies = confirmedPolicies;
 
   if (typeof window !== 'undefined') {
-    localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(confirmedPolicies));
     window.dispatchEvent(new CustomEvent('tolerance-policy-updated', { detail: confirmedPolicies }));
   }
 
   return true;
 }
 
-export const DEFAULT_TOLERANCE_POLICY = DEFAULT_TOLERANCE_POLICIES[0];
+export const DEFAULT_TOLERANCE_POLICY: TolerancePolicyItem = {
+  id: '',
+  unit_type: 'BALES',
+  label: 'No Active Policy',
+  tolerance_pct: 0,
+  tolerance_mt: 0,
+  min_lorries: 0,
+  max_lorries: 0,
+  is_active: false,
+  remarks: ''
+};
 
-export function getCachedTolerancePolicy(): TolerancePolicy {
+export function getCachedTolerancePolicy(): TolerancePolicy | null {
   const policies = getTolerancePoliciesSync();
-  return policies.find(p => p.is_active) || policies[0] || DEFAULT_TOLERANCE_POLICY;
+  return policies.find(p => p.is_active) || policies[0] || null;
 }
 
-export async function getActiveTolerancePolicy(): Promise<TolerancePolicy> {
+export async function getActiveTolerancePolicy(): Promise<TolerancePolicy | null> {
   const policies = await fetchTolerancePolicies();
-  return policies.find(p => p.is_active) || policies[0] || DEFAULT_TOLERANCE_POLICY;
+  return policies.find(p => p.is_active) || policies[0] || null;
 }
 
 export const getAllTolerancePolicies = fetchTolerancePolicies;
@@ -239,7 +170,6 @@ export async function deleteTolerancePolicy(id: string): Promise<boolean> {
   }
   cachedPolicies = nextList;
   if (typeof window !== 'undefined') {
-    localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(nextList));
     window.dispatchEvent(new CustomEvent('tolerance-policy-updated', { detail: nextList }));
   }
   return true;
@@ -252,18 +182,18 @@ export function getPolicyForUnit(unitType: string): TolerancePolicyItem {
   if (exact) return exact;
 
   if (clean.includes('LOOSE') || clean === 'LOS') {
-    return policies.find(p => p.unit_type === 'LOOSE') || DEFAULT_TOLERANCE_POLICIES[1];
+    return policies.find(p => p.unit_type === 'LOOSE') || DEFAULT_TOLERANCE_POLICY;
   }
   if (clean.includes('P.BALE') || clean.includes('PBALE') || clean === 'PB') {
-    return policies.find(p => p.unit_type === 'P.BALES') || DEFAULT_TOLERANCE_POLICIES[2];
+    return policies.find(p => p.unit_type === 'P.BALES') || DEFAULT_TOLERANCE_POLICY;
   }
   if (clean.includes('H.BALE') || clean.includes('HBALE') || clean === 'HB') {
-    return policies.find(p => p.unit_type === 'H.BALES') || DEFAULT_TOLERANCE_POLICIES[3];
+    return policies.find(p => p.unit_type === 'H.BALES') || DEFAULT_TOLERANCE_POLICY;
   }
   if (clean.includes('DRUM')) {
-    return policies.find(p => p.unit_type === 'DRUMS') || DEFAULT_TOLERANCE_POLICIES[4];
+    return policies.find(p => p.unit_type === 'DRUMS') || DEFAULT_TOLERANCE_POLICY;
   }
-  return policies.find(p => p.unit_type === 'BALES') || DEFAULT_TOLERANCE_POLICIES[0];
+  return policies.find(p => p.unit_type === 'BALES') || policies[0] || DEFAULT_TOLERANCE_POLICY;
 }
 
 export function calculateWeightTolerance(

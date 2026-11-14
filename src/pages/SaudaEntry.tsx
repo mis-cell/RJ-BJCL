@@ -19,7 +19,6 @@ import {
 import { cleanSaudaNo } from '../lib/utils';
 import { screenDraftService } from '../services/screenDraftService';
 import { getAgenciesForArea, validateAreaAgencyCombination } from '../services/areaLogicService';
-import { MASTER_MARKAS } from '../data/masterData';
 
 import LegacyLayout from '../components/LegacyLayout';
 import BasicDetailsCard from '../components/BasicDetailsCard';
@@ -236,14 +235,12 @@ export default function SaudaEntry({
         if (areaData) setAreas(areaData.map((a: any) => a.area_name || a.name || '').filter(Boolean));
         if (agcData) setAgencies(agcData);
         if (gradeData) setGrades(gradeData);
-        const combinedMarkaStrings = Array.from(new Set([
-          ...MASTER_MARKAS,
-          ...(markaData || []).map((m: any) => typeof m === 'string' ? m : (m.marka_name || m.name || m.code || '')).filter(Boolean)
-        ])).sort((a, b) => a.localeCompare(b));
+        const combinedMarkaStrings = Array.from(new Set(
+          (markaData || []).map((m: any) => typeof m === 'string' ? m : (m.marka_name || m.name || m.code || '')).filter(Boolean)
+        )).sort((a, b) => a.localeCompare(b));
         setMarkas(combinedMarkaStrings.map(m => ({ marka_name: m, name: m })));
         const hasSattaRates = (sattaBaseRates && sattaBaseRates.length > 0) || (sattaDiffs && sattaDiffs.length > 0);
-        const hasLocalStorageUpload = typeof window !== 'undefined' && localStorage.getItem('satta_chart_uploaded') === 'true';
-        setIsSattaChartUploaded(Boolean(hasSattaRates || hasLocalStorageUpload));
+        setIsSattaChartUploaded(Boolean(hasSattaRates));
 
         if (sattaBaseRates && sattaBaseRates.length > 0) {
           setBaseRatesList(sattaBaseRates);

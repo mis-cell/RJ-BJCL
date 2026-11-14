@@ -432,10 +432,7 @@ export default function TemporaryArrival({ onSave, onCancel, initialData }: { on
         const saudaKey = String(po.sauda_no || po.contract_po_no || '').trim().toUpperCase();
         const statusLower = String(po.status || '').trim().toLowerCase();
 
-        const isCancelled = statusLower === 'cancelled' || 
-                            po.is_cancelled === true || 
-                            localStorage.getItem(`sauda_cancelled_${poKey}`) === 'true' ||
-                            (saudaKey && localStorage.getItem(`sauda_cancelled_${saudaKey}`) === 'true');
+        const isCancelled = statusLower === 'cancelled' || po.is_cancelled === true;
         if (isCancelled) continue;
 
         const isCurrentMatch = initialData && initialData.po_no && (
@@ -447,31 +444,18 @@ export default function TemporaryArrival({ onSave, onCancel, initialData }: { on
         if (typeof parsedOpenRemarks === 'string') {
           try { parsedOpenRemarks = JSON.parse(parsedOpenRemarks); } catch (e) { parsedOpenRemarks = null; }
         }
-        if (!parsedOpenRemarks) {
-          try {
-            const localRemarks = localStorage.getItem(`sauda_open_remarks_${poKey}`) || (saudaKey ? localStorage.getItem(`sauda_open_remarks_${saudaKey}`) : null);
-            if (localRemarks) parsedOpenRemarks = JSON.parse(localRemarks);
-          } catch (e) {}
-        }
 
-        const isForceClosedLocal = localStorage.getItem(`sauda_closed_${poKey}`) === 'true' ||
-                                   (saudaKey ? localStorage.getItem(`sauda_closed_${saudaKey}`) === 'true' : false);
-        const isReopenedLocal = localStorage.getItem(`sauda_reopened_${poKey}`) === 'true' ||
-                                (saudaKey ? localStorage.getItem(`sauda_reopened_${saudaKey}`) === 'true' : false);
-
-        const isExplicitReopened = !isCancelled && !isForceClosedLocal && statusLower !== 'closed' && (
+        const isExplicitReopened = !isCancelled && statusLower !== 'closed' && (
                                    po.is_reopened === true || 
                                    po.reopened === true || 
                                    statusLower === 'open' ||
-                                   Boolean(parsedOpenRemarks && typeof parsedOpenRemarks === 'object' && Object.keys(parsedOpenRemarks).length > 0) ||
-                                   isReopenedLocal
+                                   Boolean(parsedOpenRemarks && typeof parsedOpenRemarks === 'object' && Object.keys(parsedOpenRemarks).length > 0)
         );
 
         const isExplicitClosed = !isExplicitReopened && (
                                  po.is_closed === true || 
                                  po.sauda_closed === true || 
-                                 statusLower === 'closed' || 
-                                 isForceClosedLocal
+                                 statusLower === 'closed'
         );
 
         const contractLorries = Math.max(1, parseInt(po.total_lorries || po.total_no_of_lorries || po.no_of_lorries || po.lorries || 1, 10) || 1);
@@ -1270,25 +1254,16 @@ export default function TemporaryArrival({ onSave, onCancel, initialData }: { on
     // Guard: Prohibit creating new temporary arrivals against cancelled or closed saudas
     const cleanEnteredPo = String(formData.po_no || '').trim().toUpperCase();
     const poObj = purchaseOrders.find((p: any) => String(p.po_no || '').trim().toUpperCase() === cleanEnteredPo);
-    const saudaKey = String(poObj?.sauda_no || poObj?.contract_po_no || '').trim().toUpperCase();
-    const isCancelledLocal = localStorage.getItem(`sauda_cancelled_${cleanEnteredPo}`) === 'true' ||
-                             (saudaKey ? localStorage.getItem(`sauda_cancelled_${saudaKey}`) === 'true' : false);
-    const isForceClosedLocal = localStorage.getItem(`sauda_closed_${cleanEnteredPo}`) === 'true' ||
-                               (saudaKey ? localStorage.getItem(`sauda_closed_${saudaKey}`) === 'true' : false);
-    const isReopenedLocal = localStorage.getItem(`sauda_reopened_${cleanEnteredPo}`) === 'true' ||
-                            (saudaKey ? localStorage.getItem(`sauda_reopened_${saudaKey}`) === 'true' : false);
     const poStatusLower = String(poObj?.status || '').trim().toLowerCase();
-    const isExplicitReopened = !isCancelledLocal && !isForceClosedLocal && poStatusLower !== 'closed' && (
+    const isExplicitReopened = poStatusLower !== 'closed' && poStatusLower !== 'cancelled' && (
       poObj?.is_reopened === true ||
       poObj?.reopened === true ||
       poStatusLower === 'open' ||
-      Boolean(poObj?.open_remarks) ||
-      isReopenedLocal
+      Boolean(poObj?.open_remarks)
     );
-    const isPoObjCancelled = poObj && (poStatusLower === 'cancelled' || poObj.is_cancelled === true);
-    const isPoObjClosed = poObj && !isExplicitReopened && (poObj.is_closed === true || poStatusLower === 'closed');
-    const isPoCancelled = isCancelledLocal || isPoObjCancelled;
-    const isPoClosed = !isExplicitReopened && (closedSaudaMap.has(cleanEnteredPo) || isForceClosedLocal || isPoObjClosed);
+    const isPoCancelled = Boolean(poObj && (poStatusLower === 'cancelled' || poObj.is_cancelled === true));
+    const isPoObjClosed = Boolean(poObj && !isExplicitReopened && (poObj.is_closed === true || poStatusLower === 'closed'));
+    const isPoClosed = !isExplicitReopened && (closedSaudaMap.has(cleanEnteredPo) || isPoObjClosed);
 
     if (!initialData && cleanEnteredPo && (isPoCancelled || isPoClosed)) {
       if (isPoCancelled) {

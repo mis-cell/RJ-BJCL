@@ -167,27 +167,6 @@ export interface ReturnLorryRecord {
   raw_sauda_check_point?: Record<string, any>;
 }
 
-const LOCAL_STORAGE_KEY = 'bjcl_return_lorry_records_v3';
-
-function getLocalCachedReturnLorries(): ReturnLorryRecord[] {
-  try {
-    const raw = localStorage.getItem(LOCAL_STORAGE_KEY);
-    if (!raw || raw === 'undefined' || raw === 'null') return [];
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-
-function setLocalCachedReturnLorries(records: ReturnLorryRecord[]) {
-  try {
-    localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(records));
-  } catch {
-    // ignore storage quota errors
-  }
-}
-
 let schemaInitStarted = false;
 
 /**
@@ -524,11 +503,6 @@ export async function generateNext4000SeriesPoNo(
       usedNumbers.add(num);
     }
   };
-
-  getLocalCachedReturnLorries().forEach((r) => {
-    addFromPo(r.new_po_no);
-    addFromPo(r.po_no);
-  });
 
   if (supabase) {
     try {
@@ -879,15 +853,6 @@ export async function saveReturnLorryToSaudaCheckPoint(
     items: updatedItems,
   };
 
-  // Update local cache
-  const cached = getLocalCachedReturnLorries();
-  const cleanMr = normalizeStr(savedRecord.mr_no);
-  const nextCache = [
-    savedRecord,
-    ...cached.filter((r) => normalizeStr(r.mr_no) !== cleanMr),
-  ];
-  setLocalCachedReturnLorries(nextCache);
-
   if (supabase) {
     try {
       const dbRecordPayload: Record<string, any> = { ...savedRecord };
@@ -1030,12 +995,17 @@ export async function checkAndProcessReturnLorryOnInspection(params: {
     return { isReturnLorry: true, weightMt };
   }
 
-  const cached = getLocalCachedReturnLorries();
-  const existingCached = cached.find((r) => normalizeStr(r.mr_no) === cleanMr);
+  let existingSaved: any = null;
+  if (supabase) {
+    try {
+      const { data } = await supabase.from('return_lorry').select('*').eq('mr_no', mrNo).limit(1);
+      if (data && data.length > 0) existingSaved = data[0];
+    } catch {}
+  }
 
-  const referencePoNo = existingCached?.reference_po_no || cleanPo || String(headerForm?.mill_po_no || '').trim() || cleanMr;
+  const referencePoNo = existingSaved?.reference_po_no || cleanPo || String(headerForm?.mill_po_no || '').trim() || cleanMr;
   const fy = String(headerForm?.financial_year || '2026-2027').trim();
-  const newPoNo = existingCached?.new_po_no || (await generateNext4000SeriesPoNo(referencePoNo, fy));
+  const newPoNo = existingSaved?.new_po_no || (await generateNext4000SeriesPoNo(referencePoNo, fy));
 
   const record = buildCombinedReturnLorryRecord({
     newPoNo,
@@ -1049,13 +1019,10 @@ export async function checkAndProcessReturnLorryOnInspection(params: {
     inspDetails: detailRows || [],
     weightMt,
     lorrySeqNo: 1,
-    existingSavedRl: existingCached,
-    existingSavedRlDetails: existingCached?.items || [],
-    isSavedToScp: Boolean(existingCached?.saved_to_sauda_checkpoint),
+    existingSavedRl: existingSaved,
+    existingSavedRlDetails: existingSaved?.items || [],
+    isSavedToScp: Boolean(existingSaved?.saved_to_sauda_checkpoint),
   });
-
-  const updatedCache = [record, ...cached.filter((r) => normalizeStr(r.mr_no) !== cleanMr)];
-  setLocalCachedReturnLorries(updatedCache);
 
   notifyDataChanged('return_lorry');
 
@@ -1078,7 +1045,7 @@ export async function syncAllReturnLorriesFromInspections(): Promise<ReturnLorry
   ensureReturnLorryTablesExist();
 
   if (!supabase) {
-    return getLocalCachedReturnLorries();
+    return [];
   }
 
   try {
@@ -1099,19 +1066,6 @@ export async function syncAllReturnLorriesFromInspections(): Promise<ReturnLorry
     ]);
 
     const rawInspections: any[] = [...((inspRes as any)?.data || [])];
-    try {
-      const localInsp = localStorage.getItem('inspection_master_records');
-      if (localInsp) {
-        const parsed = JSON.parse(localInsp);
-        if (Array.isArray(parsed)) {
-          parsed.forEach((item: any) => {
-            if (item?.mr_no && !rawInspections.some((x) => normalizeStr(x.mr_no) === normalizeStr(item.mr_no))) {
-              rawInspections.push(item);
-            }
-          });
-        }
-      }
-    } catch {}
 
     const allInspDetails: any[] = [
       ...((inspDetRes as any)?.data || []),
@@ -1149,7 +1103,7 @@ export async function syncAllReturnLorriesFromInspections(): Promise<ReturnLorry
       }
     };
 
-    for (const rl of [... getLocalCachedReturnLorries(), ...existingDbReturnLorries]) {
+    for (const rl of existingDbReturnLorries) {
       const mKey = normalizeStr(rl.mr_no || rl.final_arrival_no);
       if (mKey && !existingByMr.has(mKey)) {
         existingByMr.set(mKey, rl);
@@ -1232,11 +1186,10 @@ export async function syncAllReturnLorriesFromInspections(): Promise<ReturnLorry
       resultRecords.push(recordFromInspection);
     }
 
-    setLocalCachedReturnLorries(resultRecords);
     return resultRecords;
   } catch (err) {
     console.warn('[returnLorryService] Error loading Mill Inspection (< 5 MT) records:', err);
-    return getLocalCachedReturnLorries();
+    return [];
   }
 }
 

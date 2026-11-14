@@ -469,32 +469,7 @@ export function useFinalArrivalEntryLogic({ initialData, onSave }: UseFinalArriv
           return !isCompleted;
         }));
 
-        const fallbackMarkaNames = ["NO MARK", "SH", "CHANGE", "MJ", "BSP", "RT", "PUROHIT", "DB", "KK", "C.M", "BS", "IM", "NI", "RIEEM", "MAA", "V VISHNU", "KR", "SUNIL", "SARTAJ", "J.S.J", "PK", "ANAND", "RR", "HARI", "PS", "RS", "MR", "GOPAL", "A.P.J.S", "SUN", "SAHEB", "C.R.D", "SM", "SA", "AM", "RABI", "AD", "ML", "RK", "MUBIN", "AMAN", "SKB", "ANTIMA", "SHM", "JMP", "HM", "SN", "KT", "LN", "RAJU", "RA", "SS", "SR", "RAHA", "TT", "USHA", "OP", "ST", "PB", "SK", "BAHETI", "DR", "ROHIT", "BK", "KAMAL", "JM", "CHAIN", "SSB", "SANVI", "BR", "UDM", "JAYA", "MM", "SANGITA", "S", "HBGM", "DHRUV", "SD", "AS", "BALAJI", "AJAY", "SG", "GS", "SB", "RE", "JS", "RM", "RBT", "BD", "MS", "RAEEM", "TS", "TOSH", "LC", "SUMAN", "VANSH", "DK", "BHAWANI", "BP", "SHIV", "SHREE HARI", "A", "KS", "KJ", "VK", "JK", "ARHAM", "SOVA", "KM", "PRAMOD", "PUJA", "DURGA", "JSB", "NS", "JAY HANUMAN", "MB", "MANOJ", "SHUBHAM", "KISHAN", "JAY", "AX", "SKC", "YUNUS", "BIJOY", "BN", "A.J.P", "J/MU/DK", "J/MU/HP", "AP", "ANISH", "RISHAV", "SKS", "BUL BUL", "KEDIA", "SMB", "NAIZA", "MH", "BULBUL", "RAKHECHA", "R.JAIN", "MKC", "NC", "MRR", "P", "J.A.K.", "JAK", "GOBINDA", "RAM", "TULSI G", "PP", "HARI OM", "MOTI", "GK", "KRISHNA", "SANJOY", "AA", "MP", "TANU", "ASHA", "DNJ(BHOWMICK)", "SUMIT", "TULSI/H", "KP", "K.L.K", "SWASTIK", "JC", "PM", "BB", "GM", "SHREE"];
-        let finalMarkas = markaData || [];
-        if (finalMarkas.length === 0) {
-          finalMarkas = fallbackMarkaNames.map((name, i) => ({
-            id: i + 1,
-            marka_code: String(i + 1).padStart(2, '0'),
-            marka_name: name
-          }));
-        } else {
-          const existingMarkaMap = new Map<string, any>();
-          finalMarkas.forEach((m: any) => {
-            const mName = String(m.marka_name || m.name || m.mark_name || '').trim().toUpperCase();
-            if (mName) existingMarkaMap.set(mName, m);
-          });
-          fallbackMarkaNames.forEach((name, i) => {
-            if (!existingMarkaMap.has(name.toUpperCase())) {
-              existingMarkaMap.set(name.toUpperCase(), {
-                id: `fb_${i + 1}`,
-                marka_code: String(i + 1).padStart(2, '0'),
-                marka_name: name
-              });
-            }
-          });
-          finalMarkas = Array.from(existingMarkaMap.values());
-        }
-        setMarkas(finalMarkas);
+        setMarkas(markaData || []);
 
         if (!initialData) {
           setFormData(prev => ({

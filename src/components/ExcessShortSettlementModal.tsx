@@ -26,13 +26,12 @@ import { dbModule } from '../services/dbModule';
 import { calculateWeightTolerance, WeightToleranceResult } from '../lib/weightTolerance';
 import { 
   TolerancePolicyItem,
-  DEFAULT_TOLERANCE_POLICIES,
+  DEFAULT_TOLERANCE_POLICY,
   getTolerancePoliciesSync,
   fetchTolerancePolicies
 } from '../services/tolerancePolicyService';
 
 type TolerancePolicy = TolerancePolicyItem;
-const DEFAULT_TOLERANCE_POLICY = DEFAULT_TOLERANCE_POLICIES[0];
 import { cn } from '../lib/utils';
 import { logChange } from '../services/auditLogService';
 

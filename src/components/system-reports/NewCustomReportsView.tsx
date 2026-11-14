@@ -375,14 +375,7 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
             poRec?.mismatch_cleared === true ||
             String(poRec?.mismatch_cleared) === 'true' ||
             poRec?.satta_dispute_approved === true ||
-            String(poRec?.satta_dispute_approved) === 'true' ||
-            (poKey && typeof window !== 'undefined' && (
-              localStorage.getItem(`material_resolved_${poKey}`) ||
-              localStorage.getItem(`mismatch_cleared_${poKey}`) ||
-              localStorage.getItem(`satta_resolved_${poKey}`) ||
-              (poSuffix && localStorage.getItem(`material_resolved_${poSuffix}`)) ||
-              (poSuffix && localStorage.getItem(`mismatch_cleared_${poSuffix}`))
-            ))
+            String(poRec?.satta_dispute_approved) === 'true'
           );
 
           const hasAnyMismatchRecord =

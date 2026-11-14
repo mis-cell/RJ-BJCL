@@ -74,7 +74,7 @@ export async function runDatabaseMigrations() {
           );
           ALTER TABLE IF EXISTS settlement_print_history DISABLE ROW LEVEL SECURITY;
 
-          -- Marka master setup and DAKALIA / NR seed under BIHAR and DAISEE areas
+          -- Marka, Area, and Agency master schema setup (PostgreSQL tables only, no seed rows)
           CREATE TABLE IF NOT EXISTS marka_master (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
             marka_name TEXT UNIQUE NOT NULL,
@@ -84,22 +84,7 @@ export async function runDatabaseMigrations() {
             created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
           );
           ALTER TABLE IF EXISTS marka_master DISABLE ROW LEVEL SECURITY;
-          INSERT INTO marka_master (marka_code, marka_name, area_name)
-          VALUES 
-            ('M201', 'DAKALIA', 'BIHAR'),
-            ('M202', 'NR', 'DAISEE'),
-            ('M1', 'NO MARK', 'BIHAR'),
-            ('M2', 'SH', 'BIHAR'),
-            ('M3', 'CHANGE', 'BIHAR'),
-            ('M4', 'MJ', 'BIHAR'),
-            ('M5', 'BSP', 'BIHAR'),
-            ('M6', 'RT', 'BIHAR'),
-            ('M7', 'PUROHIT', 'BIHAR'),
-            ('M8', 'DB', 'BIHAR'),
-            ('M9', 'KK', 'BIHAR')
-          ON CONFLICT (marka_name) DO NOTHING;
 
-          -- Area master setup in Supabase
           CREATE TABLE IF NOT EXISTS area_master (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
             area_code TEXT,
@@ -107,19 +92,7 @@ export async function runDatabaseMigrations() {
             created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
           );
           ALTER TABLE IF EXISTS area_master DISABLE ROW LEVEL SECURITY;
-          INSERT INTO area_master (area_code, area_name)
-          VALUES 
-            ('10', 'BANGLADESH'),
-            ('20', 'BIHAR'),
-            ('30', 'DAISEE'),
-            ('40', 'ASSAM'),
-            ('50', 'ORISSA'),
-            ('60', 'WEST BENGAL'),
-            ('70', 'TRIPURA'),
-            ('80', 'MEGHALAYA')
-          ON CONFLICT (area_name) DO NOTHING;
 
-          -- Agency master setup in Supabase
           CREATE TABLE IF NOT EXISTS agency_master (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
             agency_code TEXT NOT NULL,
@@ -129,27 +102,6 @@ export async function runDatabaseMigrations() {
             created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
           );
           ALTER TABLE IF EXISTS agency_master DISABLE ROW LEVEL SECURITY;
-          INSERT INTO agency_master (agency_code, agency_name, area_code, area_name)
-          VALUES 
-            ('1', 'No agency', '20', 'BIHAR'),
-            ('2', 'ARARIA', '20', 'BIHAR'),
-            ('3', 'FORBISGUNJ', '20', 'BIHAR'),
-            ('4', 'GULABBAGH', '20', 'BIHAR'),
-            ('5', 'JALALGARH', '20', 'BIHAR'),
-            ('6', 'KATHIHAR', '20', 'BIHAR'),
-            ('7', 'PURNIA', '20', 'BIHAR'),
-            ('8', 'SAHARSA', '20', 'BIHAR'),
-            ('9', 'SUPOL', '20', 'BIHAR'),
-            ('10', 'THAKURGAUNG', '20', 'BIHAR'),
-            ('166', 'ARARIA COURT', '20', 'BIHAR'),
-            ('167', 'BAHADURGANJ', '20', 'BIHAR'),
-            ('168', 'BANMANKI', '20', 'BIHAR'),
-            ('1', 'No agency', '30', 'DAISEE'),
-            ('101', 'BELDANGA', '30', 'DAISEE'),
-            ('102', 'KRISHNANAGAR', '30', 'DAISEE'),
-            ('103', 'BERHAMPORE', '30', 'DAISEE'),
-            ('104', 'KARIMPUR', '30', 'DAISEE')
-          ON CONFLICT DO NOTHING;
 
           ALTER TABLE IF EXISTS mill_inspection_master ADD COLUMN IF NOT EXISTS lorry_number TEXT;
           ALTER TABLE IF EXISTS mill_inspection_master ADD COLUMN IF NOT EXISTS arival_apmc_fees NUMERIC DEFAULT 0;
@@ -476,10 +428,6 @@ export async function runDatabaseMigrations() {
             updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
           );
           ALTER TABLE IF EXISTS tolerance_policy_master DISABLE ROW LEVEL SECURITY;
-
-          INSERT INTO tolerance_policy_master (policy_name, tolerance_pct, max_weight_limit_kg, max_weight_limit_mt, applicable_unit, is_active, is_default, description)
-          VALUES ('Raw Jute Bales Standard Policy (5% or 1500 KG)', 5.00, 1500.00, 1.500, 'BALES', true, true, 'Lower of 5% of Sauda contract quantity or 1,500 KG (15.00 Qtl / 1.500 MT).')
-          ON CONFLICT DO NOTHING;
 
           ALTER TABLE IF EXISTS payment_details ADD COLUMN IF NOT EXISTS payment_id UUID;
           ALTER TABLE IF EXISTS payment_details ADD COLUMN IF NOT EXISTS voucher_no TEXT;

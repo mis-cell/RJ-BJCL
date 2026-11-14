@@ -9,7 +9,7 @@ import {
 import { cn } from '../../lib/utils';
 import LegacyLayout, { LegacyFieldset } from '../LegacyLayout';
 import PrintModal from '../PrintModal';
-import { DEFAULT_GODOWNS, GodownMasterItem, GradeMasterItem, AreaMasterItem, UnitMasterItem } from '../../utils/stockSummaryConstants';
+import { GodownMasterItem, GradeMasterItem, AreaMasterItem, UnitMasterItem } from '../../utils/stockSummaryConstants';
 
 export interface StockFormModalProps {
   isOpen: boolean;
@@ -1022,6 +1022,7 @@ export const StockCapacityAuditModal: React.FC<{
   isOpen: boolean;
   onClose: () => void;
   filteredSavedStocks: any[];
+  godowns: GodownMasterItem[];
   getGodownCapacityAndName: (gName: string) => { capacity: number; name: string };
   popupSearchQuery: string;
   setPopupSearchQuery: (q: string) => void;
@@ -1029,6 +1030,7 @@ export const StockCapacityAuditModal: React.FC<{
   isOpen,
   onClose,
   filteredSavedStocks,
+  godowns,
   getGodownCapacityAndName,
   popupSearchQuery,
   setPopupSearchQuery
@@ -1045,9 +1047,9 @@ export const StockCapacityAuditModal: React.FC<{
     return acc + info.capacity;
   }, 0);
 
-  const allGdNodes = DEFAULT_GODOWNS.map((g) => {
+  const allGdNodes = (godowns || []).map((g) => {
     const name = g.gdn_name || g.gdn_code;
-    const cap = Number(g.gdn_capacity || 600);
+    const cap = Number(g.gdn_capacity || 450);
     const records = filteredSavedStocks.filter(r => {
       const resolved = getGodownCapacityAndName(r.godown || "");
       return resolved.name.toLowerCase() === name.toLowerCase();
@@ -1091,7 +1093,7 @@ export const StockCapacityAuditModal: React.FC<{
     );
   });
 
-  const totalCapSum = DEFAULT_GODOWNS.reduce((acc, current) => acc + current.gdn_capacity, 0);
+  const totalCapSum = (godowns || []).reduce((acc, current) => acc + Number(current.gdn_capacity || 450), 0);
 
   return (
     <div role="dialog" className="fixed inset-0 bg-slate-900/70 backdrop-blur-xs flex items-center justify-center z-50 p-4">
@@ -1146,7 +1148,7 @@ export const StockCapacityAuditModal: React.FC<{
             <div className="bg-white border border-slate-200 p-2 text-center rounded shadow-xs">
               <span className="text-[9px] uppercase tracking-wider text-slate-400 block font-bold">Absolute Master Cap</span>
               <span className="text-lg font-black text-indigo-900">{totalCapSum.toLocaleString()} MT</span>
-              <span className="text-[8px] text-slate-400 block mt-0.5 font-extrabold">All {DEFAULT_GODOWNS.length} Registered Godowns</span>
+              <span className="text-[8px] text-slate-400 block mt-0.5 font-extrabold">All {(godowns || []).length} Registered Godowns</span>
             </div>
           </div>
 

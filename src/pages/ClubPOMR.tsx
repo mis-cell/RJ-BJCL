@@ -706,33 +706,6 @@ export default function ClubPOMR({ onClose }: { onClose?: () => void }) {
         }
       }
 
-      // Sync cached Mill Inspection records in localStorage if present
-      try {
-        const cachedInsp = localStorage.getItem('inspection_master_records');
-        if (cachedInsp) {
-          const parsed = JSON.parse(cachedInsp);
-          if (Array.isArray(parsed)) {
-            const normSet = new Set(tempLookupKeys.map(normalize));
-            const updated = parsed.map((item: any) => {
-              if (
-                normSet.has(normalize(item.mr_no)) ||
-                normSet.has(normalize(item.arrival_no)) ||
-                normSet.has(normalize(item.temporary_arrival_no))
-              ) {
-                return {
-                  ...item,
-                  po_no: poNo,
-                  ...(poDate ? { po_date: poDate } : {}),
-                  mill_po_no: poNo
-                };
-              }
-              return item;
-            });
-            localStorage.setItem('inspection_master_records', JSON.stringify(updated));
-          }
-        }
-      } catch (_e) {}
-
       // =========================================================================
       // STEP D: SAVE MANUAL CLUBBING RECORD TO SUPABASE (`clubbed_pomr`)
       // =========================================================================

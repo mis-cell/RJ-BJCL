@@ -1211,16 +1211,12 @@ export function usePurchaseOrderFormLogic({
       const tol = calculateWeightTolerance(contractWeight, totalReceivedMt, unit);
       const isWeightCompleted = tol.isCompleted;
 
-      const cleanPoKey = finalPoNo.toUpperCase();
       const existingPoInList = (poList || []).find((p: any) =>
         (editingPoIdRef.current && p.po_id === editingPoIdRef.current) ||
         exactPoNo(p.po_no, finalPoNo) ||
         (editingOriginalPoNoRef.current && exactPoNo(p.po_no, editingOriginalPoNoRef.current))
       );
-      const isReopenedPo = Boolean(
-        existingPoInList?.is_reopened ||
-        localStorage.getItem(`sauda_reopened_${cleanPoKey}`) === 'true'
-      );
+      const isReopenedPo = Boolean(existingPoInList?.is_reopened);
       const isPendingVal = isReopenedPo ? true : (isWeightCompleted ? false : (formData.pending === 'Yes'));
 
       const preservedFinancialYear =
@@ -1301,21 +1297,6 @@ export function usePurchaseOrderFormLogic({
 
       editingPoIdRef.current = null;
       editingOriginalPoNoRef.current = '';
-
-      // 3. Only after authoritative DB header + detail writes succeed, update localStorage cache & sync linked tables
-      const deliveryCachePayload = {
-        delivery_from: formData.delivery_from || null,
-        delivery_to: formData.delivery_to || null,
-        shipment_date: formData.delivery_to || formData.delivery_from || null,
-        grace_days: parseInt(formData.grace_days) || 0,
-        shipment_days: parseInt(formData.grace_days) || 0,
-        delivery_penalty: parseFloat(formData.delivery_penalty) || 0,
-        updated_at: new Date().toISOString()
-      };
-      localStorage.setItem(`sauda_delivery_dates_${cleanPoKey}`, JSON.stringify(deliveryCachePayload));
-      if (formData.contract_po_no) {
-        localStorage.setItem(`sauda_delivery_dates_${String(formData.contract_po_no).trim().toUpperCase()}`, JSON.stringify(deliveryCachePayload));
-      }
 
       if (existingPoInList) {
         const syncDatePayload = {

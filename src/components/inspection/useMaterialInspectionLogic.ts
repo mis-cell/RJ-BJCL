@@ -566,21 +566,6 @@ export function useMaterialInspectionLogic(onLogEvent?: (event: string, details:
         }
       });
 
-      try {
-        const cached = localStorage.getItem("inspection_master_records");
-        if (cached) {
-          const parsed = JSON.parse(cached);
-          if (Array.isArray(parsed)) {
-            parsed.forEach((item: any) => {
-              const key = item.mr_no || item.id;
-              if (key && !uniqueMap.has(key)) {
-                uniqueMap.set(key, item);
-              }
-            });
-          }
-        }
-      } catch (e) {}
-
       const { data: arrivalsData, error: arrivalsErr } = await supabase
         .from("final_arrival")
         .select("*")
@@ -1635,31 +1620,8 @@ export function useMaterialInspectionLogic(onLogEvent?: (event: string, details:
     await dbModule.executeTransaction(txStatements);
 
     try {
-      const isTarget = (r: any) => {
-        if (!r) return false;
-        if (mrNo && (r.mr_no === mrNo || r.id === mrNo)) return true;
-        if (recordId && r.id === recordId) return true;
-        if (arrNo && !mrNo && (r.arrival_no === arrNo || r.temporary_arrival_no === arrNo)) return true;
-        if (inspNo && !mrNo && r.inspection_no === inspNo) return true;
-        return false;
-      };
-
-      const cachedInsp = localStorage.getItem("inspection_master_records");
-      if (cachedInsp) {
-        const parsed = JSON.parse(cachedInsp);
-        if (Array.isArray(parsed)) {
-          const filtered = parsed.filter(r => !isTarget(r));
-          localStorage.setItem("inspection_master_records", JSON.stringify(filtered));
-        }
-      }
-      const cachedMat = localStorage.getItem("material_inspection_records");
-      if (cachedMat) {
-        const parsed = JSON.parse(cachedMat);
-        if (Array.isArray(parsed)) {
-          const filtered = parsed.filter(r => !isTarget(r));
-          localStorage.setItem("material_inspection_records", JSON.stringify(filtered));
-        }
-      }
+      localStorage.removeItem("inspection_master_records");
+      localStorage.removeItem("material_inspection_records");
       localStorage.removeItem("AUTOSAVE_MATERIAL_INSPECTION");
     } catch (e) {
       console.warn("Storage cleanup warning:", e);

@@ -1016,16 +1016,14 @@ export const isLastMrForPo = (targetMrNo: string, poNo: string, inspections: any
   const isReopened = Boolean(
     selectedPoData?.is_reopened === true ||
     selectedPoData?.reopened === true ||
-    statusLower === 'open' ||
-    (typeof localStorage !== 'undefined' && localStorage.getItem(`sauda_reopened_${cleanTargetPo}`) === 'true')
+    statusLower === 'open'
   );
   const isExplicitForceClosed =
     !isReopened &&
     Boolean(
       selectedPoData?.is_closed === true ||
       selectedPoData?.sauda_closed === true ||
-      statusLower === 'closed' ||
-      (typeof localStorage !== 'undefined' && localStorage.getItem(`sauda_closed_${cleanTargetPo}`) === 'true')
+      statusLower === 'closed'
     );
 
   const receivedLorries = groups.length;
