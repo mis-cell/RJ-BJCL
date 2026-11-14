@@ -137,13 +137,27 @@ export default function App() {
       const res = await fetch(getApiUrl("/api/maintenance"));
       if (res.ok) {
         const data = await res.json();
-        setMaintenanceMode({
-          enabled: Boolean(data?.enabled),
-          message:
-            String(data?.message || "").trim() ||
-            "Server update in progress. Please wait and try again shortly.",
-          updatedBy: data?.updatedBy,
-          updatedAt: data?.updatedAt,
+        const nextEnabled = Boolean(data?.enabled);
+        const nextMessage =
+          String(data?.message || "").trim() ||
+          "Server update in progress. Please wait and try again shortly.";
+        const nextUpdatedBy = data?.updatedBy;
+        const nextUpdatedAt = data?.updatedAt;
+        setMaintenanceMode((prev) => {
+          if (
+            prev.enabled === nextEnabled &&
+            prev.message === nextMessage &&
+            prev.updatedBy === nextUpdatedBy &&
+            prev.updatedAt === nextUpdatedAt
+          ) {
+            return prev;
+          }
+          return {
+            enabled: nextEnabled,
+            message: nextMessage,
+            updatedBy: nextUpdatedBy,
+            updatedAt: nextUpdatedAt,
+          };
         });
       }
     } catch (_e) {}
@@ -391,11 +405,14 @@ export default function App() {
     const handleOffline = () => setIsOnline(false);
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.getModifierState) {
-        setKeyState({
-          num: e.getModifierState('NumLock'),
-          caps: e.getModifierState('CapsLock'),
-          scrl: e.getModifierState('ScrollLock'),
-        });
+        const nextNum = e.getModifierState('NumLock');
+        const nextCaps = e.getModifierState('CapsLock');
+        const nextScrl = e.getModifierState('ScrollLock');
+        setKeyState((prev) =>
+          prev.num === nextNum && prev.caps === nextCaps && prev.scrl === nextScrl
+            ? prev
+            : { num: nextNum, caps: nextCaps, scrl: nextScrl }
+        );
       }
     };
     window.addEventListener('online', handleOnline);

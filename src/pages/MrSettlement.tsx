@@ -126,6 +126,16 @@ export default function MrSettlement({
     resolveGradeName,
   } = useSettlementWorkflow({ onClose, onLogEvent });
 
+  const handleClosePrintModal = React.useCallback(() => {
+    setShowViewModal(false);
+    setViewModalData(null);
+  }, [setShowViewModal, setViewModalData]);
+
+  const handleResolvePrintGradeName = React.useCallback(
+    (g: string) => resolveGradeName(g, gradeMasterList),
+    [resolveGradeName, gradeMasterList]
+  );
+
   return (
     <div className="w-full text-[11px] font-sans selection:bg-rose-100">
       {viewMode === "dashboard" ? (
@@ -306,12 +316,9 @@ export default function MrSettlement({
       {/* Print View Modal */}
       <SettlementPrintModal
         isOpen={showViewModal}
-        onClose={() => {
-          setShowViewModal(false);
-          setViewModalData(null);
-        }}
+        onClose={handleClosePrintModal}
         viewModalData={viewModalData}
-        resolveGradeName={(g: string) => resolveGradeName(g, gradeMasterList)}
+        resolveGradeName={handleResolvePrintGradeName}
       />
 
       {/* PO Audit Limit Overwrite Confirmation Modal */}

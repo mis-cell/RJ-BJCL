@@ -44,6 +44,8 @@ export interface SettlementPrintModalProps {
   resolveGradeName?: (grade: string) => string;
 }
 
+let cachedSettlementTemplateCsv: string | null = null;
+
 export const SettlementPrintModal: React.FC<SettlementPrintModalProps> = ({
   isOpen,
   onClose,
@@ -52,16 +54,39 @@ export const SettlementPrintModal: React.FC<SettlementPrintModalProps> = ({
 }) => {
   const [persistedPrintCount, setPersistedPrintCount] = useState<number>(0);
   const [advancePayment, setAdvancePaymentDone] = useState<string>("Yes");
-  const [rawTemplateCsv, setRawTemplateCsv] = useState<string>(DEFAULT_SETTLEMENT_TEMPLATE_CSV);
+  const [rawTemplateCsv, setRawTemplateCsv] = useState<string>(
+    () => cachedSettlementTemplateCsv || DEFAULT_SETTLEMENT_TEMPLATE_CSV
+  );
+  const [isPreviewReady, setIsPreviewReady] = useState<boolean>(false);
   const [viewMode, setViewMode] = useState<"pdf" | "sheet">("pdf");
   const isPrintingRef = useRef(false);
   const pdfIframeRef = useRef<HTMLIFrameElement | null>(null);
-
-  // Load the saved CSV template file from /templates/settlement_template.csv or /assets/aistudio/templest_a48a2340.csv
+  const resolveGradeNameRef = useRef(resolveGradeName);
   useEffect(() => {
-    if (!isOpen) return;
-    let active = true;
+    resolveGradeNameRef.current = resolveGradeName;
+  }, [resolveGradeName]);
+
+  // Coordinate initial template CSV + DB print count/payment lookups before building PDF blob URL once
+  useEffect(() => {
+    if (!isOpen || !viewModalData?.master?.mr_no) {
+      setIsPreviewReady(false);
+      return;
+    }
+
+    let isMounted = true;
+    setIsPreviewReady(false);
+
+    const mrNo = viewModalData.master.mr_no;
+    const initialCount = Number(viewModalData.master.print_count) || 0;
+    setPersistedPrintCount(initialCount);
+
     const loadTemplateFile = async () => {
+      if (cachedSettlementTemplateCsv) {
+        setRawTemplateCsv((prev) =>
+          prev === cachedSettlementTemplateCsv ? prev : cachedSettlementTemplateCsv!
+        );
+        return;
+      }
       const paths = [
         "/templates/settlement_template.csv",
         "/assets/aistudio/templest_a48a2340.csv",
@@ -71,8 +96,11 @@ export const SettlementPrintModal: React.FC<SettlementPrintModalProps> = ({
           const res = await fetch(path, { cache: "no-store" });
           if (res.ok) {
             const text = await res.text();
-            if (text && text.includes("BALLY JUTE COMPANY LIMITED") && active) {
-              setRawTemplateCsv((prev) => (prev === text ? prev : text));
+            if (text && text.includes("BALLY JUTE COMPANY LIMITED")) {
+              cachedSettlementTemplateCsv = text;
+              if (isMounted) {
+                setRawTemplateCsv((prev) => (prev === text ? prev : text));
+              }
               return;
             }
           }
@@ -81,18 +109,6 @@ export const SettlementPrintModal: React.FC<SettlementPrintModalProps> = ({
         }
       }
     };
-    loadTemplateFile();
-    return () => {
-      active = false;
-    };
-  }, [isOpen]);
-
-  useEffect(() => {
-    if (!isOpen || !viewModalData?.master?.mr_no) return;
-    let isMounted = true;
-    const mrNo = viewModalData.master.mr_no;
-    const initialCount = Number(viewModalData.master.print_count) || 0;
-    setPersistedPrintCount(initialCount);
 
     const loadDbCount = async () => {
       if (!supabase) return;
@@ -141,7 +157,12 @@ export const SettlementPrintModal: React.FC<SettlementPrintModalProps> = ({
       }
     };
 
-    loadDbCount();
+    Promise.all([loadTemplateFile(), loadDbCount()]).finally(() => {
+      if (isMounted) {
+        setIsPreviewReady(true);
+      }
+    });
+
     return () => {
       isMounted = false;
     };
@@ -160,9 +181,11 @@ export const SettlementPrintModal: React.FC<SettlementPrintModalProps> = ({
     [details]
   );
 
-  const printNow = new Date();
-  const todaySlash = `${String(printNow.getDate()).padStart(2, "0")}/${String(printNow.getMonth() + 1).padStart(2, "0")}/${String(printNow.getFullYear()).slice(-2)}`;
-  const printedByDisplay = resolveLoggedInPrintUserName();
+  const todaySlash = useMemo(() => {
+    const printNow = new Date();
+    return `${String(printNow.getDate()).padStart(2, "0")}/${String(printNow.getMonth() + 1).padStart(2, "0")}/${String(printNow.getFullYear()).slice(-2)}`;
+  }, [isOpen, master.mr_no]);
+  const printedByDisplay = useMemo(() => resolveLoggedInPrintUserName(), [isOpen, master.mr_no]);
 
   const targetPrintNum = persistedPrintCount + 1;
   const printCountWord = countToEnglishWord(targetPrintNum);
@@ -189,32 +212,34 @@ export const SettlementPrintModal: React.FC<SettlementPrintModalProps> = ({
     ""
   ).trim();
 
-  const validInspectionDeductions = Array.isArray(master.deductions)
-    ? master.deductions.filter(
-        (d: any) =>
-          d &&
-          ((d.deduction_type && !String(d.deduction_type).includes("-- SELECT")) ||
-            Number(d.deduction_rate) > 0 ||
-            Number(d.deduction_amount) > 0)
-      )
-    : [];
+  const inspectionDedItems = useMemo(() => {
+    const validInspectionDeductions = Array.isArray(master.deductions)
+      ? master.deductions.filter(
+          (d: any) =>
+            d &&
+            ((d.deduction_type && !String(d.deduction_type).includes("-- SELECT")) ||
+              Number(d.deduction_rate) > 0 ||
+              Number(d.deduction_amount) > 0)
+        )
+      : [];
 
-  const inspectionDedItems = validInspectionDeductions.map((dItem: any) => {
-    const rate = Number(dItem.deduction_rate) || 0;
-    const qtyKgs = Number(dItem.deduction_qty) || (rate > 0 ? 1 : 0);
-    let amount = Number(dItem.deduction_amount) || 0;
-    if (amount <= 0 && qtyKgs > 0 && rate > 0) {
-      amount = (qtyKgs * rate) / 100;
-    } else if (amount === rate && qtyKgs > 1 && rate > 0) {
-      amount = (qtyKgs * rate) / 100;
-    }
-    return {
-      type: String(dItem.deduction_type || "").toUpperCase(),
-      qtyKgs,
-      rate,
-      amount,
-    };
-  });
+    return validInspectionDeductions.map((dItem: any) => {
+      const rate = Number(dItem.deduction_rate) || 0;
+      const qtyKgs = Number(dItem.deduction_qty) || (rate > 0 ? 1 : 0);
+      let amount = Number(dItem.deduction_amount) || 0;
+      if (amount <= 0 && qtyKgs > 0 && rate > 0) {
+        amount = (qtyKgs * rate) / 100;
+      } else if (amount === rate && qtyKgs > 1 && rate > 0) {
+        amount = (qtyKgs * rate) / 100;
+      }
+      return {
+        type: String(dItem.deduction_type || "").toUpperCase(),
+        qtyKgs,
+        rate,
+        amount,
+      };
+    });
+  }, [master.deductions]);
 
   const inspectionDedSum = inspectionDedItems.reduce((acc, item) => acc + item.amount, 0);
 
@@ -301,7 +326,7 @@ export const SettlementPrintModal: React.FC<SettlementPrintModalProps> = ({
     activeDetails.forEach((col, idx) => {
       const baseRow = 14 + idx * 4;
       if (baseRow + 3 > 30) return;
-      const rawGrade = resolveGradeName(col.grade || "").trim();
+      const rawGrade = resolveGradeNameRef.current(col.grade || "").trim();
       const gradeDisplay =
         rawGrade && !rawGrade.endsWith(".") ? `${rawGrade}.` : rawGrade || "-";
       const markaDisplay = (col.marka_crop || "").split("/")[0].trim();
@@ -448,11 +473,10 @@ export const SettlementPrintModal: React.FC<SettlementPrintModalProps> = ({
     effectiveBalanceDueRounded,
     onAcAdvAdjusted,
     effectiveNetAmountToBePaid,
-    resolveGradeName,
   ]);
 
   const { pdfBlobUrl, pdfBase64 } = useMemo(() => {
-    if (!isOpen || !viewModalData) {
+    if (!isOpen || !viewModalData || !isPreviewReady) {
       return { pdfBlobUrl: "", pdfBase64: "" };
     }
     try {
@@ -476,6 +500,7 @@ export const SettlementPrintModal: React.FC<SettlementPrintModalProps> = ({
     }
   }, [
     isOpen,
+    isPreviewReady,
     viewModalData,
     populatedGrid,
     activeDetails.length,
@@ -656,9 +681,16 @@ export const SettlementPrintModal: React.FC<SettlementPrintModalProps> = ({
         </div>
       }
     >
-      {viewMode === "pdf" && pdfBlobUrl && (
+      {viewMode === "pdf" && !isPreviewReady && (
+        <div className="no-print w-full h-[82vh] bg-[#323639] flex items-center justify-center text-white text-xs font-semibold tracking-wide">
+          Preparing Print Preview...
+        </div>
+      )}
+
+      {viewMode === "pdf" && isPreviewReady && pdfBlobUrl && (
         <div className="pdf-embed-container no-print w-full bg-[#323639] flex flex-col items-center">
           <iframe
+            key={master.mr_no || "settlement-pdf"}
             ref={pdfIframeRef}
             src={`${pdfBlobUrl}#toolbar=1&navpanes=0&zoom=100`}
             title={`Settlement PDF - ${master.mr_no || ""}`}
