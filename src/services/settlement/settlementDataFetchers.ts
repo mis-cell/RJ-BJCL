@@ -695,9 +695,12 @@ export const fetchSaudaCheckpointDeduction = async (cleanPoNo: string) => {
               const shortClaimMt = (isMultiLorry && isLast) ? mrGrossMt : mrNetMt;
 
               // Excess Basis:
-              // - Single Lorry: MR Net Weight (mrNetMt)
-              // - Multiple Lorry: First/Earlier lorries Gross Weight (mrGrossMt) + Last Lorry Net Weight (mrNetMt)
-              const excessClaimMt = isMultiLorry ? (isLast ? mrNetMt : mrGrossMt) : mrNetMt;
+              // - 1 Lorry: MR Net Weight (mrNetMt)
+              // - 2 Lorries: First Lorry Gross Weight (mrGrossMt) + 2nd Lorry Net Weight (mrNetMt)
+              // - 3+ Lorries: Lorries 1..N-1 Net Weight (mrNetMt) + Last Lorry Gross Weight (mrGrossMt)
+              const excessUsesGross =
+                mrEntries.length === 2 ? (idx === 0) : mrEntries.length >= 3 ? isLast : false;
+              const excessClaimMt = excessUsesGross ? mrGrossMt : mrNetMt;
 
               sumShortClaimMt += shortClaimMt;
               sumExcessClaimMt += excessClaimMt;

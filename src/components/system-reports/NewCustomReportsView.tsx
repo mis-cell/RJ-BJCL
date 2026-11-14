@@ -1206,8 +1206,11 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
               mrGrossMt = Math.round(mrGrossMt * 1000) / 1000;
               mrNetMt = Math.round(mrNetMt * 1000) / 1000;
 
+              const lorryCount = sortedInsps.length;
               const shortClaimMt = isMulti && isLast ? mrGrossMt : mrNetMt;
-              const excessClaimMt = isMulti ? (isLast ? mrNetMt : mrGrossMt) : mrNetMt;
+              const excessUsesGross =
+                lorryCount === 2 ? (idx === 0) : lorryCount >= 3 ? isLast : false;
+              const excessClaimMt = excessUsesGross ? mrGrossMt : mrNetMt;
               sumShortClaimMt += shortClaimMt;
               sumExcessClaimMt += excessClaimMt;
 
@@ -1250,12 +1253,20 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
             (roundedShortClaimMt >= contractMt - 0.0001 || (roundedExcessClaimMt - contractMt) >= (contractMt - roundedShortClaimMt));
 
           if (isExcessBasis && mrBreakdown.length > 0) {
-            mrBreakdown.forEach(item => {
-              const cMt = item.isMulti ? (item.isLast ? item.netMt : item.grossMt) : item.netMt;
+            const breakdownLen = mrBreakdown.length;
+            mrBreakdown.forEach((item, bIdx) => {
+              const useGross =
+                breakdownLen === 2 ? (bIdx === 0) : breakdownLen >= 3 ? item.isLast : false;
+              const cMt = useGross ? item.grossMt : item.netMt;
               item.finalClaimMt = Number(cMt.toFixed(3));
               item.finalClaimKg = Math.round(cMt * 1000);
               item.finalClaimQtl = Number((cMt * 10).toFixed(2));
-              item.claimBasis = item.isMulti ? (item.isLast ? 'Net (Last Lorry)' : 'Gross (First Lorry)') : 'Net';
+              item.claimBasis =
+                breakdownLen === 2
+                  ? (bIdx === 0 ? 'Gross (First Lorry)' : 'Net (Last Lorry)')
+                  : breakdownLen >= 3
+                  ? (item.isLast ? 'Gross (Last Lorry)' : 'Net')
+                  : 'Net';
             });
           }
 

@@ -692,10 +692,16 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
       // - Multiple Lorry: Earlier lorries Net Weight (mrNetMt) + Last Lorry Gross Weight (mrGrossMt)
       const shortClaimMt = (isMultipleLorry && isLastLorry) ? mrGrossMt : mrNetMt;
 
+      const lorryCount = mrEntries.length;
+      const isFirstLorry = mrIdx === 0;
+
       // Excess Basis:
-      // - Single Lorry: MR Net Weight (mrNetMt)
-      // - Multiple Lorry: First/Earlier lorries Gross Weight (mrGrossMt) + Last Lorry Net Weight (mrNetMt)
-      const excessClaimMt = isMultipleLorry ? (isLastLorry ? mrNetMt : mrGrossMt) : mrNetMt;
+      // - 1 Lorry: MR Net Weight (mrNetMt)
+      // - 2 Lorries: First Lorry Gross Weight (mrGrossMt) + 2nd Lorry Net Weight (mrNetMt)
+      // - 3+ Lorries: First/Earlier Lorries (1..N-1) Net Weight (mrNetMt) + Last Lorry Gross Weight (mrGrossMt)
+      const excessUsesGross =
+        lorryCount === 2 ? isFirstLorry : lorryCount >= 3 ? isLastLorry : false;
+      const excessClaimMt = excessUsesGross ? mrGrossMt : mrNetMt;
 
       sumGrossMt += mrGrossMt;
       sumNetMt += mrNetMt;
@@ -721,6 +727,7 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
         finalReceiptWtKg: Math.round(shortClaimMt * 1000),
         finalReceiptWtQtl: Math.round(shortClaimMt * 10 * 100) / 100,
         weightBasis: (isMultipleLorry && isLastLorry) ? 'Gross (Last Lorry)' : (isMultipleLorry ? 'Net' : 'Net (Single)'),
+        isFirstLorry,
         isLastLorry,
         saudaRateQtl: saudaDateSattaRate,
         mrSattaRateQtl: mrSattaRate,
@@ -772,12 +779,19 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
     const roundedSumClaimQtl = Math.round(roundedSumClaimMt * 10 * 100) / 100;
 
     // Adjust per-row Final Claim weight basis and rate diff for Excess vs Short
-    const adjustedRows = rows.map(r => {
+    const rowCount = rows.length;
+    const adjustedRows = rows.map((r, rIdx) => {
+      const excessUsesGross =
+        rowCount === 2 ? (rIdx === 0) : rowCount >= 3 ? r.isLastLorry : false;
       const rowClaimMt = isClaimExcess
-        ? (isMultipleLorry ? (r.isLastLorry ? r.netWtMt : r.grossWtMt) : r.netWtMt)
+        ? (excessUsesGross ? r.grossWtMt : r.netWtMt)
         : (isMultipleLorry ? (r.isLastLorry ? r.grossWtMt : r.netWtMt) : r.netWtMt);
       const rowWeightBasis = isClaimExcess
-        ? (isMultipleLorry ? (r.isLastLorry ? 'Net (Last Lorry)' : 'Gross (First Lorry)') : 'Net (Single)')
+        ? (rowCount === 2
+            ? (rIdx === 0 ? 'Gross (First Lorry)' : 'Net (Last Lorry)')
+            : rowCount >= 3
+            ? (r.isLastLorry ? 'Gross (Last Lorry)' : 'Net')
+            : 'Net (Single)')
         : (isMultipleLorry ? (r.isLastLorry ? 'Gross (Last Lorry)' : 'Net') : 'Net (Single)');
       return {
         ...r,
@@ -1208,7 +1222,7 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
             <p><strong>Sauda Date Satta Rate:</strong> ₹{saudaDateSattaRate.toLocaleString()} / Quintal</p>
           </div>
           <div>
-            <p><strong>Total Final Receipt Claim (Mill Inspection):</strong> {Math.round(totalFinalReceiptClaimMt * 1000).toLocaleString()} kg ({totalFinalReceiptClaimMt.toFixed(3)} MT / {totalFinalReceiptClaimQtl.toFixed(2)} Qtl) {isMultipleLorry ? (isGrossExcess ? '(First Lorry Gross + Last Lorry Net)' : '(Lorries 1..N-1 Net + Last Lorry Gross)') : '(Net Weight)'}</p>
+            <p><strong>Total Final Receipt Claim (Mill Inspection):</strong> {Math.round(totalFinalReceiptClaimMt * 1000).toLocaleString()} kg ({totalFinalReceiptClaimMt.toFixed(3)} MT / {totalFinalReceiptClaimQtl.toFixed(2)} Qtl) {isMultipleLorry ? (isGrossExcess ? (gradeWiseInspectionRows.length === 2 ? '(First Lorry Gross + 2nd Lorry Net)' : `(Lorries 1..${gradeWiseInspectionRows.length - 1} Net + Last Lorry Gross)`) : '(Lorries 1..N-1 Net + Last Lorry Gross)') : '(Net Weight)'}</p>
             <p><strong>Last MR No:</strong> {lastMrNo}</p>
             <p><strong>Last MR Date:</strong> {formatDisplayDate(lastMrDate)}</p>
             <p><strong>Last MR Date Satta Rate:</strong> ₹{lastMrDateSattaRate.toLocaleString()} / Quintal</p>
@@ -1452,8 +1466,8 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
                       <span className="text-[9px] text-indigo-700/80 font-sans block">
                         {isGrossExcess
                           ? (gradeWiseInspectionRows.length === 2
-                              ? '(First Lorry Gross + Last Lorry Net)'
-                              : `(Lorries 1..${gradeWiseInspectionRows.length - 1} Gross + Last Lorry Net)`)
+                              ? '(First Lorry Gross + 2nd Lorry Net)'
+                              : `(Lorries 1..${gradeWiseInspectionRows.length - 1} Net + Last Lorry Gross)`)
                           : `(Lorries 1..${gradeWiseInspectionRows.length - 1} Net + Last Lorry Gross)`}
                       </span>
                     ) : (
@@ -1635,10 +1649,16 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
                         <span className="block text-[9px] text-indigo-700 font-semibold">({Number(gRow.finalReceiptWtMt).toFixed(3)} MT)</span>
                         {isMultipleLorry ? (
                           isGrossExcess ? (
-                            gRow.isLastLorry ? (
-                              <span className="mt-0.5 inline-block text-[8px] bg-slate-200 text-slate-800 px-1 py-0.2 rounded font-bold">Net (Last Lorry)</span>
+                            gradeWiseInspectionRows.length === 2 ? (
+                              idx === 0 ? (
+                                <span className="mt-0.5 inline-block text-[8px] bg-amber-200 text-amber-950 px-1 py-0.2 rounded font-bold">Gross (First Lorry)</span>
+                              ) : (
+                                <span className="mt-0.5 inline-block text-[8px] bg-slate-200 text-slate-800 px-1 py-0.2 rounded font-bold">Net (Last Lorry)</span>
+                              )
+                            ) : gRow.isLastLorry ? (
+                              <span className="mt-0.5 inline-block text-[8px] bg-amber-200 text-amber-950 px-1 py-0.2 rounded font-bold">Gross (Last Lorry)</span>
                             ) : (
-                              <span className="mt-0.5 inline-block text-[8px] bg-amber-200 text-amber-950 px-1 py-0.2 rounded font-bold">Gross (First Lorry)</span>
+                              <span className="mt-0.5 inline-block text-[8px] bg-slate-200 text-slate-800 px-1 py-0.2 rounded font-bold">Net</span>
                             )
                           ) : (
                             gRow.isLastLorry ? (
