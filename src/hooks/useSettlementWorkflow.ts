@@ -676,28 +676,55 @@ export function useSettlementWorkflow({ onClose, onLogEvent }: { onClose?: () =>
         } catch (e) {}
       }
 
-      // Check inspection table or mill_inspection_deduction table if deduction list is still empty or single generic
+      // Check inspection table or mill_inspection_deduction / material_inspection_deductions tables if deduction list is still empty or single generic
       if (deductionsList.length === 0 || (deductionsList.length === 1 && !deductionsList[0].deduction_type)) {
         try {
           if (supabase) {
-            const { data: millDedList } = await supabase
-              .from('mill_inspection_deduction')
-              .select('*')
-              .or(`mr_no.eq.${cleanTargetMr},arrival_no.eq.${cleanTargetMr}`)
-              .order('created_at', { ascending: true });
+            const arrRef = String(inspRecord?.arrival_no || activeMaster.arrival_no || cleanTargetMr).trim();
+            const [{ data: millDedList }, { data: matDedList }] = await Promise.all([
+              supabase
+                .from('mill_inspection_deduction')
+                .select('*')
+                .or(`mr_no.eq.${cleanTargetMr},arrival_no.eq.${cleanTargetMr},mr_no.eq.${arrRef},arrival_no.eq.${arrRef}`)
+                .order('created_at', { ascending: true }),
+              supabase
+                .from('material_inspection_deductions')
+                .select('*')
+                .or(`mr_no.eq.${cleanTargetMr},arrival_no.eq.${cleanTargetMr},mr_no.eq.${arrRef},arrival_no.eq.${arrRef}`)
+                .order('created_at', { ascending: true })
+            ]);
 
-            if (millDedList && millDedList.length > 0) {
-              deductionsList = millDedList.map((d: any) => ({
-                deduction_type: d.deduction_type || '',
-                deduction_rate: Number(d.deduction_rate) || 0,
-                deduction_qty: Number(d.deduction_qty) || 0,
-                deduction_amount: Number(d.deduction_amount) || 0
+            const combinedDedList =
+              millDedList && millDedList.length > 0
+                ? millDedList
+                : matDedList && matDedList.length > 0
+                  ? matDedList
+                  : [];
+
+            if (combinedDedList.length > 0) {
+              deductionsList = combinedDedList.map((d: any) => ({
+                deduction_type: d.deduction_type || d.deduction || '',
+                deduction_rate: Number(d.deduction_rate ?? d.rate) || 0,
+                deduction_qty: Number(d.deduction_qty ?? d.qty) || 0,
+                deduction_amount: Number(d.deduction_amount ?? d.amount) || 0
               }));
             } else if (inspRecord) {
-              if (Array.isArray(inspRecord.deductions) && inspRecord.deductions.length > 0) {
-                deductionsList = inspRecord.deductions;
-              } else if (Array.isArray(inspRecord.deduction_types) && inspRecord.deduction_types.length > 0) {
-                deductionsList = inspRecord.deduction_types;
+              const rawInspDeds =
+                (Array.isArray(inspRecord.deduction_rows) && inspRecord.deduction_rows.length > 0 && inspRecord.deduction_rows) ||
+                (Array.isArray(inspRecord.deductions) && inspRecord.deductions.length > 0 && inspRecord.deductions) ||
+                (Array.isArray(inspRecord.deduction_types) && inspRecord.deduction_types.length > 0 && inspRecord.deduction_types) ||
+                null;
+              if (rawInspDeds) {
+                deductionsList = rawInspDeds.map((d: any) =>
+                  typeof d === 'string'
+                    ? { deduction_type: d, deduction_rate: 0, deduction_qty: 1, deduction_amount: 0 }
+                    : {
+                        deduction_type: d.deduction_type || d.deduction || d.name || '',
+                        deduction_rate: Number(d.deduction_rate ?? d.rate) || 0,
+                        deduction_qty: Number(d.deduction_qty ?? d.qty) || 0,
+                        deduction_amount: Number(d.deduction_amount ?? d.amount) || 0
+                      }
+                );
               }
             }
           }
@@ -835,6 +862,7 @@ export function useSettlementWorkflow({ onClose, onLogEvent }: { onClose?: () =>
         inspRecord?.date ||
         '';
 
+      const isCurrentScreenMr = cleanTargetMr.toUpperCase() === String(masterData.mr_no || '').trim().toUpperCase();
       setViewModalData({
         master: {
           ...activeMaster,
@@ -847,6 +875,8 @@ export function useSettlementWorkflow({ onClose, onLogEvent }: { onClose?: () =>
           way_bill: activeMaster.way_bill || faRecord?.way_bill_no || faRecord?.way_bill || '',
           pan_no: supplierPan || faRecord?.pan_no || '',
           arival_apmc_fees: viewApmcFees,
+          actual_apmc_fees: activeMaster.actual_apmc_fees ?? (isCurrentScreenMr ? masterData.actual_apmc_fees : undefined),
+          final_apmc_fees: activeMaster.final_apmc_fees ?? (isCurrentScreenMr ? masterData.final_apmc_fees : undefined),
           final_on_ac_adv: viewHasPay ? viewPaidAmt : (Number(activeMaster.final_on_ac_adv) || 0),
           deductions: deductionsList
         },

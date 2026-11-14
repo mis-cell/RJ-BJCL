@@ -28,6 +28,11 @@ export interface SettlementPrintSheetProps {
     rate: number;
     amount: number;
   }>;
+  extraMiscItems?: Array<{
+    label: string;
+    amount: number;
+    isAddition: boolean;
+  }>;
   settlementApmcDiff: number;
   actualApmc: number;
   challanApmc: number;
@@ -59,6 +64,7 @@ export const SettlementPrintSheet: React.FC<SettlementPrintSheetProps> = ({
   areaAgencyDisplay,
   consignNoDisplay,
   inspectionDedItems,
+  extraMiscItems = [],
   settlementApmcDiff,
   actualApmc,
   challanApmc,
@@ -476,7 +482,21 @@ export const SettlementPrintSheet: React.FC<SettlementPrintSheetProps> = ({
                   </div>
                 )}
 
-                {miscAdd > 0 && (
+                {extraMiscItems.map((item, idx) => (
+                  <div
+                    key={`extra-misc-${idx}`}
+                    className="flex justify-between items-baseline"
+                  >
+                    <div className="w-[85%]">{item.label}</div>
+                    <div className="w-[15%] text-right">
+                      {item.isAddition
+                        ? `+${item.amount.toFixed(2)}`
+                        : `-${item.amount.toFixed(2)}`}
+                    </div>
+                  </div>
+                ))}
+
+                {extraMiscItems.length === 0 && miscAdd > 0 && (
                   <div className="flex justify-between items-baseline">
                     <div className="w-[85%]">Miscellaneous Addition (+)</div>
                     <div className="w-[15%] text-right">

@@ -213,33 +213,62 @@ export const SettlementPrintModal: React.FC<SettlementPrintModalProps> = ({
   ).trim();
 
   const inspectionDedItems = useMemo(() => {
-    const validInspectionDeductions = Array.isArray(master.deductions)
-      ? master.deductions.filter(
-          (d: any) =>
-            d &&
-            ((d.deduction_type && !String(d.deduction_type).includes("-- SELECT")) ||
-              Number(d.deduction_rate) > 0 ||
-              Number(d.deduction_amount) > 0)
-        )
-      : [];
+    let rawDeductions: any[] = [];
+    if (Array.isArray(master.deductions)) {
+      rawDeductions = master.deductions;
+    } else if (typeof master.deductions === "string" && String(master.deductions).trim()) {
+      try {
+        const parsed = JSON.parse(master.deductions);
+        if (Array.isArray(parsed)) rawDeductions = parsed;
+      } catch {}
+    }
 
-    return validInspectionDeductions.map((dItem: any) => {
-      const rate = Number(dItem.deduction_rate) || 0;
-      const qtyKgs = Number(dItem.deduction_qty) || (rate > 0 ? 1 : 0);
-      let amount = Number(dItem.deduction_amount) || 0;
+    const validInspectionDeductions = rawDeductions.filter(
+      (d: any) =>
+        d &&
+        ((d.deduction_type && !String(d.deduction_type).includes("-- SELECT")) ||
+          (d.deduction && !String(d.deduction).includes("-- SELECT")) ||
+          Number(d.deduction_rate ?? d.rate) > 0 ||
+          Number(d.deduction_amount ?? d.amount) > 0)
+    );
+
+    const mapped = validInspectionDeductions.map((dItem: any) => {
+      const rate = Number(dItem.deduction_rate ?? dItem.rate) || 0;
+      const qtyKgs = Number(dItem.deduction_qty ?? dItem.qty) || (rate > 0 ? 1 : 0);
+      let amount = Number(dItem.deduction_amount ?? dItem.amount) || 0;
       if (amount <= 0 && qtyKgs > 0 && rate > 0) {
         amount = (qtyKgs * rate) / 100;
       } else if (amount === rate && qtyKgs > 1 && rate > 0) {
         amount = (qtyKgs * rate) / 100;
       }
       return {
-        type: String(dItem.deduction_type || "").toUpperCase(),
+        type: String(dItem.deduction_type || dItem.deduction || dItem.name || "DEDUCTION").toUpperCase(),
         qtyKgs,
         rate,
         amount,
       };
     });
-  }, [master.deductions]);
+
+    if (mapped.length === 0 && Number(master.summary_deduction_amount) > 0) {
+      const rate = Number(master.summary_deduction_rate) || 0;
+      const qtyKgs = Number(master.summary_deduction_qty) || 1;
+      const amount = Number(master.summary_deduction_amount) || 0;
+      mapped.push({
+        type: String(master.summary_deduction_type || "INSPECTION DEDUCTION").toUpperCase(),
+        qtyKgs,
+        rate,
+        amount,
+      });
+    }
+
+    return mapped;
+  }, [
+    master.deductions,
+    master.summary_deduction_type,
+    master.summary_deduction_rate,
+    master.summary_deduction_qty,
+    master.summary_deduction_amount,
+  ]);
 
   const inspectionDedSum = inspectionDedItems.reduce((acc, item) => acc + item.amount, 0);
 
@@ -249,21 +278,91 @@ export const SettlementPrintModal: React.FC<SettlementPrintModalProps> = ({
       ? computedMaterialValue
       : Number(master.val_material_value || master.summary_material_value || 0);
 
+  const hasSavedActualApmc =
+    master.actual_apmc_fees !== undefined &&
+    master.actual_apmc_fees !== null &&
+    String(master.actual_apmc_fees) !== "";
   const actualApmc = Math.round(
-    Number(master.actual_apmc_fees) > 0
-      ? Number(master.actual_apmc_fees)
-      : (materialValue - inspectionDedSum) * 0.01
+    hasSavedActualApmc
+      ? Number(master.actual_apmc_fees) || 0
+      : Math.max(0, materialValue - inspectionDedSum) * 0.01
   );
   const challanApmc = Math.round(Number(master.arival_apmc_fees) || 0);
+  // final_apmc_fees is stored as negative (arrival - actual) in mr_settlement_master
+  const rawFinalApmc = Number(master.final_apmc_fees) || 0;
   const settlementApmcDiff =
-    Number(master.final_apmc_fees) > 0
-      ? Math.round(Number(master.final_apmc_fees))
-      : challanApmc > 0 && actualApmc > challanApmc
+    rawFinalApmc !== 0
+      ? Math.abs(Math.round(rawFinalApmc))
+      : actualApmc > challanApmc
       ? actualApmc - challanApmc
       : 0;
 
-  const miscAdd = Number(master.val_add_amt || master.summary_misc_add || 0);
-  const miscLessTotal = inspectionDedSum + settlementApmcDiff;
+  const summaryMiscAdd = Number(master.summary_misc_add) || 0;
+  const valAddAmt = Number(master.val_add_amt) || 0;
+  const cstPct = Number(master.final_cst_pct_amt) || 0;
+  const cstAmt = Number(((materialValue * cstPct) / 100).toFixed(2));
+  const miscAdd = Number((summaryMiscAdd + valAddAmt + cstAmt).toFixed(2));
+
+  const summaryMiscLess = Number(master.summary_misc_less) || 0;
+  const valLessAmt = Number(master.val_less_amt) || 0;
+  const deliveryClaimAmt = Number(master.summary_delivery_claim) || 0;
+  const exShortAmt = Number(master.val_ex_short) || 0;
+  const qtyClaimAmt = Number(master.val_qty_claim) || 0;
+
+  const extraMiscItems = useMemo(() => {
+    const items: Array<{ label: string; amount: number; isAddition: boolean }> = [];
+    if (deliveryClaimAmt > 0) {
+      items.push({ label: "Delivery Delay Claim (-)", amount: deliveryClaimAmt, isAddition: false });
+    }
+    if (exShortAmt > 0) {
+      items.push({ label: "Excess / Short Weight Deduction (-)", amount: exShortAmt, isAddition: false });
+    }
+    if (qtyClaimAmt > 0) {
+      items.push({ label: "Quality / Quantity Claim (-)", amount: qtyClaimAmt, isAddition: false });
+    }
+    if (summaryMiscLess > 0) {
+      items.push({ label: "Miscellaneous Less (-)", amount: summaryMiscLess, isAddition: false });
+    }
+    if (valLessAmt > 0) {
+      items.push({ label: "Valuation Less Amt (-)", amount: valLessAmt, isAddition: false });
+    }
+    if (valAddAmt > 0) {
+      items.push({ label: "Miscellaneous Addition (+)", amount: valAddAmt, isAddition: true });
+    }
+    if (summaryMiscAdd > 0) {
+      items.push({
+        label: valAddAmt > 0 ? "Summary Misc Addition (+)" : "Miscellaneous Addition (+)",
+        amount: summaryMiscAdd,
+        isAddition: true,
+      });
+    }
+    if (cstAmt > 0) {
+      items.push({ label: `C.S.T. (Tax) @ ${cstPct}% (+)`, amount: cstAmt, isAddition: true });
+    }
+    return items;
+  }, [
+    deliveryClaimAmt,
+    exShortAmt,
+    qtyClaimAmt,
+    summaryMiscLess,
+    valLessAmt,
+    valAddAmt,
+    summaryMiscAdd,
+    cstAmt,
+    cstPct,
+  ]);
+
+  const miscLessTotal = Number(
+    (
+      inspectionDedSum +
+      settlementApmcDiff +
+      summaryMiscLess +
+      valLessAmt +
+      deliveryClaimAmt +
+      exShortAmt +
+      qtyClaimAmt
+    ).toFixed(2)
+  );
 
   const totalMrAmount = materialValue + miscAdd - miscLessTotal;
   const rawMrAdvanceAmount = Number(master.final_on_ac_adv || master.less_advance_amount || 0);
@@ -395,7 +494,7 @@ export const SettlementPrintModal: React.FC<SettlementPrintModalProps> = ({
 
     let miscRowCursor = 32;
     inspectionDedItems.forEach((item) => {
-      if (miscRowCursor <= 38) {
+      if (miscRowCursor <= 39) {
         setCell(miscRowCursor, 1, item.type);
         setCell(miscRowCursor, 5, `${item.qtyKgs} Kgs.`);
         setCell(miscRowCursor, 7, `@Rs.${item.rate}`);
@@ -413,10 +512,17 @@ export const SettlementPrintModal: React.FC<SettlementPrintModalProps> = ({
       setCell(miscRowCursor, 11, `-${settlementApmcDiff.toFixed(2)}`);
       miscRowCursor++;
     }
-    if (miscAdd > 0 && miscRowCursor <= 39) {
-      setCell(miscRowCursor, 1, "Miscellaneous Addition (+)");
-      setCell(miscRowCursor, 11, `+${miscAdd.toFixed(2)}`);
-    }
+    extraMiscItems.forEach((item) => {
+      if (miscRowCursor <= 39) {
+        setCell(miscRowCursor, 1, item.label);
+        setCell(
+          miscRowCursor,
+          11,
+          item.isAddition ? `+${item.amount.toFixed(2)}` : `-${item.amount.toFixed(2)}`
+        );
+        miscRowCursor++;
+      }
+    });
 
     setCell(40, 1, `  Remarks :- ${master.remarks || ""}`);
 
@@ -459,6 +565,7 @@ export const SettlementPrintModal: React.FC<SettlementPrintModalProps> = ({
     areaAgencyDisplay,
     consignNoDisplay,
     inspectionDedItems,
+    extraMiscItems,
     settlementApmcDiff,
     actualApmc,
     challanApmc,
@@ -726,6 +833,7 @@ export const SettlementPrintModal: React.FC<SettlementPrintModalProps> = ({
         areaAgencyDisplay={areaAgencyDisplay}
         consignNoDisplay={consignNoDisplay}
         inspectionDedItems={inspectionDedItems}
+        extraMiscItems={extraMiscItems}
         settlementApmcDiff={settlementApmcDiff}
         actualApmc={actualApmc}
         challanApmc={challanApmc}
