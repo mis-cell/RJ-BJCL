@@ -9,14 +9,16 @@ import html2canvas from 'html2canvas';
 // prefix), so any print-preview slip can be emailed as a real PDF attachment.
 async function slipElementToPdfBase64(el: HTMLElement): Promise<string> {
   try {
-    const canvas = await html2canvas(el, {
+    const isLandscapeInspection = Boolean(el.querySelector('.inspection-print-page'));
+    const captureTarget = (el.querySelector('.print-stationery-landscape') as HTMLElement) || el;
+    const canvas = await html2canvas(isLandscapeInspection ? captureTarget : el, {
       scale: 2,
       backgroundColor: '#ffffff',
       useCORS: true,
       onclone: (clonedDoc) => {
         clonedDoc.querySelectorAll<HTMLElement>('.inspection-slip-scale-box').forEach((box) => {
-          box.style.width = 'auto';
-          box.style.height = 'auto';
+          box.style.width = isLandscapeInspection ? '10in' : 'auto';
+          box.style.height = isLandscapeInspection ? '6in' : 'auto';
         });
         clonedDoc.querySelectorAll<HTMLElement>('.print-stationery-landscape').forEach((slip) => {
           slip.style.transform = 'none';
@@ -24,9 +26,22 @@ async function slipElementToPdfBase64(el: HTMLElement): Promise<string> {
       },
     });
     const imgData = canvas.toDataURL('image/png');
-    const pdf = new jsPDF({ unit: 'pt', format: 'a4' });
+    const pdf = new jsPDF({
+      orientation: isLandscapeInspection ? 'landscape' : 'portrait',
+      unit: 'pt',
+      format: 'a4',
+    });
     const pageWidth = pdf.internal.pageSize.getWidth();
     const pageHeight = pdf.internal.pageSize.getHeight();
+    if (isLandscapeInspection) {
+      // Exact 10in x 6in centered on A4 landscape (720pt x 432pt on 841.89pt x 595.28pt)
+      const targetW = 10 * 72;
+      const targetH = 6 * 72;
+      const x = Math.max(0, (pageWidth - targetW) / 2);
+      const y = Math.max(0, (pageHeight - targetH) / 2);
+      pdf.addImage(imgData, 'PNG', x, y, targetW, targetH);
+      return pdf.output('datauristring').split(',')[1] || '';
+    }
     const imgW = pageWidth;
     const imgH = (canvas.height * pageWidth) / canvas.width;
 
