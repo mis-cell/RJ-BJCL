@@ -87,6 +87,7 @@ export interface InspectionMasterRecord {
   deductions?: DeductionRow[];
   grid_details?: string;
   unit_name?: string;
+  godown_receipt_no?: string;
   [key: string]: any;
 }
 

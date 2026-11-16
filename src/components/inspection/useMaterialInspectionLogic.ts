@@ -589,7 +589,22 @@ export function useMaterialInspectionLogic(onLogEvent?: (event: string, details:
         }
       });
 
-      const returnLorries = await fetchAllReturnLorries().catch(() => []);
+      const [returnLorries, issueMasterRes] = await Promise.all([
+        fetchAllReturnLorries().catch(() => []),
+        supabase.from("mill_issue_master").select("issue_no, issue_type, requisition_no, created_at").order("created_at", { ascending: false }).then(r => r, () => ({ data: [] }))
+      ]);
+
+      const grnByMrMap = new Map<string, string>();
+      ((issueMasterRes as any)?.data || []).forEach((iss: any) => {
+        const ty = norm(iss.issue_type);
+        const issNo = String(iss.issue_no || "").trim();
+        const reqNo = norm(iss.requisition_no);
+        const isGodown = ty === "GODOWN" || issNo.toUpperCase().startsWith("GRN");
+        if (isGodown && reqNo && issNo && !grnByMrMap.has(reqNo)) {
+          grnByMrMap.set(reqNo, issNo);
+        }
+      });
+
       const rlByMr = new Map<string, any>();
       returnLorries.forEach(rl => {
         const k = norm(rl.mr_no || rl.final_arrival_no);
@@ -598,6 +613,10 @@ export function useMaterialInspectionLogic(onLogEvent?: (event: string, details:
 
       const allInspections = Array.from(uniqueMap.values()).map((insp: any) => {
         let updated = { ...insp };
+        const grnNo = grnByMrMap.get(norm(updated.mr_no)) || grnByMrMap.get(norm(updated.arrival_no)) || "";
+        if (grnNo) {
+          updated.godown_receipt_no = grnNo;
+        }
         if (isBlankPo(updated.po_no)) {
           const boundPo =
             poByKey.get(norm(updated.mr_no)) ||
@@ -653,7 +672,7 @@ export function useMaterialInspectionLogic(onLogEvent?: (event: string, details:
   useLiveAutoRefresh(() => {
     loadAllMasters();
     loadSavedInspectionsList();
-  }, [], { tables: ['material_inspection', 'mill_inspection_master', 'material_inspections', 'purchase_master', 'final_arrival', 'temporary_material_received', 'clubbed_pomr'] });
+  }, [], { tables: ['material_inspection', 'mill_inspection_master', 'material_inspections', 'purchase_master', 'final_arrival', 'temporary_material_received', 'clubbed_pomr', 'mill_issue_master'] });
 
   // Automatically retrieve full P.O. data from sauda_check_point and purchase_master whenever po_no changes
   useEffect(() => {

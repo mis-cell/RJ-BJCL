@@ -376,6 +376,7 @@ export function useInspectionLogic() {
       let inspectionList: InspectionMasterRecord[] = [];
       let faList: any[] = [];
       const dbDeductionsMap = new Map<string, DeductionRow[]>();
+      const grnByMrMap = new Map<string, string>();
 
       if (supabase) {
         try {
@@ -400,8 +401,21 @@ export function useInspectionLogic() {
 
             queries.push(withTimeout(Promise.resolve(supabase.from("deduction_master").select("*").order("deduction", { ascending: true })), 20000).catch(() => ({ data: null })));
             queries.push(withTimeout(Promise.resolve(supabase.from("moisture_logic").select("*")), 20000).catch(() => ({ data: null })));
+            queries.push(withTimeout(Promise.resolve(supabase.from("mill_issue_master").select("issue_no, issue_type, requisition_no, created_at").order("created_at", { ascending: false })), 20000).catch(() => ({ data: null })));
 
-          const [miRes, mimRes, faRes, tmrRes, dedPrimaryRes, dedFallbackRes, dMasterRes, moistRes] = await Promise.all(queries);
+          const [miRes, mimRes, faRes, tmrRes, dedPrimaryRes, dedFallbackRes, dMasterRes, moistRes, issueMasterRes] = await Promise.all(queries);
+
+          if (issueMasterRes?.data && Array.isArray(issueMasterRes.data)) {
+            issueMasterRes.data.forEach((iss: any) => {
+              const ty = String(iss.issue_type || "").trim().toUpperCase();
+              const issNo = String(iss.issue_no || "").trim();
+              const reqNo = String(iss.requisition_no || "").trim().toUpperCase();
+              const isGodown = ty === "GODOWN" || issNo.toUpperCase().startsWith("GRN");
+              if (isGodown && reqNo && issNo && !grnByMrMap.has(reqNo)) {
+                grnByMrMap.set(reqNo, issNo);
+              }
+            });
+          }
 
           if (miRes.data && Array.isArray(miRes.data) && miRes.data.length > 0) {
             inspectionList = [...miRes.data];
@@ -598,6 +612,11 @@ export function useInspectionLogic() {
           }
         }
 
+        const grnNo = (mrK && grnByMrMap.get(mrK)) || (arrK && grnByMrMap.get(arrK)) || "";
+        if (grnNo) {
+          (rec as any).godown_receipt_no = grnNo;
+        }
+
         return rec;
       });
 
@@ -668,7 +687,7 @@ export function useInspectionLogic() {
     fetchInspectionRecords();
   }, []);
 
-  useLiveAutoRefresh(fetchInspectionRecords, [], { tables: ['material_inspection', 'material_inspection_details', 'final_arrival', 'purchase_master', 'purchase_detail_master', 'temporary_material_received', 'moisture_logic', 'deduction_master'] });
+  useLiveAutoRefresh(fetchInspectionRecords, [], { tables: ['material_inspection', 'material_inspection_details', 'final_arrival', 'purchase_master', 'purchase_detail_master', 'temporary_material_received', 'moisture_logic', 'deduction_master', 'mill_issue_master'] });
 
   const getAuthoritativeArrivalWeightMt = (rec: any): number => {
     if (!rec) return 0;

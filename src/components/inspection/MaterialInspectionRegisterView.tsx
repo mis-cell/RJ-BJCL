@@ -596,6 +596,11 @@ export const MaterialInspectionRegisterView: React.FC<MaterialInspectionRegister
                         <td className={`px-3 font-extrabold border-r border-slate-200 ${(row as any).is_return_lorry ? "text-red-900" : "text-[#0d47a1]"}`}>
                           <div className="flex flex-col gap-0.5">
                             <span>{row.mr_no}</span>
+                            {(row as any).godown_receipt_no && (
+                              <span className="text-[9.5px] font-mono font-semibold text-indigo-700 leading-tight">
+                                Godown Receipt No.: {(row as any).godown_receipt_no}
+                              </span>
+                            )}
                             {((row as any).is_return_lorry || (Number((row as any).received_weight_mt) > 0 && Number((row as any).received_weight_mt) < 5 && row.po_no)) && (
                               <span className="inline-block bg-red-600 text-white text-[8px] font-black uppercase px-1.5 py-0.5 rounded w-fit">
                                 RETURN LORRY {Number((row as any).received_weight_mt) > 0 ? `(${Number((row as any).received_weight_mt).toFixed(3)} MT)` : "(< 5 MT)"}

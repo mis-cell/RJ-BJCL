@@ -287,6 +287,11 @@ export const InspectionRegisterView: React.FC<InspectionRegisterViewProps> = ({
                     <td className={`p-3 font-bold ${isReturnRow ? "text-red-900" : "text-blue-900"}`}>
                       <div className="flex flex-col gap-0.5">
                         <span>{r.mr_no}</span>
+                        {recAny.godown_receipt_no && (
+                          <span className="text-[10px] font-mono font-semibold text-indigo-700 leading-tight">
+                            Godown Receipt No.: {recAny.godown_receipt_no}
+                          </span>
+                        )}
                         {isReturnRow && (
                           <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-red-600 text-white text-[9px] font-black uppercase tracking-wider w-fit shadow-xs">
                             RETURN LORRY {wtMt > 0 ? `(${wtMt.toFixed(3)} MT)` : "(< 5 MT)"}

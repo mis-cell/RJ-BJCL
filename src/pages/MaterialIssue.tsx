@@ -108,28 +108,174 @@ export default function MaterialIssue({
   const fetchArrivalsAndStocks = async () => {
     try {
       if (supabase) {
-        const [arrivalsRes, poRes, issuesRes] = await Promise.all([
-          supabase.from('final_arrival').select('*').order('date', { ascending: false }).limit(100),
-          supabase.from('purchase_master').select('po_no, party_name, broker_name'),
-          supabase.from('mill_issue_master').select('requisition_no')
+        const [
+          miRes,
+          mimRes,
+          midRes,
+          millDetRes,
+          faRes,
+          poRes,
+          issuesRes
+        ] = await Promise.all([
+          supabase.from('material_inspection').select('*').order('created_at', { ascending: false }),
+          supabase.from('mill_inspection_master').select('*').order('created_at', { ascending: false }),
+          supabase.from('material_inspection_details').select('*').order('srl_no', { ascending: true }),
+          supabase.from('mill_inspection_detail').select('*').order('srl_no', { ascending: true }),
+          supabase.from('final_arrival').select('*').order('date', { ascending: false }),
+          supabase.from('purchase_master').select('po_no, party_name, broker_name, jci'),
+          supabase.from('mill_issue_master').select('issue_no, issue_type, requisition_no')
         ]);
 
-        if (!arrivalsRes.error && arrivalsRes.data) {
-          const issuedRequisitions = new Set((issuesRes.data || []).map((i: any) => i.requisition_no).filter(Boolean));
-          const enrichedArrivals = arrivalsRes.data.map(arrival => {
-            const matchedPo = poRes.data?.find(po => po.po_no === arrival.po_no);
-            return {
-              ...arrival,
-              is_issued: issuedRequisitions.has(arrival.final_arrival_no),
-              supplier: arrival.supplier || matchedPo?.party_name || '',
-              broker: arrival.broker || matchedPo?.broker_name || ''
-            };
+        const norm = (val: any) => String(val || '').trim().toUpperCase();
+        const isBlankPo = (val: any) => {
+          const s = norm(val);
+          return !s || s === 'NO' || s === 'N/A' || s === 'NONE' || s === '-' || s === '--';
+        };
+        const parseGrid = (raw: any): any[] => {
+          if (!raw) return [];
+          if (Array.isArray(raw)) return raw;
+          if (typeof raw === 'string') {
+            try {
+              const p = JSON.parse(raw === 'undefined' || raw === 'null' ? '[]' : raw);
+              return Array.isArray(p) ? p : [];
+            } catch {
+              return [];
+            }
+          }
+          return [];
+        };
+
+        // Combine Mill Inspection records deduplicated by mr_no
+        const inspMap = new Map<string, any>();
+        [...(miRes.data || []), ...(mimRes.data || [])].forEach((rec: any) => {
+          const mrKey = norm(rec.mr_no);
+          if (mrKey && !inspMap.has(mrKey)) {
+            inspMap.set(mrKey, rec);
+          }
+        });
+
+        // Index detail rows by mr_no (prefer material_inspection_details, fallback mill_inspection_detail)
+        const detailsByMr = new Map<string, any[]>();
+        (midRes.data || []).forEach((d: any) => {
+          const k = norm(d.mr_no);
+          if (k) {
+            const list = detailsByMr.get(k) || [];
+            list.push(d);
+            detailsByMr.set(k, list);
+          }
+        });
+        (millDetRes.data || []).forEach((d: any) => {
+          const k = norm(d.mr_no);
+          if (k && !detailsByMr.has(k)) {
+            const list: any[] = [];
+            (millDetRes.data || []).forEach((d2: any) => {
+              if (norm(d2.mr_no) === k) list.push(d2);
+            });
+            detailsByMr.set(k, list);
+          }
+        });
+
+        // Index final_arrival by mr_no / final_arrival_no / arrival_no / temporary_arrival_no
+        const faByKey = new Map<string, any>();
+        (faRes.data || []).forEach((fa: any) => {
+          [fa.mr_no, fa.final_arrival_no, fa.arrival_no, fa.temporary_arrival_no].forEach((k) => {
+            const nk = norm(k);
+            if (nk && !faByKey.has(nk)) faByKey.set(nk, fa);
           });
-          setFinalArrivals(enrichedArrivals);
-        }
+        });
+
+        // Track already-saved M.R. Nos in ISSUE TO GODOWN (mill_issue_master)
+        const godownIssuedMrs = new Set<string>();
+        (issuesRes.data || []).forEach((iss: any) => {
+          const ty = norm(iss.issue_type);
+          const issNo = norm(iss.issue_no);
+          const reqNo = norm(iss.requisition_no);
+          if (reqNo && (ty === 'GODOWN' || issNo.startsWith('GRN'))) {
+            godownIssuedMrs.add(reqNo);
+          }
+        });
+
+        const enrichedInspections = Array.from(inspMap.values()).map((insp: any) => {
+          const mrNo = String(insp.mr_no || '').trim();
+          const mrKey = norm(mrNo);
+          const arrKey = norm(insp.arrival_no);
+          const matchedFa = faByKey.get(mrKey) || (arrKey ? faByKey.get(arrKey) : undefined);
+
+          const rawPo = !isBlankPo(insp.po_no)
+            ? String(insp.po_no).trim()
+            : !isBlankPo(insp.mill_po_no)
+            ? String(insp.mill_po_no).trim()
+            : !isBlankPo(matchedFa?.po_no)
+            ? String(matchedFa.po_no).trim()
+            : '';
+
+          const matchedPo = rawPo
+            ? poRes.data?.find((po: any) => norm(po.po_no) === norm(rawPo))
+            : undefined;
+
+          const parsedGrid = parseGrid(insp.grid_details);
+          const dbDetails = detailsByMr.get(mrKey) || [];
+          const faGrid = parseGrid(matchedFa?.grid_details);
+          const resolvedDetails = dbDetails.length > 0
+            ? dbDetails
+            : parsedGrid.length > 0
+            ? parsedGrid
+            : faGrid;
+
+          const totalPackets = resolvedDetails.reduce(
+            (sum: number, r: any) =>
+              sum + Number(r.quantity ?? r.quantity_rcpt ?? r.quantity_chln ?? r.bales ?? r.packets ?? r.qty ?? 0),
+            0
+          ) || Number(insp.total_packets || matchedFa?.total_packets || 0);
+
+          const netWtFromDetails = resolvedDetails.reduce((sum: number, r: any) => {
+            const wtMt = Number(
+              r.final_receipt_wt ??
+              r.reduced_weight ??
+              r.receipt_gross_wt ??
+              r.challan_gross_wt ??
+              r.gross_weight_batch ??
+              r.netto_pnto ??
+              0
+            );
+            if (wtMt > 0) return sum + wtMt;
+            const wtKg = Number(r.weight_kgs || 0);
+            return sum + (wtKg > 0 ? wtKg / 1000 : 0);
+          }, 0);
+
+          const fallbackWtMt =
+            Number(matchedFa?.challan_material_weight) ||
+            Number(matchedFa?.weight_reduced) ||
+            (Number(matchedFa?.total_actual_weight || matchedFa?.total_weight_kgs || 0) / 1000) ||
+            Number(insp.receipt_gross_wt || insp.challan_gross_wt || 0);
+
+          const arrivalNetWtMt = netWtFromDetails > 0 ? netWtFromDetails : fallbackWtMt;
+
+          return {
+            ...insp,
+            id: insp.id || mrNo,
+            final_arrival_id: insp.id || mrNo,
+            mr_no: mrNo,
+            final_arrival_no: mrNo,
+            po_no: rawPo,
+            has_po_no: !isBlankPo(rawPo),
+            is_issued: godownIssuedMrs.has(mrKey),
+            supplier: insp.supplier_name || insp.supplier || matchedFa?.supplier || matchedPo?.party_name || '',
+            broker: insp.broker_name || insp.broker || matchedFa?.broker || matchedPo?.broker_name || '',
+            jci: insp.jci || matchedFa?.jci || matchedPo?.jci || 'No',
+            lorry_number: insp.lorry_number || matchedFa?.lorry_number || matchedFa?.vehicle_no || '',
+            date: insp.mr_date || insp.arrival_date || matchedFa?.date || insp.created_at || '',
+            arrival_area_name: insp.arrival_area || insp.area || matchedFa?.arrival_area_name || '',
+            total_packets: totalPackets,
+            challan_material_weight: arrivalNetWtMt,
+            grid_details: resolvedDetails
+          };
+        });
+
+        setFinalArrivals(enrichedInspections);
       }
     } catch (e) {
-      console.warn("Failed to fetch final_arrival records for prefill:", e);
+      console.warn("Failed to fetch Mill Inspection records for Issue to Godown:", e);
     }
   };
 
@@ -438,7 +584,7 @@ export default function MaterialIssue({
       screenDraftService.clearDraft('material_issue_form');
       screenDraftService.clearDraft('material_issue_items');
       handleNew();
-      await fetchRecords();
+      await Promise.all([fetchRecords(), fetchArrivalsAndStocks()]);
       setViewState('list');
       onSave?.(formData);
     } catch (err: any) {
@@ -609,7 +755,7 @@ export default function MaterialIssue({
         await dbModule.delete('mill_issue_master', 'issue_no', issueNo);
       }
       showToast(`Voucher "${issueNo}" deleted successfully.`);
-      await fetchRecords();
+      await Promise.all([fetchRecords(), fetchArrivalsAndStocks()]);
       if (selectedRecordId === issueNo) setSelectedRecordId(null);
     } catch (err: any) {
       console.error("Failed to delete voucher:", err);

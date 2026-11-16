@@ -60,36 +60,44 @@ export function useMaterialIssueEntryLogic({
     loadBatches();
   }, []);
 
-  // Pre-load linked arrival when editing or when requisition_no changes
+  // Pre-load linked arrival / Mill Inspection MR when editing or when requisition_no changes
   useEffect(() => {
     if (formData.requisition_no) {
-      const matched = finalArrivals.find(a => a.final_arrival_no === formData.requisition_no);
+      const reqKey = String(formData.requisition_no || '').trim().toUpperCase();
+      const matched = finalArrivals.find(
+        (a) => String(a.mr_no || a.final_arrival_no || '').trim().toUpperCase() === reqKey
+      );
       if (matched) {
-        const idVal = matched.id || matched.final_arrival_id;
+        const idVal = String(matched.id || matched.final_arrival_id || matched.mr_no || '');
         if (selectedArrivalId !== idVal) {
           setSelectedArrivalId(idVal);
         }
-        
+
         let parsedGrid: any[] = [];
         if (matched.grid_details) {
           if (typeof matched.grid_details === 'string') {
-            try { 
-              parsedGrid = JSON.parse(matched.grid_details === "undefined" ? "null" : matched.grid_details); 
-            } catch(e){}
+            try {
+              parsedGrid = JSON.parse(matched.grid_details === "undefined" ? "null" : matched.grid_details);
+            } catch (e) {}
           } else if (Array.isArray(matched.grid_details)) {
             parsedGrid = matched.grid_details;
           }
         }
 
-        const computedChlnQty = (parsedGrid || []).reduce((acc: number, row: any) => 
-          acc + Number(row.quantity_chln || row.quantity_rcpt || row.quantity || row.qty || 0), 0
+        const computedChlnQty = (parsedGrid || []).reduce((acc: number, row: any) =>
+          acc + Number(row.quantity_chln || row.quantity_rcpt || row.quantity || row.qty || row.bales || 0), 0
         );
         const enhancedMatched = {
           ...matched,
           extracted_total_chln_qty: computedChlnQty > 0 ? computedChlnQty : matched.total_packets
         };
-        
-        if (!arrivalMeta || (arrivalMeta.final_arrival_id !== matched.final_arrival_id && arrivalMeta.id !== matched.id)) {
+
+        if (
+          !arrivalMeta ||
+          (String(arrivalMeta.mr_no || '').trim().toUpperCase() !== String(matched.mr_no || '').trim().toUpperCase() &&
+            arrivalMeta.final_arrival_id !== matched.final_arrival_id &&
+            arrivalMeta.id !== matched.id)
+        ) {
           setArrivalMeta(enhancedMatched);
         }
       } else {
@@ -97,7 +105,7 @@ export function useMaterialIssueEntryLogic({
         if (arrivalMeta) setArrivalMeta(null);
       }
     } else {
-      if (arrivalMeta || isEditMode) {
+      if (selectedArrivalId || arrivalMeta || isEditMode) {
         setSelectedArrivalId('');
         setArrivalMeta(null);
       }
@@ -142,66 +150,97 @@ export function useMaterialIssueEntryLogic({
 
   const loadFA = () => {
     if (!selectedArrivalId) {
-      alert("Select a Final Arrival first.");
+      alert("Select a Final Arrival (M.R. No.) first.");
       return;
     }
-    const matched = finalArrivals.find(a => a.id === selectedArrivalId || a.final_arrival_id === selectedArrivalId);
+    const matched = finalArrivals.find(
+      (a) =>
+        String(a.id || '') === String(selectedArrivalId) ||
+        String(a.final_arrival_id || '') === String(selectedArrivalId) ||
+        String(a.mr_no || '') === String(selectedArrivalId)
+    );
     if (matched) {
-      // Parse details
       let parsedGrid: any[] = [];
       if (matched.grid_details) {
         if (typeof matched.grid_details === 'string') {
-          try { 
-            parsedGrid = JSON.parse(matched.grid_details === "undefined" ? "null" : matched.grid_details); 
-          } catch(e){}
+          try {
+            parsedGrid = JSON.parse(matched.grid_details === "undefined" ? "null" : matched.grid_details);
+          } catch (e) {}
         } else if (Array.isArray(matched.grid_details)) {
           parsedGrid = matched.grid_details;
         }
       }
 
-      const mappedDetails: MaterialIssueRowItem[] = (parsedGrid || []).map((row: any, idx: number) => ({
-        srl: idx + 1,
-        crop: row.crop_year || row.crop || '2025-26',
-        grade_name: row.receipt_grade_name || row.challan_grade_name || row.grade_name || 'TD5',
-        marka: row.challan_marka_name || row.marka || 'NO MARK',
-        qty: Number(row.quantity_chln || row.quantity_rcpt || row.quantity || row.qty || 0),
-        weight_kgs: Number(row.netto_pnto !== undefined ? (row.netto_pnto * 1000) : (row.weight_kgs || 0)),
-        area: row.area || matched.arrival_area_name || '',
-        agency: row.agency_name || row.agency || '',
-        code: row.receipt_grade_code || row.challan_marka_code || row.code || '',
-        batch_name: row.batch_name || '',
-        unit: row.unit || 'BALES',
-        place: '',
-        itg_no: '',
-        rate: 0,
-        location_dest: ''
-      }));
+      const mappedDetails: MaterialIssueRowItem[] = (parsedGrid || []).map((row: any, idx: number) => {
+        const wtMt = Number(
+          row.final_receipt_wt ??
+          row.reduced_weight ??
+          row.receipt_gross_wt ??
+          row.challan_gross_wt ??
+          row.gross_weight_batch ??
+          row.netto_pnto ??
+          0
+        );
+        const weightKgs = wtMt > 0 ? Math.round(wtMt * 1000) : Number(row.weight_kgs || 0);
+        return {
+          srl: idx + 1,
+          crop: row.crop_year || row.crop || '2026-27',
+          grade_name: row.stock_grade_name || row.arrival_grade || row.receipt_grade_name || row.challan_grade_name || row.grade_name || 'TD5',
+          marka: row.marks || row.marka || row.challan_marka_name || row.marka_name || 'NO MARK',
+          qty: Number(row.quantity || row.quantity_rcpt || row.quantity_chln || row.qty || row.bales || row.packets || 0),
+          weight_kgs: weightKgs,
+          area: row.area || matched.arrival_area_name || matched.arrival_area || '',
+          agency: row.agency_name || row.agency || matched.agency || '',
+          code: row.stock_grade_code || row.receipt_grade_code || row.challan_marka_code || row.code || '',
+          batch_name: row.batch_name || '',
+          unit: row.unit || matched.unit_name || 'BALES',
+          place: '',
+          itg_no: '',
+          rate: 0,
+          location_dest: ''
+        };
+      });
 
-      const computedChlnQty = (parsedGrid || []).reduce((acc: number, row: any) => 
-        acc + Number(row.quantity_chln || row.quantity_rcpt || row.quantity || row.qty || 0), 0
+      const computedChlnQty = (parsedGrid || []).reduce((acc: number, row: any) =>
+        acc + Number(row.quantity || row.quantity_rcpt || row.quantity_chln || row.qty || row.bales || row.packets || 0), 0
       );
       const enhancedMatched = {
         ...matched,
         extracted_total_chln_qty: computedChlnQty > 0 ? computedChlnQty : matched.total_packets
       };
 
-      // Fallback row if empty
       if (mappedDetails.length === 0) {
         mappedDetails.push({
-          srl: 1, crop: '2025-26', grade_name: 'TD5', marka: 'NO MARK', qty: 0, weight_kgs: 0, area: enhancedMatched.arrival_area_name || '', agency: '', code: '', batch_name: '', unit: 'BALES', place: '', itg_no: '', rate: 0, location_dest: ''
+          srl: 1,
+          crop: '2026-27',
+          grade_name: 'TD5',
+          marka: 'NO MARK',
+          qty: Number(matched.total_packets || 0),
+          weight_kgs: Math.round(Number(matched.challan_material_weight || 0) * 1000),
+          area: enhancedMatched.arrival_area_name || enhancedMatched.arrival_area || '',
+          agency: '',
+          code: '',
+          batch_name: '',
+          unit: 'BALES',
+          place: '',
+          itg_no: '',
+          rate: 0,
+          location_dest: ''
         });
       }
 
+      const mrRef = matched.mr_no || matched.final_arrival_no || '';
       setItems(mappedDetails);
       setArrivalMeta(enhancedMatched);
       setFormData((prev: any) => ({
         ...prev,
-        requisition_no: matched.final_arrival_no || '',
-        party_name: matched.supplier || '',
+        requisition_no: mrRef,
+        party_name: matched.supplier || matched.supplier_name || '',
         lorry_number: matched.lorry_number || matched.lorry_no || matched.vehicle_no || '',
-        remarks: `STOCKED POST-RECEIVE #FA-${matched.final_arrival_no || ''}`
+        jci: matched.jci || prev.jci || 'No',
+        remarks: `STOCKED POST-RECEIVE #MR-${mrRef}`
       }));
-      showToast(`Loaded details from Final Arrival #${matched.final_arrival_no || ''}`);
+      showToast(`Loaded details from Mill Inspection M.R. #${mrRef}`);
     }
   };
 
@@ -335,6 +374,8 @@ export function useMaterialIssueEntryLogic({
         lorry_number: '',
         party_name: ''
       }));
+      setSelectedArrivalId('');
+      setArrivalMeta(null);
       setItems([
         { srl: 1, crop: '2025-26', grade_name: 'TD5', marka: 'NO MARK', qty: 0, weight_kgs: 0, area: '', agency: '', code: '', batch_name: '', unit: 'BALES', place: '', itg_no: '', rate: 0, location_dest: '' }
       ]);

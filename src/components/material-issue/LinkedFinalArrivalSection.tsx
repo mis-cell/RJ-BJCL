@@ -58,24 +58,33 @@ export const LinkedFinalArrivalSection: React.FC<LinkedFinalArrivalSectionProps>
               onChange={(e) => setSelectedArrivalId(e.target.value)}
               className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 outline-none transition-all focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
             >
-              <option value="">— Select Final Arrival —</option>
+              <option value="">— Select Final Arrival (M.R. No.) —</option>
 
               {finalArrivals
-                .filter(
-                  arr =>
-                    !arr.is_issued ||
-                    arr.final_arrival_no === formData.requisition_no
-                )
-                .map((arr) => (
-                  <option
-                    key={arr.id || arr.final_arrival_id}
-                    value={arr.id || arr.final_arrival_id}
-                  >
-                    {arr.final_arrival_no} — {arr.supplier} (
-                    {arr.total_packets || arr.packets || arr.bales || 0} bales){' '}
-                    {arr.is_issued ? '(Already Issued)' : ''}
-                  </option>
-                ))}
+                .filter((arr) => {
+                  const poStr = String(arr.po_no || arr.mill_po_no || '').trim().toUpperCase();
+                  const hasPo = arr.has_po_no !== undefined
+                    ? Boolean(arr.has_po_no)
+                    : Boolean(poStr && poStr !== 'NO' && poStr !== 'N/A' && poStr !== 'NONE' && poStr !== '-' && poStr !== '--');
+                  if (!hasPo) return false;
+
+                  const mrKey = String(arr.mr_no || arr.final_arrival_no || '').trim().toUpperCase();
+                  const reqKey = String(formData.requisition_no || '').trim().toUpperCase();
+                  return !arr.is_issued || (Boolean(reqKey) && mrKey === reqKey);
+                })
+                .map((arr) => {
+                  const mrLabel = arr.mr_no || arr.final_arrival_no;
+                  const poLabel = String(arr.po_no || arr.mill_po_no || '').trim();
+                  return (
+                    <option
+                      key={arr.id || arr.final_arrival_id || mrLabel}
+                      value={arr.id || arr.final_arrival_id || mrLabel}
+                    >
+                      {mrLabel} — PO: {poLabel} — {arr.supplier || '-'} (
+                      {arr.total_packets || arr.packets || arr.bales || 0} bales)
+                    </option>
+                  );
+                })}
             </select>
           </div>
 
@@ -115,9 +124,9 @@ export const LinkedFinalArrivalSection: React.FC<LinkedFinalArrivalSectionProps>
                 aria-label="Voucher Date"
                 readOnly
                 value={
-                  arrivalMeta
+                  arrivalMeta?.date && !isNaN(new Date(arrivalMeta.date).getTime())
                     ? new Date(arrivalMeta.date).toLocaleDateString('en-GB')
-                    : '--'
+                    : (arrivalMeta?.date || '--')
                 }
                 className="w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 outline-none"
               />
@@ -139,6 +148,7 @@ export const LinkedFinalArrivalSection: React.FC<LinkedFinalArrivalSectionProps>
                 readOnly
                 value={
                   arrivalMeta?.po_no ||
+                  arrivalMeta?.mill_po_no ||
                   arrivalMeta?.purchase_order_no ||
                   '--'
                 }
