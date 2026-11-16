@@ -10,11 +10,12 @@ import { cn } from '../../lib/utils';
 import LegacyLayout, { LegacyFieldset } from '../LegacyLayout';
 import PrintModal from '../PrintModal';
 import { GodownMasterItem, GradeMasterItem, AreaMasterItem, UnitMasterItem } from '../../utils/stockSummaryConstants';
+import { StockSubTab } from './types';
 
 export interface StockFormModalProps {
   isOpen: boolean;
   onClose: () => void;
-  stockSubTab: 'opening' | 'closing';
+  stockSubTab: StockSubTab;
   isEditing: boolean;
   loading: boolean;
   // Opening Form State & Handlers

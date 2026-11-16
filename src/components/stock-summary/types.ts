@@ -1,5 +1,6 @@
 export type StockTab = 'opening' | 'live';
-export type StockSubTab = 'opening' | 'closing';
+export type StockSubTab = 'opening' | 'closing' | 'report';
+export type StockReportDimension = 'month' | 'date' | 'area' | 'agency' | 'godown' | 'unit' | 'ledger';
 export type TreeHierarchyMode = 'area_grade' | 'grade_area';
 export type MetricCalculationMode = 'cumulative' | 'period';
 

@@ -35,7 +35,6 @@ import {
   Menu,
   ClipboardCheck,
   TrendingUp,
-  Warehouse,
   Users,
   Settings,
   History,
@@ -417,7 +416,6 @@ export default function LegacyLayout({
         { id: 'issue', label: 'Material Issue', icon: PackageCheck, pageId: 'issue' },
         { id: 'closing_stock', label: 'Stock Inventory', icon: Layers, pageId: 'closing_stock' },
         { id: 'requisition_desk', label: 'Requisition Desk', icon: ClipboardList, pageId: 'requisition_desk' },
-        { id: 'bardana', label: 'Godown Master', icon: Warehouse, pageId: 'bardana' },
         { id: 'weight_bridge', label: 'Weight Bridge', icon: Scale, pageId: 'weight_bridge' },
       ]
     },

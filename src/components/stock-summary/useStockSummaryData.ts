@@ -29,6 +29,7 @@ export function useStockSummaryData(initialSubTab: StockSubTab = 'opening') {
   const [grades, setGrades] = useState<any[]>([]);
   const [areas, setAreas] = useState<any[]>([]);
   const [units, setUnits] = useState<any[]>([]);
+  const [agencies, setAgencies] = useState<any[]>([]);
 
   // Saved Opening & Closing Stock rows
   const [openingStocks, setOpeningStocks] = useState<any[]>([]);
@@ -229,6 +230,24 @@ export function useStockSummaryData(initialSubTab: StockSubTab = 'opening') {
       } else {
         setUnits([]);
       }
+
+      // Dynamically load agencies from agency_master
+      let fetchedAgencies: any[] = [];
+      try {
+        const { data } = await supabase.from('agency_master').select('*').limit(500);
+        if (data && data.length > 0) {
+          fetchedAgencies = data;
+        }
+      } catch (err) {
+        console.warn("agency_master fetch failed", err);
+      }
+      if (fetchedAgencies.length === 0) {
+        fetchedAgencies = await dbModule.fetchAll('agency_master').catch(() => []);
+      }
+      const sortedAgencies = [...fetchedAgencies].sort((a, b) =>
+        String(a.agency_name || a.name || '').localeCompare(String(b.agency_name || b.name || ''))
+      );
+      setAgencies(sortedAgencies);
     } catch (err) {
       console.warn("Could not pre-fetch some metadata tables.", err);
     }
@@ -323,6 +342,20 @@ export function useStockSummaryData(initialSubTab: StockSubTab = 'opening') {
       setMillIssueDetails(midData || []);
     } catch (err) {
       console.warn("Could not load mill issues or godown wise stocks:", err);
+    }
+  };
+
+  const reloadAllStockSources = async () => {
+    setLoading(true);
+    try {
+      await Promise.all([
+        fetchDropdowns(),
+        loadOpeningStocks(),
+        loadClosingStocks(),
+        loadMillIssuesAndGodownWiseStocks()
+      ]);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -1196,11 +1229,13 @@ export function useStockSummaryData(initialSubTab: StockSubTab = 'opening') {
     grades,
     areas,
     units,
+    agencies,
     openingStocks,
     closingStocks,
     godownWiseStocks,
     millIssueMasters,
     millIssueDetails,
+    reloadAllStockSources,
     searchQuery,
     setSearchQuery,
     startDateFilter,

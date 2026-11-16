@@ -5,6 +5,7 @@ import { StockCountersRibbon } from '../components/stock-summary/StockCountersRi
 import { StockSummaryNavigation } from '../components/stock-summary/StockSummaryNavigation';
 import { AreaWiseStockTree } from '../components/stock-summary/AreaWiseStockTree';
 import { MonthlyClosingStockView } from '../components/stock-summary/MonthlyClosingStockView';
+import { StockInventoryReportView } from '../components/stock-summary/StockInventoryReportView';
 import { LiveInventoryGrid } from '../components/stock-summary/LiveInventoryGrid';
 import {
   StockFormModal,
@@ -96,7 +97,7 @@ export default function StockSummary({ onClose, initialSubTab = 'opening' }: Sto
               onEdit={stockData.handleEdit}
               onDelete={stockData.handleDelete}
             />
-          ) : (
+          ) : stockData.stockSubTab === 'closing' ? (
             /* Tab 2: Monthly Closing Stocks Ledger */
             <MonthlyClosingStockView
               filteredClosingStocks={stockData.filteredClosingStocks}
@@ -133,6 +134,18 @@ export default function StockSummary({ onClose, initialSubTab = 'opening' }: Sto
               onReload={stockData.loadClosingStocks}
               onEditClosing={stockData.handleEditClosing}
               onDeleteClosing={stockData.handleDeleteClosing}
+            />
+          ) : (
+            /* Tab 2B: Comprehensive Multi-Dimensional Stock Report */
+            <StockInventoryReportView
+              openingStocks={stockData.openingStocks}
+              millIssueMasters={stockData.millIssueMasters}
+              millIssueDetails={stockData.millIssueDetails}
+              godowns={stockData.godowns}
+              areas={stockData.areas}
+              agencies={stockData.agencies}
+              loading={stockData.loading}
+              onReload={stockData.reloadAllStockSources}
             />
           )
         ) : (

@@ -97,6 +97,20 @@ export const StockSummaryNavigation: React.FC<StockSummaryNavigationProps> = ({
                 <span>🔴</span>
                 <span>Monthly Opening Stock</span>
               </button>
+
+              {/* Full Stock Report */}
+              <button
+                onClick={() => setStockSubTab('report')}
+                className={cn(
+                  "flex items-center gap-1.5 rounded-md px-3 py-2 text-[10px] font-bold uppercase transition-all cursor-pointer",
+                  stockSubTab === 'report'
+                    ? "bg-emerald-50 text-emerald-800 ring-1 ring-emerald-300 shadow-sm"
+                    : "text-slate-500 hover:bg-slate-100 hover:text-slate-800"
+                )}
+              >
+                <span>📊</span>
+                <span>Stock Report (Full)</span>
+              </button>
             </div>
           )}
         </div>
