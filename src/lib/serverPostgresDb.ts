@@ -240,8 +240,7 @@ const TABLE_UNIQUE_KEYS: Record<string, string[]> = {
 // Composite conflict keys for rate/matrix tables
 const TABLE_COMPOSITE_KEYS: Record<string, string[]> = {
   satta_differentials: ['area', 'grade'],
-  satta_calculated_rates: ['start_date', 'area', 'grade'],
-  agency_master: ['area_name', 'agency_code']
+  satta_calculated_rates: ['start_date', 'area', 'grade']
 };
 
 // Non-destructive schema integrity checks only (never seeds, overwrites, or re-inserts rows from dumps/JSON)
@@ -296,6 +295,125 @@ async function ensureDatabaseIntegrity() {
       client.release();
     }
   } catch (_) {}
+
+  await ensureAgencyMasterOneTimeImport().catch(() => {});
+}
+
+let agencyImportPromise: Promise<void> | null = null;
+
+async function ensureAgencyMasterOneTimeImport(): Promise<void> {
+  if (agencyImportPromise) return agencyImportPromise;
+  agencyImportPromise = (async () => {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS "app_one_time_migrations" (
+          "migration_key" TEXT PRIMARY KEY,
+          "applied_at" TIMESTAMPTZ DEFAULT NOW(),
+          "details" TEXT
+        )
+      `);
+
+      // Lock table row / check one-time migration lock
+      const onceCheck = await client.query(
+        `SELECT 1 FROM "app_one_time_migrations" WHERE "migration_key" = $1 LIMIT 1`,
+        ['agency_master_from_dump_once_v1']
+      );
+
+      if ((onceCheck.rowCount || 0) === 0) {
+        const tblExistsRes = await client.query(
+          `SELECT to_regclass('public.agency_master') IS NOT NULL AS exists_flag`
+        );
+        const tableExists = Boolean(tblExistsRes.rows?.[0]?.exists_flag);
+
+        if (tableExists) {
+          let importedCount = 0;
+          const cntRes = await client.query(`SELECT COUNT(*)::int AS cnt FROM "agency_master"`);
+          const currentCount = Number(cntRes.rows?.[0]?.cnt ?? 0);
+
+          if (currentCount === 0) {
+            const dumpJsonPath = path.resolve(process.cwd(), 'scripts', 'agency_master_once.json');
+            if (fs.existsSync(dumpJsonPath)) {
+              const rawText = fs.readFileSync(dumpJsonPath, 'utf8');
+              const dumpRows = JSON.parse(rawText);
+              if (Array.isArray(dumpRows) && dumpRows.length > 0) {
+                const validRows = dumpRows.filter(
+                  (r: any) =>
+                    r &&
+                    Number.isFinite(Number(r.id)) &&
+                    r.agency_code !== undefined &&
+                    r.agency_name !== undefined
+                );
+
+                const batchSize = 200;
+                for (let i = 0; i < validRows.length; i += batchSize) {
+                  const batch = validRows.slice(i, i + batchSize);
+                  const insParams: any[] = [];
+                  const valueGroups: string[] = [];
+                  for (const row of batch) {
+                    insParams.push(
+                      Number(row.id),
+                      row.area_code != null ? String(row.area_code) : '',
+                      row.area_name != null ? String(row.area_name) : '',
+                      String(row.agency_code),
+                      String(row.agency_name)
+                    );
+                    const base = insParams.length - 4;
+                    valueGroups.push(`($${base}, $${base + 1}, $${base + 2}, $${base + 3}, $${base + 4})`);
+                  }
+                  if (valueGroups.length > 0) {
+                    const res = await client.query(
+                      `INSERT INTO "agency_master" ("id", "area_code", "area_name", "agency_code", "agency_name")
+                       VALUES ${valueGroups.join(', ')}
+                       ON CONFLICT ("id") DO NOTHING`,
+                      insParams
+                    );
+                    importedCount += res.rowCount || 0;
+                  }
+                }
+
+                await client.query(`
+                  DO $$
+                  DECLARE seq_name TEXT;
+                  BEGIN
+                    SELECT pg_get_serial_sequence('"agency_master"', 'id') INTO seq_name;
+                    IF seq_name IS NOT NULL THEN
+                      EXECUTE format('SELECT setval(%L, COALESCE((SELECT MAX("id") FROM "agency_master"), 1))', seq_name);
+                    END IF;
+                  END $$;
+                `);
+
+                console.log(`[DB One-Time Import] Copied ${importedCount} rows from dump into public.agency_master (one-time only).`);
+              }
+            }
+          }
+
+          await client.query(
+            `INSERT INTO "app_one_time_migrations" ("migration_key", "details")
+             VALUES ($1, $2)
+             ON CONFLICT ("migration_key") DO NOTHING`,
+            [
+              'agency_master_from_dump_once_v1',
+              currentCount === 0
+                ? `Imported ${importedCount} rows once from dump; dump disconnected.`
+                : `Skipped import (agency_master already had ${currentCount} rows); dump disconnected.`
+            ]
+          );
+        }
+      }
+
+      await client.query('COMMIT');
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw err;
+    } finally {
+      client.release();
+    }
+  })().finally(() => {
+    agencyImportPromise = null;
+  });
+  return agencyImportPromise;
 }
 
 /**

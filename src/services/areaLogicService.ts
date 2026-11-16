@@ -1,90 +1,71 @@
 import { supabase } from '../lib/supabase';
-import type { AreaLogicRecord } from '../data/areaLogicMasterData';
+
+export interface AreaLogicRecord {
+  AREA_CODE: string;
+  AREA_NAME: string;
+  AGENCY_CODE: string;
+  AGENCY_NAME: string;
+}
 
 let inMemoryAreaLogic: AreaLogicRecord[] = [];
-let isLoadedFromSupabase = false;
+let isLoadedFromPostgres = false;
 
 /**
- * Fetch Area-Agency mapping records exclusively from PostgreSQL area_logic and agency_master tables.
+ * Fetch Area-Agency mapping records exclusively from live PostgreSQL `agency_master` table
+ * (no dumped `area_logic` table and no static JSON fallback).
  */
 export async function fetchAreaLogic(): Promise<AreaLogicRecord[]> {
   if (!supabase) return [];
 
   try {
-    const allRecords: AreaLogicRecord[] = [];
-    let page = 0;
-    const pageSize = 500;
-    let hasMore = true;
+    const [{ data: agMasterData, error: agErr }, { data: areaMasterData }] = await Promise.all([
+      supabase
+        .from('agency_master')
+        .select('id, area_code, area_name, agency_code, agency_name')
+        .order('id', { ascending: true }),
+      supabase
+        .from('area_master')
+        .select('area_code, area_name')
+    ]);
 
-    while (hasMore) {
-      const { data, error } = await supabase
-        .from('area_logic')
-        .select('AREA_CODE, AREA_NAME, AGENCY_CODE, AGENCY_NAME')
-        .range(page * pageSize, (page + 1) * pageSize - 1)
-        .order('AGENCY_CODE', { ascending: true });
+    if (agErr || !Array.isArray(agMasterData)) {
+      return inMemoryAreaLogic;
+    }
 
-      if (error || !data || data.length === 0) {
-        hasMore = false;
-      } else {
-        data.forEach((r: any) => {
-          allRecords.push({
-            AREA_CODE: String(r.AREA_CODE || r.area_code || '').trim(),
-            AREA_NAME: String(r.AREA_NAME || r.area_name || '').trim(),
-            AGENCY_CODE: String(r.AGENCY_CODE || r.agency_code || '').trim(),
-            AGENCY_NAME: String(r.AGENCY_NAME || r.agency_name || '').trim()
-          });
-        });
-
-        if (data.length < pageSize) {
-          hasMore = false;
-        } else {
-          page++;
-        }
-      }
+    const areaNameByCode = new Map<string, string>();
+    if (Array.isArray(areaMasterData)) {
+      areaMasterData.forEach((a: any) => {
+        const code = String(a.area_code || a.AREA_CODE || '').trim().toUpperCase();
+        const name = String(a.area_name || a.AREA_NAME || '').trim();
+        if (code && name) areaNameByCode.set(code, name);
+      });
     }
 
     const masterMap = new Map<string, AreaLogicRecord>();
-    allRecords.forEach(r => {
-      const aCode = String(r.AREA_CODE || '').trim().toUpperCase();
-      const aName = String(r.AREA_NAME || '').trim().toUpperCase();
-      const agCode = String(r.AGENCY_CODE || '').trim().toUpperCase();
-      const agName = String(r.AGENCY_NAME || '').trim().toUpperCase();
-      if (aName && agName) {
-        masterMap.set(`${aName}__${agName}__${agCode}`, r);
-      } else if (aCode && agCode) {
-        masterMap.set(`${aCode}__${agCode}`, r);
+    agMasterData.forEach((r: any) => {
+      const areaCode = String(r.area_code || r.AREA_CODE || '').trim();
+      const rawAreaName = String(r.area_name || r.AREA_NAME || '').trim();
+      const areaName = rawAreaName || (areaCode ? areaNameByCode.get(areaCode.toUpperCase()) || '' : '');
+      const agencyCode = String(r.agency_code || r.AGENCY_CODE || '').trim();
+      const agencyName = String(r.agency_name || r.AGENCY_NAME || '').trim();
+
+      if ((areaName || areaCode) && agencyName) {
+        const key = `${(areaName || areaCode).toUpperCase()}__${agencyName.toUpperCase()}__${agencyCode.toUpperCase()}`;
+        if (!masterMap.has(key)) {
+          masterMap.set(key, {
+            AREA_CODE: areaCode,
+            AREA_NAME: areaName,
+            AGENCY_CODE: agencyCode,
+            AGENCY_NAME: agencyName
+          });
+        }
       }
     });
 
-    try {
-      const { data: agMasterData } = await supabase
-        .from('agency_master')
-        .select('area_code, area_name, agency_code, agency_name');
-      if (agMasterData && agMasterData.length > 0) {
-        agMasterData.forEach((r: any) => {
-          const areaCode = String(r.area_code || r.AREA_CODE || '').trim();
-          const areaName = String(r.area_name || r.AREA_NAME || '').trim();
-          const agencyCode = String(r.agency_code || r.AGENCY_CODE || '').trim();
-          const agencyName = String(r.agency_name || r.AGENCY_NAME || '').trim();
-          if ((areaName || areaCode) && agencyName) {
-            const key = `${areaName.toUpperCase() || areaCode.toUpperCase()}__${agencyName.toUpperCase()}__${agencyCode.toUpperCase()}`;
-            if (!masterMap.has(key)) {
-              masterMap.set(key, {
-                AREA_CODE: areaCode,
-                AREA_NAME: areaName,
-                AGENCY_CODE: agencyCode,
-                AGENCY_NAME: agencyName
-              });
-            }
-          }
-        });
-      }
-    } catch (_) {}
-
     inMemoryAreaLogic = Array.from(masterMap.values());
-    isLoadedFromSupabase = true;
+    isLoadedFromPostgres = true;
   } catch (err) {
-    console.warn('[areaLogicService] Failed to query PostgreSQL area_logic/agency_master:', err);
+    console.warn('[areaLogicService] Failed to query PostgreSQL agency_master:', err);
   }
 
   return inMemoryAreaLogic;
@@ -107,13 +88,7 @@ export interface MappedAgency {
 
 /**
  * Main Dropdown Functionality:
- * Retrieves ALL and ONLY agencies mapped to the given AREA_CODE or AREA_NAME.
- *
- * Rules:
- * - Empty area => returns []
- * - Does not merge duplicate agency names if agency codes differ
- * - Includes records named "No agency"
- * - Returns normalized agency objects
+ * Retrieves ALL and ONLY agencies mapped to the given AREA_CODE or AREA_NAME from live PostgreSQL `agency_master`.
  */
 export function getAgenciesForArea(selectedAreaCodeOrName: string | null | undefined): MappedAgency[] {
   if (!selectedAreaCodeOrName) return [];
@@ -121,14 +96,12 @@ export function getAgenciesForArea(selectedAreaCodeOrName: string | null | undef
   const searchTarget = String(selectedAreaCodeOrName).trim().toUpperCase();
   if (!searchTarget) return [];
 
-  // Filter inMemoryAreaLogic by AREA_CODE or AREA_NAME
   const filtered = inMemoryAreaLogic.filter(r => {
     const codeMatch = String(r.AREA_CODE || '').trim().toUpperCase() === searchTarget;
     const nameMatch = String(r.AREA_NAME || '').trim().toUpperCase() === searchTarget;
     return codeMatch || nameMatch;
   });
 
-  // Map to unified object supporting both uppercase & lowercase property names
   return filtered.map(r => {
     const agencyCode = String(r.AGENCY_CODE || '').trim();
     const agencyName = String(r.AGENCY_NAME || '').trim();
@@ -157,7 +130,6 @@ export function getUniqueAgenciesForArea(selectedAreaCodeOrName: string | null |
 
   all.forEach(item => {
     let name = String(item.AGENCY_NAME || item.agency_name || item.name || '').trim();
-    // Clean agency name: strip trailing "(Code X)", "Code X", or trailing numbers after "No agency"
     name = name.replace(/\s*\(Code\s*\d+\)$/i, '').replace(/\s*Code\s*\d+$/i, '').trim();
     if (name) {
       const norm = name.toUpperCase();
@@ -171,14 +143,14 @@ export function getUniqueAgenciesForArea(selectedAreaCodeOrName: string | null |
 }
 
 /**
- * Validates whether an AREA_CODE / AREA_NAME and AGENCY_CODE / AGENCY_NAME combination exists in area_logic.
+ * Validates whether an AREA_CODE / AREA_NAME and AGENCY_CODE / AGENCY_NAME combination exists in `agency_master`.
  */
 export function validateAreaAgencyCombination(
   areaCodeOrName: string | null | undefined,
   agencyCodeOrName: string | null | undefined
 ): { isValid: boolean; message?: string } {
   if (!areaCodeOrName || !agencyCodeOrName) {
-    return { isValid: true }; // allow blank if optional
+    return { isValid: true };
   }
 
   const normArea = String(areaCodeOrName).trim().toUpperCase();
@@ -188,11 +160,11 @@ export function validateAreaAgencyCombination(
   if (mappedAgencies.length === 0) {
     return {
       isValid: false,
-      message: `No Agencies mapped for Area "${areaCodeOrName}" in area_logic table.`
+      message: `No Agencies mapped for Area "${areaCodeOrName}" in agency_master table.`
     };
   }
 
-  const match = mappedAgencies.some(a => 
+  const match = mappedAgencies.some(a =>
     a.AGENCY_CODE.toUpperCase() === normAgency ||
     a.AGENCY_NAME.toUpperCase() === normAgency ||
     a.agency_code.toUpperCase() === normAgency ||
@@ -209,5 +181,20 @@ export function validateAreaAgencyCombination(
   return { isValid: true };
 }
 
-// Initial async fetch on load
+// Initial async fetch on load from PostgreSQL agency_master
 fetchAreaLogic().catch(() => {});
+
+// Refresh in-memory mapping whenever agency_master or area_master is mutated
+if (typeof window !== 'undefined') {
+  window.addEventListener('app-data-updated', (ev: any) => {
+    const tbl = String(ev?.detail?.table || '').toLowerCase();
+    if (!tbl || tbl === 'agency_master' || tbl === 'area_master') {
+      fetchAreaLogic().catch(() => {});
+    }
+  });
+}
+
+export function hasLoadedAreaLogic(): boolean {
+  return isLoadedFromPostgres;
+}
+
