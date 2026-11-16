@@ -375,7 +375,6 @@ export const TransportDocInfoCard: React.FC<TransportDocInfoCardProps> = ({
                 step="0.01"
                 min="0"
                 name="apmc_fees"
-                placeholder="0.00"
                 value={formData.apmc_fees !== undefined && formData.apmc_fees !== null ? formData.apmc_fees : ""}
                 onChange={handleChange}
                 className="w-full h-7 rounded border border-gray-300 px-2 text-right text-xs font-bold focus:border-[#F7AFA8]"

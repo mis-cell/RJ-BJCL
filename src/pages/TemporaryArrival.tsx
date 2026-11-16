@@ -183,7 +183,12 @@ export default function TemporaryArrival({ onSave, onCancel, initialData }: { on
       unit_name: data?.unit_name || 'BALES',
       way_bill_no: data?.way_bill_no || '',
       way_bill_date: data?.way_bill_date || '',
-      apmc_fees: Number(data?.apmc_fees ?? (data as any)?.arival_apmc_fees ?? 0),
+      apmc_fees: (() => {
+        const rawApmc = data?.apmc_fees ?? (data as any)?.arival_apmc_fees;
+        return rawApmc !== undefined && rawApmc !== null && rawApmc !== '' && Number(rawApmc) !== 0
+          ? Number(rawApmc)
+          : '';
+      })(),
       remarks: data?.remarks || '',
 
       // Bottom weights
@@ -208,6 +213,9 @@ export default function TemporaryArrival({ onSave, onCancel, initialData }: { on
     const draft = screenDraftService.getDraft('amad_entry_form', defaultData);
     if (!draft.arrival_no || draft.arrival_no === 'MR') {
       draft.arrival_no = 'AR0';
+    }
+    if (draft.apmc_fees === 0 || draft.apmc_fees === '0') {
+      draft.apmc_fees = '';
     }
     return draft;
   });
@@ -1149,7 +1157,7 @@ export default function TemporaryArrival({ onSave, onCancel, initialData }: { on
       lorry_returned_other_mill: 'No',
       way_bill_no: '',
       way_bill_date: '',
-      apmc_fees: 0,
+      apmc_fees: '',
       remarks: '',
       challan_material_weight: 0,
       actual_gross_weight: 0,
