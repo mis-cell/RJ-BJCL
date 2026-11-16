@@ -17,8 +17,8 @@ async function slipElementToPdfBase64(el: HTMLElement): Promise<string> {
       useCORS: true,
       onclone: (clonedDoc) => {
         clonedDoc.querySelectorAll<HTMLElement>('.inspection-slip-scale-box').forEach((box) => {
-          box.style.width = isLandscapeInspection ? '10in' : 'auto';
-          box.style.height = isLandscapeInspection ? '6in' : 'auto';
+          box.style.width = isLandscapeInspection ? '297mm' : 'auto';
+          box.style.height = isLandscapeInspection ? '210mm' : 'auto';
         });
         clonedDoc.querySelectorAll<HTMLElement>('.print-stationery-landscape').forEach((slip) => {
           slip.style.transform = 'none';
@@ -34,12 +34,7 @@ async function slipElementToPdfBase64(el: HTMLElement): Promise<string> {
     const pageWidth = pdf.internal.pageSize.getWidth();
     const pageHeight = pdf.internal.pageSize.getHeight();
     if (isLandscapeInspection) {
-      // Exact 10in x 6in centered on A4 landscape (720pt x 432pt on 841.89pt x 595.28pt)
-      const targetW = 10 * 72;
-      const targetH = 6 * 72;
-      const x = Math.max(0, (pageWidth - targetW) / 2);
-      const y = Math.max(0, (pageHeight - targetH) / 2);
-      pdf.addImage(imgData, 'PNG', x, y, targetW, targetH);
+      pdf.addImage(imgData, 'PNG', 0, 0, pageWidth, pageHeight);
       return pdf.output('datauristring').split(',')[1] || '';
     }
     const imgW = pageWidth;

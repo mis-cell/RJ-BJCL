@@ -120,19 +120,19 @@ export default function InspectionPrintSlip({ master, details = [], copyType = '
   const previewContainerRef = React.useRef<HTMLDivElement>(null);
   const slipRef = React.useRef<HTMLDivElement>(null);
   const [previewScale, setPreviewScale] = React.useState<number>(1);
-  // Exact 10in x 6in (960px x 576px at 96dpi)
-  const [naturalSize, setNaturalSize] = React.useState<{ width: number; height: number }>({ width: 960, height: 576 });
+  // Standard A4 Landscape (297mm x 210mm = 1123px x 794px at 96dpi)
+  const [naturalSize, setNaturalSize] = React.useState<{ width: number; height: number }>({ width: 1123, height: 794 });
 
-  // Measure available preview width and height and scale 10in x 6in landscape slip cleanly on screen if viewport is smaller
+  // Measure available preview width and height and scale A4 Landscape slip cleanly on screen so full page fits without clipping
   React.useEffect(() => {
     const updateScale = () => {
       const container = previewContainerRef.current;
       const slip = slipRef.current;
       if (!container || !slip) return;
       const availableW = Math.max(300, container.clientWidth - 24);
-      const availableH = Math.max(340, window.innerHeight - 160);
-      const slipW = slip.offsetWidth || 960;
-      const slipH = slip.offsetHeight || 576;
+      const availableH = Math.max(360, window.innerHeight - 160);
+      const slipW = slip.offsetWidth || 1123;
+      const slipH = slip.offsetHeight || 794;
       setNaturalSize(prev => (prev.width === slipW && prev.height === slipH ? prev : { width: slipW, height: slipH }));
       const nextScale = Math.max(0.4, Math.min(1, availableW / slipW, availableH / slipH));
       setPreviewScale(prev => (Math.abs(prev - nextScale) < 0.005 ? prev : nextScale));
@@ -515,28 +515,26 @@ export default function InspectionPrintSlip({ master, details = [], copyType = '
             padding: 0 !important;
             margin: 0 !important;
             background: white !important;
-            display: flex !important;
-            align-items: center !important;
-            justify-content: center !important;
+            display: block !important;
             overflow: hidden !important;
           }
           .inspection-slip-scale-box {
-            width: 10in !important;
-            height: 6in !important;
-            margin: auto !important;
+            width: 297mm !important;
+            height: 210mm !important;
+            margin: 0 auto !important;
           }
           .print-stationery-landscape {
-            width: 10in !important;
-            min-width: 10in !important;
-            max-width: 10in !important;
-            height: 6in !important;
-            min-height: 6in !important;
-            max-height: 6in !important;
-            padding: 12px 18px !important;
+            width: 297mm !important;
+            min-width: 297mm !important;
+            max-width: 297mm !important;
+            height: 210mm !important;
+            min-height: 210mm !important;
+            max-height: 210mm !important;
+            padding: 9mm 12mm !important;
             margin: 0 !important;
             background: white !important;
             box-shadow: none !important;
-            border: 1px solid #f4c2c2 !important;
+            border: none !important;
             box-sizing: border-box !important;
             transform: none !important;
             overflow: hidden !important;
@@ -549,9 +547,9 @@ export default function InspectionPrintSlip({ master, details = [], copyType = '
         }
       `}</style>
 
-      {/* SCALED VIEWPORT WRAPPER FOR FULL-PAGE ON-SCREEN PREVIEW (10in x 6in FORM) */}
+      {/* SCALED VIEWPORT WRAPPER FOR FULL-PAGE ON-SCREEN PREVIEW (STANDARD A4 LANDSCAPE 297mm x 210mm) */}
       <div
-        className="inspection-slip-scale-box relative mx-auto shrink-0 print:w-[10in] print:h-[6in]"
+        className="inspection-slip-scale-box relative mx-auto shrink-0 print:w-[297mm] print:h-[210mm]"
         style={
           previewScale < 0.999
             ? {
@@ -559,12 +557,12 @@ export default function InspectionPrintSlip({ master, details = [], copyType = '
                 height: `${Math.round(naturalSize.height * previewScale)}px`,
               }
             : {
-                width: '10in',
-                height: '6in',
+                width: '297mm',
+                height: '210mm',
               }
         }
       >
-      {/* CONTINUOUS STATIONERY FORM WRAPPER (EXACT 10in x 6in CENTERED ON A4 LANDSCAPE) */}
+      {/* CONTINUOUS STATIONERY FORM WRAPPER (STANDARD A4 LANDSCAPE 297mm x 210mm) */}
       <div
         ref={slipRef}
         style={
@@ -572,108 +570,105 @@ export default function InspectionPrintSlip({ master, details = [], copyType = '
             ? {
                 transform: `scale(${previewScale})`,
                 transformOrigin: 'top left',
-                padding: '12px 18px',
               }
-            : {
-                padding: '12px 18px',
-              }
+            : undefined
         }
-        className="print-stationery-landscape w-[10in] min-w-[10in] max-w-[10in] h-[6in] min-h-[6in] max-h-[6in] bg-[#ffffff] shadow-2xl border border-red-200 flex select-text shrink-0 relative overflow-hidden print:shadow-none print:bg-white box-border text-[#D94B5A]"
+        className="print-stationery-landscape w-[297mm] min-w-[297mm] max-w-[297mm] h-[210mm] min-h-[210mm] max-h-[210mm] bg-[#ffffff] shadow-2xl border border-red-200 px-3 py-5 sm:px-4 sm:py-6 flex select-text shrink-0 relative overflow-hidden print:shadow-none print:border-none print:bg-white box-border text-[#D94B5A]"
       >
-        {/* Left Sprocket Feed Holes (inside safe padding edge on screen only so printable width matches 1:1) */}
-        <div className="absolute left-[4px] inset-y-2 w-[10px] flex flex-col justify-between items-center pointer-events-none select-none print:hidden">
-          {Array.from({ length: 13 }).map((_, i) => (
-            <div key={i} className="w-2.5 h-2.5 bg-slate-100 rounded-full shadow-inner border border-red-300/60 opacity-70"></div>
+        {/* Dedicated Left Sprocket Feed Holes Strip (never overlaps text) */}
+        <div className="w-[22px] bg-transparent flex flex-col justify-between py-2 shrink-0 mr-2.5 select-none print:hidden">
+          {Array.from({ length: 15 }).map((_, i) => (
+            <div key={i} className="w-3 h-3 bg-slate-100 rounded-full mx-auto shadow-inner border border-red-300/60 opacity-70"></div>
           ))}
         </div>
 
         {/* Form Body Canvas */}
-        <div className="flex-1 min-w-0 w-full flex flex-col justify-between text-[10px] leading-tight font-sans overflow-hidden">
+        <div className="flex-1 min-w-0 w-full flex flex-col justify-between text-[11px] leading-tight font-sans overflow-hidden">
           <div className="min-w-0 w-full">
             {/* Top Row: Title, Mill Copy, Company Header */}
-            <div className="relative mb-1">
+            <div className="relative mb-2">
               {/* Mill Copy top right */}
-              <div className="absolute right-0 top-0 text-right max-w-[140px]">
+              <div className="absolute right-0 top-0 text-right max-w-[150px]">
                 {copyType==='1'&&(
-                  <span className="font-black text-[13px] text-[#D94B5A] tracking-wider uppercase whitespace-nowrap">
+                  <span className="font-black text-[15px] text-[#D94B5A] tracking-wider uppercase whitespace-nowrap">
                     MILL COPY
                   </span>
                 )}
                 {copyType==='2'&&(
-                  <span className="font-black text-[13px] text-[#D94B5A] tracking-wider uppercase whitespace-nowrap">
+                  <span className="font-black text-[15px] text-[#D94B5A] tracking-wider uppercase whitespace-nowrap">
                     Original Copy
                   </span>
                 )}
                 {copyType==='3'&&(
-                  <span className="font-black text-[13px] text-[#D94B5A] tracking-wider uppercase whitespace-nowrap">
+                  <span className="font-black text-[15px] text-[#D94B5A] tracking-wider uppercase whitespace-nowrap">
                     Not for Bill
                   </span>
                 )}
               </div>
 
               {/* Center Main Heading */}
-              <div className="text-center pt-0 pb-0.5 px-32">
-                <h1 className="font-black text-[20px] text-[#D94B5A] tracking-wide uppercase leading-none whitespace-nowrap">
+              <div className="text-center pt-0 pb-0.5 px-36">
+                <h1 className="font-black text-[24px] text-[#D94B5A] tracking-wide uppercase leading-none whitespace-nowrap">
                   MARKS & QUALITY RECEIVED
                 </h1>
               </div>
 
               {/* Company Info Left */}
-              <div className="mt-0.5">
-                <h2 className="font-black text-[14.5px] text-[#D94B5A] tracking-tight uppercase leading-none">
+              <div className="mt-1">
+                <h2 className="font-black text-[17px] text-[#D94B5A] tracking-tight uppercase leading-none">
                   BALLY JUTE COMPANY LIMITED
                 </h2>
-                <p className="text-[10px] font-bold text-[#D94B5A] mt-0.5 leading-tight">
+                <p className="text-[11.5px] font-bold text-[#D94B5A] mt-0.5 leading-tight">
                   5, Sree Charan Sarani, Bally, West Bengal.
                 </p>
               </div>
             </div>
 
             {/* Header Metadata Fields with Full Width Underlines */}
-            <div className="space-y-1 mt-1 mb-1.5 text-[10px] font-bold text-[#D94B5A]">
+            <div className="space-y-2 mt-2 mb-2.5 text-[11px] font-bold text-[#D94B5A]">
               {/* Line 1: From */}
               <div className="flex items-end min-w-0">
-                <span className="shrink-0 font-black mr-1.5 text-[10.5px]">From :</span>
-                <span className="flex-1 min-w-0 border-b border-[#D94B5A] pb-0.5 px-1.5 font-black text-[11px] uppercase text-[#D94B5A] truncate">
+                <span className="shrink-0 font-black mr-2 text-[11.5px]">From :</span>
+                <span className="flex-1 min-w-0 border-b border-[#D94B5A] pb-0.5 px-2 font-black text-[12px] uppercase text-[#D94B5A] truncate">
                   {safeStr(master.supplier_name || (master as any).supplier || dbSupplement?.supplierName, '')}
                 </span>
               </div>
 
               {/* Line 2: M.R.No., Date, Order No., Date */}
-              <div className="grid grid-cols-12 gap-x-3 items-end">
+              <div className="grid grid-cols-12 gap-x-4 items-end">
                 <div className="col-span-3 flex items-end min-w-0">
-                  <span className="shrink-0 font-black mr-1">M.R.No. :</span>
-                  <span className="flex-1 min-w-0 border-b border-[#D94B5A] pb-0.5 px-1 font-black uppercase font-mono text-[10.5px] truncate">
+                  <span className="shrink-0 font-black mr-1.5">M.R.No. :</span>
+                  <span className="flex-1 min-w-0 border-b border-[#D94B5A] pb-0.5 px-1.5 font-black uppercase font-mono text-[11.5px] truncate">
                     {mrNo}
                   </span>
                 </div>
 
                 <div className="col-span-3 flex items-end min-w-0">
-                  <span className="shrink-0 font-black mr-1">Date :</span>
-                  <span className="flex-1 min-w-0 border-b border-[#D94B5A] pb-0.5 px-1 font-bold font-mono text-[10.5px] truncate">
+                  <span className="shrink-0 font-black mr-1.5">Date :</span>
+                  <span className="flex-1 min-w-0 border-b border-[#D94B5A] pb-0.5 px-1.5 font-bold font-mono text-[11.5px] truncate">
                     {formatDate(mrDate)}
                   </span>
                 </div>
 
                 <div className="col-span-3 flex items-end min-w-0">
-                  <span className="shrink-0 font-black mr-1">Order No. :</span>
-                  <span className="flex-1 min-w-0 border-b border-[#D94B5A] pb-0.5 px-1 font-black uppercase font-mono text-[10.5px] truncate">
+                  <span className="shrink-0 font-black mr-1.5">Order No. :</span>
+                  <span className="flex-1 min-w-0 border-b border-[#D94B5A] pb-0.5 px-1.5 font-black uppercase font-mono text-[11.5px] truncate">
                     {orderNo}
                   </span>
                 </div>
 
                 <div className="col-span-3 flex items-end min-w-0">
-                  <span className="shrink-0 font-black mr-1">Date :</span>
-                  <span className="flex-1 min-w-0 border-b border-[#D94B5A] pb-0.5 px-1 font-bold font-mono text-[10.5px] truncate">
+                  <span className="shrink-0 font-black mr-1.5">Date :</span>
+                  <span className="flex-1 min-w-0 border-b border-[#D94B5A] pb-0.5 px-1.5 font-bold font-mono text-[11.5px] truncate">
                     {formatDate(orderDate)}
                   </span>
                 </div>
               </div>
             </div>
 
-            {/* MARKS & QUALITY RECEIVED GRID TABLE (clean-print-table prevents index.css 10px/12px cell padding override) */}
-            <div className="border-[1.5px] border-[#D94B5A] bg-white mt-1 w-full overflow-hidden">
-              <table className="clean-print-table w-full table-fixed border-collapse text-[9px] text-center">
+            {/* MARKS & QUALITY RECEIVED GRID TABLE (clean-print-table prevents index.css cell padding override) */}
+            <div className="border-2 border-[#D94B5A] bg-white mt-2 w-full overflow-hidden">
+              <table className="clean-print-table w-full table-fixed border-collapse text-[10px] text-center">
                 <colgroup>
                   <col style={{ width: '5.8%' }} />{/* Crop */}
                   <col style={{ width: '7.2%' }} />{/* Mark */}
@@ -696,32 +691,32 @@ export default function InspectionPrintSlip({ master, details = [], copyType = '
                 </colgroup>
                 <thead>
                   {/* Top Header Row */}
-                  <tr className="bg-[#D94B5A] text-white font-extrabold uppercase text-[8.5px] leading-tight">
-                    <th rowSpan={2} className="border-r border-b border-white px-0.5 py-[3px]">Crop</th>
-                    <th rowSpan={2} className="border-r border-b border-white px-0.5 py-[3px]">Mark</th>
-                    <th rowSpan={2} className="border-r border-b border-white px-0.5 py-[3px]">Quality</th>
-                    <th rowSpan={2} className="border-r border-b border-white px-0.5 py-[3px]">Quantity</th>
-                    <th rowSpan={2} className="border-r border-b border-white px-0.5 py-[3px]">Claim</th>
-                    <th rowSpan={2} className="border-r border-b border-white px-0.5 py-[3px]">Gross Wt.</th>
-                    <th colSpan={2} className="border-r border-b border-white px-0.5 py-[2px]">Moisture</th>
-                    <th colSpan={2} className="border-r border-b border-white px-0.5 py-[2px]">Dust</th>
-                    <th colSpan={2} className="border-r border-b border-white px-0.5 py-[2px]">NCV</th>
-                    <th rowSpan={2} className="border-r border-b border-white px-0.5 py-[3px]">Net Wt.</th>
-                    <th colSpan={4} className="border-r border-b border-white px-0.5 py-[2px]">Settlement</th>
-                    <th rowSpan={2} className="border-b border-white px-0.5 py-[3px]">Rate</th>
+                  <tr className="bg-[#D94B5A] text-white font-extrabold uppercase text-[9.5px] leading-tight">
+                    <th rowSpan={2} className="border-r border-b border-white px-0.5 py-1.5">Crop</th>
+                    <th rowSpan={2} className="border-r border-b border-white px-0.5 py-1.5">Mark</th>
+                    <th rowSpan={2} className="border-r border-b border-white px-0.5 py-1.5">Quality</th>
+                    <th rowSpan={2} className="border-r border-b border-white px-0.5 py-1.5">Quantity</th>
+                    <th rowSpan={2} className="border-r border-b border-white px-0.5 py-1.5">Claim</th>
+                    <th rowSpan={2} className="border-r border-b border-white px-0.5 py-1.5">Gross Wt.</th>
+                    <th colSpan={2} className="border-r border-b border-white px-0.5 py-1">Moisture</th>
+                    <th colSpan={2} className="border-r border-b border-white px-0.5 py-1">Dust</th>
+                    <th colSpan={2} className="border-r border-b border-white px-0.5 py-1">NCV</th>
+                    <th rowSpan={2} className="border-r border-b border-white px-0.5 py-1.5">Net Wt.</th>
+                    <th colSpan={4} className="border-r border-b border-white px-0.5 py-1">Settlement</th>
+                    <th rowSpan={2} className="border-b border-white px-0.5 py-1.5">Rate</th>
                   </tr>
                   {/* Sub-header Row */}
-                  <tr className="bg-[#D94B5A] text-white font-extrabold uppercase text-[8px] leading-tight">
-                    <th className="border-r border-b border-white px-0.5 py-[2px]">%</th>
-                    <th className="border-r border-b border-white px-0.5 py-[2px]">Kg.</th>
-                    <th className="border-r border-b border-white px-0.5 py-[2px]">%</th>
-                    <th className="border-r border-b border-white px-0.5 py-[2px]">Kg.</th>
-                    <th className="border-r border-b border-white px-0.5 py-[2px]">%</th>
-                    <th className="border-r border-b border-white px-0.5 py-[2px]">Kg.</th>
-                    <th className="border-r border-b border-white px-0.5 py-[2px]">Grade</th>
-                    <th className="border-r border-b border-white px-0.5 py-[2px]">Moisture</th>
-                    <th className="border-r border-b border-white px-0.5 py-[2px]">Dust</th>
-                    <th className="border-r border-b border-white px-0.5 py-[2px]">Prem./Less</th>
+                  <tr className="bg-[#D94B5A] text-white font-extrabold uppercase text-[8.5px] leading-tight">
+                    <th className="border-r border-b border-white px-0.5 py-1">%</th>
+                    <th className="border-r border-b border-white px-0.5 py-1">Kg.</th>
+                    <th className="border-r border-b border-white px-0.5 py-1">%</th>
+                    <th className="border-r border-b border-white px-0.5 py-1">Kg.</th>
+                    <th className="border-r border-b border-white px-0.5 py-1">%</th>
+                    <th className="border-r border-b border-white px-0.5 py-1">Kg.</th>
+                    <th className="border-r border-b border-white px-0.5 py-1">Grade</th>
+                    <th className="border-r border-b border-white px-0.5 py-1">Moisture</th>
+                    <th className="border-r border-b border-white px-0.5 py-1">Dust</th>
+                    <th className="border-r border-b border-white px-0.5 py-1">Prem./Less</th>
                   </tr>
                 </thead>
 
@@ -729,7 +724,7 @@ export default function InspectionPrintSlip({ master, details = [], copyType = '
                   {paddedRows.map((row, idx) => {
                     if (!row) {
                       return (
-                        <tr key={idx} className="h-[19px]">
+                        <tr key={idx} className="h-[26px]">
                           <td className="border-r border-[#D94B5A]"></td>
                           <td className="border-r border-[#D94B5A]"></td>
                           <td className="border-r border-[#D94B5A]"></td>
@@ -756,21 +751,21 @@ export default function InspectionPrintSlip({ master, details = [], copyType = '
                     const { grossWt, moistNum, moistPctRaw, moistureKg, dustNum, dustPctRaw, dustKg, ncvNum, ncvPctRaw, ncvKg, netWt } = calcs;
 
                     return (
-                      <tr key={idx} className="h-[19px] text-[9px] leading-none">
+                      <tr key={idx} className="h-[26px] text-[10px] leading-none">
                         {/* Crop */}
-                        <td className="border-r border-[#D94B5A] px-0.5 py-0.5 font-mono whitespace-nowrap">
+                        <td className="border-r border-[#D94B5A] px-0.5 py-1 font-mono whitespace-nowrap">
                           {row.crop_year || '2026-27'}
                         </td>
                         {/* Mark */}
-                        <td className="border-r border-[#D94B5A] px-0.5 py-0.5 font-mono uppercase truncate" title={String((row as any).marka || row.marks || (row as any).challan_marka_name || (row as any).marka_name || resolvedMasterArea || 'NO MARK')}>
+                        <td className="border-r border-[#D94B5A] px-0.5 py-1 font-mono uppercase truncate" title={String((row as any).marka || row.marks || (row as any).challan_marka_name || (row as any).marka_name || resolvedMasterArea || 'NO MARK')}>
                           {(row as any).marka || row.marks || (row as any).challan_marka_name || (row as any).marka_name || resolvedMasterArea || 'NO MARK'}
                         </td>
                         {/* Quality */}
-                        <td className="border-r border-[#D94B5A] px-0.5 py-0.5 font-bold uppercase truncate">
+                        <td className="border-r border-[#D94B5A] px-0.5 py-1 font-bold uppercase truncate">
                           {row.stock_grade_name || row.arrival_grade || (row as any).receipt_grade_name || (row as any).receipt_grade || (row as any).grade_name || row.stock_grade_code || ''}
                         </td>
                         {/* Quantity */}
-                        <td className="border-r border-[#D94B5A] px-0.5 py-0.5 font-mono text-[9.5px] whitespace-nowrap">
+                        <td className="border-r border-[#D94B5A] px-0.5 py-1 font-mono text-[10.5px] whitespace-nowrap">
                           {(() => {
                             const q = getRowQty(row);
                             if (q > 0) return q;
@@ -778,51 +773,51 @@ export default function InspectionPrintSlip({ master, details = [], copyType = '
                           })()}
                         </td>
                         {/* Claim */}
-                        <td className="border-r border-[#D94B5A] px-0.5 py-0.5 font-mono">
+                        <td className="border-r border-[#D94B5A] px-0.5 py-1 font-mono">
                           {row.claim || '-'}
                         </td>
                         {/* Gross Wt. */}
-                        <td className="border-r border-[#D94B5A] px-0.5 py-0.5 font-mono text-[9.5px] whitespace-nowrap">
+                        <td className="border-r border-[#D94B5A] px-0.5 py-1 font-mono text-[10.5px] whitespace-nowrap">
                           {grossWt > 0 ? (grossWt * 1000).toFixed(0) : ''}
                         </td>
                         {/* Moisture % */}
-                        <td className="border-r border-[#D94B5A] px-0.5 py-0.5 font-mono">
+                        <td className="border-r border-[#D94B5A] px-0.5 py-1 font-mono">
                           {moistNum > 0 ? `${moistNum}%` : (moistPctRaw ? `${moistPctRaw}${typeof moistPctRaw === 'number' ? '%' : ''}` : '')}
                         </td>
                         {/* Moisture Kg. */}
-                        <td className="border-r border-[#D94B5A] px-0.5 py-0.5 font-mono">
+                        <td className="border-r border-[#D94B5A] px-0.5 py-1 font-mono">
                           {moistureKg > 0 ? Math.round(moistureKg) : ''}
                         </td>
                         {/* Dust % */}
-                        <td className="border-r border-[#D94B5A] px-0.5 py-0.5 font-mono">
+                        <td className="border-r border-[#D94B5A] px-0.5 py-1 font-mono">
                           {dustNum > 0 ? `${dustNum}%` : (dustPctRaw ? `${dustPctRaw}${typeof dustPctRaw === 'number' ? '%' : ''}` : '')}
                         </td>
                         {/* Dust Kg. */}
-                        <td className="border-r border-[#D94B5A] px-0.5 py-0.5 font-mono">
+                        <td className="border-r border-[#D94B5A] px-0.5 py-1 font-mono">
                           {dustKg > 0 ? dustKg.toFixed(1) : ''}
                         </td>
                         {/* NCV % */}
-                        <td className="border-r border-[#D94B5A] px-0.5 py-0.5 font-mono">
+                        <td className="border-r border-[#D94B5A] px-0.5 py-1 font-mono">
                           {ncvNum > 0 ? `${ncvNum}%` : (ncvPctRaw ? `${ncvPctRaw}${typeof ncvPctRaw === 'number' ? '%' : ''}` : '')}
                         </td>
                         {/* NCV Kg. */}
-                        <td className="border-r border-[#D94B5A] px-0.5 py-0.5 font-mono">
+                        <td className="border-r border-[#D94B5A] px-0.5 py-1 font-mono">
                           {ncvKg > 0 ? ncvKg.toFixed(1) : ''}
                         </td>
                         {/* Net Wt. */}
-                        <td className="border-r border-[#D94B5A] px-0.5 py-0.5 font-mono text-[9.5px] whitespace-nowrap">
+                        <td className="border-r border-[#D94B5A] px-0.5 py-1 font-mono text-[10.5px] whitespace-nowrap">
                           {netWt > 0 ? (netWt * 1000).toFixed(0) : (grossWt > 0 ? (grossWt * 1000).toFixed(0) : '')}
                         </td>
                         {/* Settlement Grade - Blank in Mill Inspection Slip */}
-                        <td className="border-r border-[#D94B5A] px-0.5 py-0.5 font-mono"></td>
+                        <td className="border-r border-[#D94B5A] px-0.5 py-1 font-mono"></td>
                         {/* Settlement Moisture - Blank in Mill Inspection Slip */}
-                        <td className="border-r border-[#D94B5A] px-0.5 py-0.5 font-mono"></td>
+                        <td className="border-r border-[#D94B5A] px-0.5 py-1 font-mono"></td>
                         {/* Settlement Dust - Blank in Mill Inspection Slip */}
-                        <td className="border-r border-[#D94B5A] px-0.5 py-0.5 font-mono"></td>
+                        <td className="border-r border-[#D94B5A] px-0.5 py-1 font-mono"></td>
                         {/* Settlement Prem./Less - Blank in Mill Inspection Slip */}
-                        <td className="border-r border-[#D94B5A] px-0.5 py-0.5 font-mono"></td>
+                        <td className="border-r border-[#D94B5A] px-0.5 py-1 font-mono"></td>
                         {/* Rate */}
-                        <td className="px-0.5 py-0.5 font-mono whitespace-nowrap">
+                        <td className="px-0.5 py-1 font-mono whitespace-nowrap">
                           {row.rate || row.rate_qntl || ''}
                         </td>
                       </tr>
@@ -830,70 +825,70 @@ export default function InspectionPrintSlip({ master, details = [], copyType = '
                   })}
 
                   {/* TOTAL ROW */}
-                  <tr className="bg-[#ffe8e8] font-black text-[#D94B5A] h-[21px] border-t-[1.5px] border-[#D94B5A] text-[9.5px] leading-none">
-                    <td colSpan={3} className="border-r border-[#D94B5A] px-2 py-0.5 text-left uppercase tracking-wider text-[9.5px]">
+                  <tr className="bg-[#ffe8e8] font-black text-[#D94B5A] h-[28px] border-t-2 border-[#D94B5A] text-[10.5px] leading-none">
+                    <td colSpan={3} className="border-r border-[#D94B5A] px-3 py-1 text-left uppercase tracking-wider text-[11px]">
                       TOTAL
                     </td>
-                    <td className="border-r border-[#D94B5A] px-0.5 py-0.5 font-mono text-[9.5px] whitespace-nowrap">
+                    <td className="border-r border-[#D94B5A] px-0.5 py-1 font-mono text-[11px] whitespace-nowrap">
                       {totalQuantity > 0 ? totalQuantity : ''}
                     </td>
-                    <td className="border-r border-[#D94B5A] px-0.5 py-0.5 font-mono">-</td>
-                    <td className="border-r border-[#D94B5A] px-0.5 py-0.5 font-mono text-[9.5px] whitespace-nowrap">
+                    <td className="border-r border-[#D94B5A] px-0.5 py-1 font-mono">-</td>
+                    <td className="border-r border-[#D94B5A] px-0.5 py-1 font-mono text-[11px] whitespace-nowrap">
                       {totalGrossWt > 0 ? (totalGrossWt * 1000).toFixed(0) : ''}
                     </td>
-                    <td className="border-r border-[#D94B5A] px-0.5 py-0.5 font-mono">-</td>
-                    <td className="border-r border-[#D94B5A] px-0.5 py-0.5 font-mono">
+                    <td className="border-r border-[#D94B5A] px-0.5 py-1 font-mono">-</td>
+                    <td className="border-r border-[#D94B5A] px-0.5 py-1 font-mono">
                       {totalMoistureKg > 0 ? Math.round(totalMoistureKg) : ''}
                     </td>
-                    <td className="border-r border-[#D94B5A] px-0.5 py-0.5 font-mono">-</td>
-                    <td className="border-r border-[#D94B5A] px-0.5 py-0.5 font-mono">
+                    <td className="border-r border-[#D94B5A] px-0.5 py-1 font-mono">-</td>
+                    <td className="border-r border-[#D94B5A] px-0.5 py-1 font-mono">
                       {totalDustKg > 0 ? totalDustKg.toFixed(1) : ''}
                     </td>
-                    <td className="border-r border-[#D94B5A] px-0.5 py-0.5 font-mono">-</td>
-                    <td className="border-r border-[#D94B5A] px-0.5 py-0.5 font-mono">
+                    <td className="border-r border-[#D94B5A] px-0.5 py-1 font-mono">-</td>
+                    <td className="border-r border-[#D94B5A] px-0.5 py-1 font-mono">
                       {totalNcvKg > 0 ? totalNcvKg.toFixed(1) : ''}
                     </td>
-                    <td className="border-r border-[#D94B5A] px-0.5 py-0.5 font-mono text-[9.5px] whitespace-nowrap">
+                    <td className="border-r border-[#D94B5A] px-0.5 py-1 font-mono text-[11px] whitespace-nowrap">
                       {totalNetWt > 0 ? (totalNetWt * 1000).toFixed(0) : (totalGrossWt > 0 ? (totalGrossWt * 1000).toFixed(0) : '')}
                     </td>
-                    <td className="border-r border-[#D94B5A] px-0.5 py-0.5 font-mono"></td>
-                    <td className="border-r border-[#D94B5A] px-0.5 py-0.5 font-mono"></td>
-                    <td className="border-r border-[#D94B5A] px-0.5 py-0.5 font-mono"></td>
-                    <td className="border-r border-[#D94B5A] px-0.5 py-0.5 font-mono"></td>
-                    <td className="px-0.5 py-0.5 font-mono"></td>
+                    <td className="border-r border-[#D94B5A] px-0.5 py-1 font-mono"></td>
+                    <td className="border-r border-[#D94B5A] px-0.5 py-1 font-mono"></td>
+                    <td className="border-r border-[#D94B5A] px-0.5 py-1 font-mono"></td>
+                    <td className="border-r border-[#D94B5A] px-0.5 py-1 font-mono"></td>
+                    <td className="px-0.5 py-1 font-mono"></td>
                   </tr>
                 </tbody>
               </table>
             </div>
 
             {/* Remarks Row */}
-            <div className="mt-1.5 flex items-start text-[10px] font-bold text-[#D94B5A]">
-              <span className="shrink-0 font-black mr-1.5 text-[10.5px]">Remarks:</span>
-              <p className="flex-1 min-w-0 font-semibold text-[10px] text-[#D94B5A] min-h-[14px] leading-snug break-words">
+            <div className="mt-2.5 flex items-start text-[11px] font-bold text-[#D94B5A]">
+              <span className="shrink-0 font-black mr-2 text-[11.5px]">Remarks:</span>
+              <p className="flex-1 min-w-0 font-semibold text-[11px] text-[#D94B5A] min-h-[16px] leading-snug break-words">
                 {remarksDisplay}
               </p>
             </div>
 
             {/* Boxed Information Section (Challan No & Date, Vehicle, Stations) */}
-            <div className="mt-1.5 border-[1.5px] border-[#D94B5A] px-2 py-1 bg-white text-[10px] font-bold text-[#D94B5A]">
-              <div className="grid grid-cols-12 gap-2.5 items-center">
+            <div className="mt-2 border-2 border-[#D94B5A] px-3 py-1.5 bg-white text-[11px] font-bold text-[#D94B5A]">
+              <div className="grid grid-cols-12 gap-3 items-center">
                 <div className="col-span-4 flex items-center min-w-0">
-                  <span className="shrink-0 font-black mr-1">Challan No & Date :</span>
-                  <span className="flex-1 min-w-0 border-b border-[#D94B5A] pb-0.5 px-1 font-mono truncate">
+                  <span className="shrink-0 font-black mr-1.5">Challan No & Date :</span>
+                  <span className="flex-1 min-w-0 border-b border-[#D94B5A] pb-0.5 px-1.5 font-mono truncate">
                     {challanDisplay}
                   </span>
                 </div>
 
                 <div className="col-span-4 flex items-center min-w-0">
-                  <span className="shrink-0 font-black mr-1">Vehicle :</span>
-                  <span className="flex-1 min-w-0 border-b border-[#D94B5A] pb-0.5 px-1 font-mono uppercase truncate">
+                  <span className="shrink-0 font-black mr-1.5">Vehicle :</span>
+                  <span className="flex-1 min-w-0 border-b border-[#D94B5A] pb-0.5 px-1.5 font-mono uppercase truncate">
                     {safeStr(master.lorry_number || master.vehicle_no || dbSupplement?.lorryNumber, '')}
                   </span>
                 </div>
 
                 <div className="col-span-4 flex items-center min-w-0">
-                  <span className="shrink-0 font-black mr-1">Stations :</span>
-                  <span className="flex-1 min-w-0 border-b border-[#D94B5A] pb-0.5 px-1 uppercase truncate font-semibold">
+                  <span className="shrink-0 font-black mr-1.5">Stations :</span>
+                  <span className="flex-1 min-w-0 border-b border-[#D94B5A] pb-0.5 px-1.5 uppercase truncate font-semibold">
                     {stationsDisplay}
                   </span>
                 </div>
@@ -902,30 +897,30 @@ export default function InspectionPrintSlip({ master, details = [], copyType = '
           </div>
 
           {/* Bottom Footer Section with Notes & Authorized Signatory */}
-          <div className="mt-1.5 border-t border-[#D94B5A] pt-1 grid grid-cols-12 gap-3 text-[#D94B5A]">
+          <div className="mt-2.5 border-t border-[#D94B5A] pt-2 grid grid-cols-12 gap-4 text-[#D94B5A]">
             {/* Left Side: Legal Notes */}
-            <div className="col-span-8 min-w-0 pr-2 border-r border-[#D94B5A] text-[8.5px] leading-[1.2] space-y-0.5">
-              <p className="font-black text-[9px]">Note:</p>
+            <div className="col-span-8 min-w-0 pr-3 border-r border-[#D94B5A] text-[9.5px] leading-snug space-y-1">
+              <p className="font-black text-[10px]">Note:</p>
               <p className="font-semibold text-justify">
                 1. Initiate your offer of settlement at an early date failing which we shall refer the matter to B.C.C.I for arbitrator.
               </p>
               <p className="font-semibold text-justify">
                 2. Seller must remove the bales within three days from the date of serving the Mill Receipt if the rates given on the Mill Receipt by the Buyers are not acceptable to them, failing which Buyer will treat the consignment as having been accepted and will not be responsible for its being used up.
               </p>
-              <p className="font-black text-[9px] tracking-wide pt-0.5 uppercase">
+              <p className="font-black text-[10px] tracking-wide pt-0.5 uppercase">
                 ORIGINAL MUST BE ATTACHED WITH BILL/COPY
               </p>
             </div>
 
             {/* Right Side: Company Signatory Box */}
-            <div className="col-span-4 min-w-0 flex flex-col justify-between items-center text-center pl-1">
-              <p className="font-black text-[9.5px] uppercase tracking-wide leading-tight">
+            <div className="col-span-4 min-w-0 flex flex-col justify-between items-center text-center pl-2">
+              <p className="font-black text-[11px] uppercase tracking-wide leading-tight">
                 FOR, BALLY JUTE COMPANY LIMITED
               </p>
               
-              <div className="w-full pt-5">
-                <div className="w-36 max-w-full mx-auto border-t border-[#D94B5A] mb-0.5"></div>
-                <p className="font-black text-[9px] tracking-wider uppercase">
+              <div className="w-full pt-8">
+                <div className="w-44 max-w-full mx-auto border-t border-[#D94B5A] mb-1"></div>
+                <p className="font-black text-[10px] tracking-wider uppercase">
                   AUTHORISED SIGNATORY
                 </p>
               </div>
@@ -933,10 +928,10 @@ export default function InspectionPrintSlip({ master, details = [], copyType = '
           </div>
         </div>
 
-        {/* Right Sprocket Feed Holes (inside safe padding edge on screen only so printable width matches 1:1) */}
-        <div className="absolute right-[4px] inset-y-2 w-[10px] flex flex-col justify-between items-center pointer-events-none select-none print:hidden">
-          {Array.from({ length: 13 }).map((_, i) => (
-            <div key={i} className="w-2.5 h-2.5 bg-slate-100 rounded-full shadow-inner border border-red-300/60 opacity-70"></div>
+        {/* Dedicated Right Sprocket Feed Holes Strip (never overlaps text) */}
+        <div className="w-[22px] bg-transparent flex flex-col justify-between py-2 shrink-0 ml-2.5 select-none print:hidden">
+          {Array.from({ length: 15 }).map((_, i) => (
+            <div key={i} className="w-3 h-3 bg-slate-100 rounded-full mx-auto shadow-inner border border-red-300/60 opacity-70"></div>
           ))}
         </div>
 
