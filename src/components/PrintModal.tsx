@@ -199,7 +199,7 @@ export default function PrintModal({ isOpen, onClose, title, children, showTip =
     >
       <div 
         id="print-modal-inner" 
-        className="w-full max-w-[96vw] xl:max-w-[1320px] bg-[#FBCFCB] border-2 border-white shadow-[3px_3px_10px_rgba(0,0,0,0.6)] flex flex-col my-4 sm:my-6 print:my-0 print:max-w-none print:border-none print:shadow-none"
+        className="w-full max-w-[96vw] xl:max-w-[1320px] bg-[#FBCFCB] border-2 border-white shadow-[3px_3px_10px_rgba(0,0,0,0.6)] flex flex-col my-2 sm:my-3 print:my-0 print:max-w-none print:border-none print:shadow-none"
       >
         {/* Top Retro Menubar */}
         <div className="bg-[#2a3088] text-white px-3 py-1.5 flex justify-between items-center text-xs font-black  border-b border-white no-print">
@@ -217,7 +217,7 @@ export default function PrintModal({ isOpen, onClose, title, children, showTip =
 
         {/* Print Controls / Tip Strip */}
         {!hideActionBar && (
-          <div className="bg-[#f0ece4] p-3 border-b border-gray-400 text-[11px] font-semibold text-gray-800 flex justify-between items-center flex-wrap gap-2 no-print">
+          <div className="bg-[#f0ece4] px-3 py-2 border-b border-gray-400 text-[11px] font-semibold text-gray-800 flex justify-between items-center flex-wrap gap-2 no-print">
             {showTip ? (
               <div className="flex flex-col">
                 <p className="text-red-800 font-extrabold flex items-center gap-1 text-xs">

@@ -122,17 +122,18 @@ export default function InspectionPrintSlip({ master, details = [], copyType = '
   const [previewScale, setPreviewScale] = React.useState<number>(1);
   const [naturalSize, setNaturalSize] = React.useState<{ width: number; height: number }>({ width: 1123, height: 794 });
 
-  // Measure available preview width and scale 297mm landscape slip cleanly on screen so full page is visible without right-edge clipping
+  // Measure available preview width and height and scale 297mm x 210mm landscape slip cleanly on screen so the entire single-page report is visible without clipping
   React.useEffect(() => {
     const updateScale = () => {
       const container = previewContainerRef.current;
       const slip = slipRef.current;
       if (!container || !slip) return;
       const availableW = Math.max(300, container.clientWidth - 24);
+      const availableH = Math.max(360, window.innerHeight - 160);
       const slipW = slip.offsetWidth || 1123;
       const slipH = slip.offsetHeight || 794;
       setNaturalSize(prev => (prev.width === slipW && prev.height === slipH ? prev : { width: slipW, height: slipH }));
-      const nextScale = Math.max(0.35, Math.min(1, availableW / slipW));
+      const nextScale = Math.max(0.4, Math.min(1, availableW / slipW, availableH / slipH));
       setPreviewScale(prev => (Math.abs(prev - nextScale) < 0.005 ? prev : nextScale));
     };
 
@@ -471,7 +472,7 @@ export default function InspectionPrintSlip({ master, details = [], copyType = '
   const remarksDisplay = safeStr(master.remarks || dbSupplement?.remarks, '');
 
   return (
-    <div ref={previewContainerRef} className="bg-[#525659] p-3 sm:p-4 flex justify-center items-start print:block print:bg-white print:p-0 font-sans select-text w-full overflow-x-auto">
+    <div ref={previewContainerRef} className="bg-[#525659] p-2 sm:p-3 flex justify-center items-start print:block print:bg-white print:p-0 font-sans select-text w-full overflow-hidden">
       <style>{`
         @media print {
           @page {
@@ -496,7 +497,7 @@ export default function InspectionPrintSlip({ master, details = [], copyType = '
             height: 210mm !important;
             min-height: 210mm !important;
             max-height: 210mm !important;
-            padding: 8mm 12mm !important;
+            padding: 7mm 10mm !important;
             margin: 0 auto !important;
             background: white !important;
             box-shadow: none !important;
@@ -530,21 +531,21 @@ export default function InspectionPrintSlip({ master, details = [], copyType = '
               }
             : undefined
         }
-        className="print-stationery-landscape w-[297mm] min-h-[210mm] max-w-[297mm] bg-[#ffffff] shadow-2xl border border-red-200 p-5 sm:p-6 flex select-text shrink-0 relative overflow-hidden print:shadow-none print:border-none print:bg-white box-sizing:border-box text-[#D94B5A]"
+        className="print-stationery-landscape w-[297mm] min-h-[210mm] max-w-[297mm] bg-[#ffffff] shadow-2xl border border-red-200 p-4 sm:p-5 flex select-text shrink-0 relative overflow-hidden print:shadow-none print:border-none print:bg-white box-border text-[#D94B5A]"
       >
         
         {/* Left Sprocket Feed Holes */}
-        <div className="w-[24px] bg-transparent flex flex-col justify-between py-2 shrink-0 pr-1.5 mr-2 select-none print:hidden">
+        <div className="w-[18px] bg-transparent flex flex-col justify-between py-2 shrink-0 pr-1 mr-1.5 select-none print:hidden">
           {Array.from({ length: 15 }).map((_, i) => (
-            <div key={i} className="w-3.5 h-3.5 bg-slate-100 rounded-full mx-auto shadow-inner border border-red-300/60 opacity-70"></div>
+            <div key={i} className="w-3 h-3 bg-slate-100 rounded-full mx-auto shadow-inner border border-red-300/60 opacity-70"></div>
           ))}
         </div>
 
-        {/* Form Body Canvas */}
-        <div className="flex-1 flex flex-col justify-between text-[11px] leading-tight font-sans">
-          <div>
+        {/* Form Body Canvas (min-w-0 prevents wide table from pushing past 297mm width) */}
+        <div className="flex-1 min-w-0 w-full flex flex-col justify-between text-[11px] leading-tight font-sans">
+          <div className="min-w-0 w-full">
             {/* Top Row: Title, Mill Copy, Company Header */}
-            <div className="relative mb-2">
+            <div className="relative mb-1.5">
               {/* Mill Copy top right */}
               <div className="absolute right-0 top-0 text-right">
                 {copyType==='1'&&(
@@ -566,59 +567,59 @@ export default function InspectionPrintSlip({ master, details = [], copyType = '
               </div>
 
               {/* Center Main Heading */}
-              <div className="text-center pt-0 pb-0.5">
-                <h1 className="font-black text-2xl sm:text-3xl text-[#D94B5A] tracking-wide uppercase">
+              <div className="text-center pt-0 pb-0.5 px-28">
+                <h1 className="font-black text-2xl sm:text-[26px] text-[#D94B5A] tracking-wide uppercase leading-none">
                   MARKS & QUALITY RECEIVED
                 </h1>
               </div>
 
               {/* Company Info Left */}
               <div className="mt-0.5">
-                <h2 className="font-black text-lg sm:text-xl text-[#D94B5A] tracking-tight uppercase leading-none">
+                <h2 className="font-black text-lg text-[#D94B5A] tracking-tight uppercase leading-none">
                   BALLY JUTE COMPANY LIMITED
                 </h2>
-                <p className="text-[12px] font-bold text-[#D94B5A] mt-0.5">
+                <p className="text-[11px] font-bold text-[#D94B5A] mt-0.5">
                   5, Sree Charan Sarani, Bally, West Bengal.
                 </p>
               </div>
             </div>
 
             {/* Header Metadata Fields with Full Width Underlines */}
-            <div className="space-y-2 mt-2 mb-2.5 text-[11.5px] font-bold text-[#D94B5A]">
+            <div className="space-y-1.5 mt-1.5 mb-2 text-[11px] font-bold text-[#D94B5A]">
               {/* Line 1: From */}
-              <div className="flex items-end">
-                <span className="shrink-0 font-black mr-2 text-[12px]">From :</span>
-                <span className="flex-1 border-b border-[#D94B5A] pb-0.5 px-2 font-black text-[12.5px] uppercase text-[#D94B5A] whitespace-normal">
+              <div className="flex items-end min-w-0">
+                <span className="shrink-0 font-black mr-2 text-[11.5px]">From :</span>
+                <span className="flex-1 min-w-0 border-b border-[#D94B5A] pb-0.5 px-2 font-black text-[12px] uppercase text-[#D94B5A] truncate">
                   {safeStr(master.supplier_name || (master as any).supplier || dbSupplement?.supplierName, '')}
                 </span>
               </div>
 
-              {/* Line 2: M.R.No., Date, Order No., Date (Spacious landscape layout without truncation) */}
-              <div className="grid grid-cols-12 gap-x-4 items-end">
-                <div className="col-span-3 flex items-end">
+              {/* Line 2: M.R.No., Date, Order No., Date */}
+              <div className="grid grid-cols-12 gap-x-3 items-end">
+                <div className="col-span-3 flex items-end min-w-0">
                   <span className="shrink-0 font-black mr-1.5">M.R.No. :</span>
-                  <span className="flex-1 border-b border-[#D94B5A] pb-0.5 px-1.5 font-black uppercase font-mono text-[12px]">
+                  <span className="flex-1 min-w-0 border-b border-[#D94B5A] pb-0.5 px-1 font-black uppercase font-mono text-[11.5px] truncate">
                     {mrNo}
                   </span>
                 </div>
 
-                <div className="col-span-3 flex items-end">
+                <div className="col-span-3 flex items-end min-w-0">
                   <span className="shrink-0 font-black mr-1.5">Date :</span>
-                  <span className="flex-1 border-b border-[#D94B5A] pb-0.5 px-1.5 font-bold font-mono text-[12px]">
+                  <span className="flex-1 min-w-0 border-b border-[#D94B5A] pb-0.5 px-1 font-bold font-mono text-[11.5px] truncate">
                     {formatDate(mrDate)}
                   </span>
                 </div>
 
-                <div className="col-span-3 flex items-end">
+                <div className="col-span-3 flex items-end min-w-0">
                   <span className="shrink-0 font-black mr-1.5">Order No. :</span>
-                  <span className="flex-1 border-b border-[#D94B5A] pb-0.5 px-1.5 font-black uppercase font-mono text-[12px] whitespace-nowrap overflow-visible">
+                  <span className="flex-1 min-w-0 border-b border-[#D94B5A] pb-0.5 px-1 font-black uppercase font-mono text-[11.5px] truncate">
                     {orderNo}
                   </span>
                 </div>
 
-                <div className="col-span-3 flex items-end">
+                <div className="col-span-3 flex items-end min-w-0">
                   <span className="shrink-0 font-black mr-1.5">Date :</span>
-                  <span className="flex-1 border-b border-[#D94B5A] pb-0.5 px-1.5 font-bold font-mono text-[12px]">
+                  <span className="flex-1 min-w-0 border-b border-[#D94B5A] pb-0.5 px-1 font-bold font-mono text-[11.5px] truncate">
                     {formatDate(orderDate)}
                   </span>
                 </div>
@@ -626,36 +627,56 @@ export default function InspectionPrintSlip({ master, details = [], copyType = '
             </div>
 
             {/* MARKS & QUALITY RECEIVED GRID TABLE */}
-            <div className="border-2 border-[#D94B5A] bg-white mt-2 overflow-hidden">
-              <table className="w-full border-collapse text-[10.5px] text-center">
+            <div className="border-2 border-[#D94B5A] bg-white mt-1.5 w-full overflow-hidden">
+              <table className="w-full table-fixed border-collapse text-[9.5px] text-center">
+                <colgroup>
+                  <col style={{ width: '5.6%' }} />{/* Crop */}
+                  <col style={{ width: '7.0%' }} />{/* Mark */}
+                  <col style={{ width: '5.8%' }} />{/* Quality */}
+                  <col style={{ width: '5.8%' }} />{/* Quantity */}
+                  <col style={{ width: '4.2%' }} />{/* Claim */}
+                  <col style={{ width: '6.8%' }} />{/* Gross Wt. */}
+                  <col style={{ width: '3.8%' }} />{/* Moisture % */}
+                  <col style={{ width: '4.2%' }} />{/* Moisture Kg */}
+                  <col style={{ width: '3.8%' }} />{/* Dust % */}
+                  <col style={{ width: '4.2%' }} />{/* Dust Kg */}
+                  <col style={{ width: '3.8%' }} />{/* NCV % */}
+                  <col style={{ width: '4.2%' }} />{/* NCV Kg */}
+                  <col style={{ width: '6.8%' }} />{/* Net Wt. */}
+                  <col style={{ width: '5.8%' }} />{/* Settlement Grade */}
+                  <col style={{ width: '6.8%' }} />{/* Settlement Moisture */}
+                  <col style={{ width: '5.2%' }} />{/* Settlement Dust */}
+                  <col style={{ width: '7.8%' }} />{/* Settlement Prem./Less */}
+                  <col style={{ width: '8.4%' }} />{/* Rate */}
+                </colgroup>
                 <thead>
                   {/* Top Header Row */}
-                  <tr className="bg-[#D94B5A] text-white font-extrabold uppercase text-[10px]">
-                    <th rowSpan={2} className="border-r border-b border-white px-2 py-1 w-16">Crop</th>
-                    <th rowSpan={2} className="border-r border-b border-white px-2 py-1 w-20">Mark</th>
-                    <th rowSpan={2} className="border-r border-b border-white px-2 py-1 w-18">Quality</th>
-                    <th rowSpan={2} className="border-r border-b border-white px-2 py-1 w-16">Quantity</th>
-                    <th rowSpan={2} className="border-r border-b border-white px-1.5 py-1 w-14">Claim</th>
-                    <th rowSpan={2} className="border-r border-b border-white px-2 py-1 w-20">Gross Wt.</th>
-                    <th colSpan={2} className="border-r border-b border-white px-1 py-0.5">Moisture</th>
-                    <th colSpan={2} className="border-r border-b border-white px-1 py-0.5">Dust</th>
-                    <th colSpan={2} className="border-r border-b border-white px-1 py-0.5">NCV</th>
-                    <th rowSpan={2} className="border-r border-b border-white px-2 py-1 w-20">Net Wt.</th>
-                    <th colSpan={4} className="border-r border-b border-white px-1 py-0.5">Settlement</th>
-                    <th rowSpan={2} className="border-b border-white px-2 py-1 w-16">Rate</th>
+                  <tr className="bg-[#D94B5A] text-white font-extrabold uppercase text-[9px] leading-tight">
+                    <th rowSpan={2} className="border-r border-b border-white px-0.5 py-1">Crop</th>
+                    <th rowSpan={2} className="border-r border-b border-white px-0.5 py-1">Mark</th>
+                    <th rowSpan={2} className="border-r border-b border-white px-0.5 py-1">Quality</th>
+                    <th rowSpan={2} className="border-r border-b border-white px-0.5 py-1">Quantity</th>
+                    <th rowSpan={2} className="border-r border-b border-white px-0.5 py-1">Claim</th>
+                    <th rowSpan={2} className="border-r border-b border-white px-0.5 py-1">Gross Wt.</th>
+                    <th colSpan={2} className="border-r border-b border-white px-0.5 py-0.5">Moisture</th>
+                    <th colSpan={2} className="border-r border-b border-white px-0.5 py-0.5">Dust</th>
+                    <th colSpan={2} className="border-r border-b border-white px-0.5 py-0.5">NCV</th>
+                    <th rowSpan={2} className="border-r border-b border-white px-0.5 py-1">Net Wt.</th>
+                    <th colSpan={4} className="border-r border-b border-white px-0.5 py-0.5">Settlement</th>
+                    <th rowSpan={2} className="border-b border-white px-0.5 py-1">Rate</th>
                   </tr>
                   {/* Sub-header Row */}
-                  <tr className="bg-[#D94B5A] text-white font-extrabold uppercase text-[9px]">
-                    <th className="border-r border-b border-white px-1 py-0.5 w-10">%</th>
-                    <th className="border-r border-b border-white px-1 py-0.5 w-10">Kg.</th>
-                    <th className="border-r border-b border-white px-1 py-0.5 w-10">%</th>
-                    <th className="border-r border-b border-white px-1 py-0.5 w-10">Kg.</th>
-                    <th className="border-r border-b border-white px-1 py-0.5 w-10">%</th>
-                    <th className="border-r border-b border-white px-1 py-0.5 w-10">Kg.</th>
-                    <th className="border-r border-b border-white px-1 py-0.5 w-14">Grade</th>
-                    <th className="border-r border-b border-white px-1 py-0.5 w-14">Moisture</th>
-                    <th className="border-r border-b border-white px-1 py-0.5 w-12">Dust</th>
-                    <th className="border-r border-b border-white px-1 py-0.5 w-16">Prem./Less</th>
+                  <tr className="bg-[#D94B5A] text-white font-extrabold uppercase text-[8.5px] leading-tight">
+                    <th className="border-r border-b border-white px-0.5 py-0.5">%</th>
+                    <th className="border-r border-b border-white px-0.5 py-0.5">Kg.</th>
+                    <th className="border-r border-b border-white px-0.5 py-0.5">%</th>
+                    <th className="border-r border-b border-white px-0.5 py-0.5">Kg.</th>
+                    <th className="border-r border-b border-white px-0.5 py-0.5">%</th>
+                    <th className="border-r border-b border-white px-0.5 py-0.5">Kg.</th>
+                    <th className="border-r border-b border-white px-0.5 py-0.5">Grade</th>
+                    <th className="border-r border-b border-white px-0.5 py-0.5">Moisture</th>
+                    <th className="border-r border-b border-white px-0.5 py-0.5">Dust</th>
+                    <th className="border-r border-b border-white px-0.5 py-0.5">Prem./Less</th>
                   </tr>
                 </thead>
 
@@ -663,7 +684,7 @@ export default function InspectionPrintSlip({ master, details = [], copyType = '
                   {paddedRows.map((row, idx) => {
                     if (!row) {
                       return (
-                        <tr key={idx} className="h-6.5">
+                        <tr key={idx} className="h-6">
                           <td className="border-r border-[#D94B5A]"></td>
                           <td className="border-r border-[#D94B5A]"></td>
                           <td className="border-r border-[#D94B5A]"></td>
@@ -690,21 +711,21 @@ export default function InspectionPrintSlip({ master, details = [], copyType = '
                     const { grossWt, moistNum, moistPctRaw, moistureKg, dustNum, dustPctRaw, dustKg, ncvNum, ncvPctRaw, ncvKg, netWt } = calcs;
 
                     return (
-                      <tr key={idx} className="h-6.5 text-[10px]">
+                      <tr key={idx} className="h-6 text-[9.5px]">
                         {/* Crop */}
-                        <td className="border-r border-[#D94B5A] px-1 font-mono">
+                        <td className="border-r border-[#D94B5A] px-0.5 font-mono whitespace-nowrap">
                           {row.crop_year || '2026-27'}
                         </td>
                         {/* Mark */}
-                        <td className="border-r border-[#D94B5A] px-1 font-mono uppercase">
+                        <td className="border-r border-[#D94B5A] px-0.5 font-mono uppercase truncate" title={String((row as any).marka || row.marks || (row as any).challan_marka_name || (row as any).marka_name || resolvedMasterArea || 'NO MARK')}>
                           {(row as any).marka || row.marks || (row as any).challan_marka_name || (row as any).marka_name || resolvedMasterArea || 'NO MARK'}
                         </td>
                         {/* Quality */}
-                        <td className="border-r border-[#D94B5A] px-1 font-bold uppercase">
+                        <td className="border-r border-[#D94B5A] px-0.5 font-bold uppercase truncate">
                           {row.stock_grade_name || row.arrival_grade || (row as any).receipt_grade_name || (row as any).receipt_grade || (row as any).grade_name || row.stock_grade_code || ''}
                         </td>
                         {/* Quantity */}
-                        <td className="border-r border-[#D94B5A] px-1 font-mono text-[10.5px]">
+                        <td className="border-r border-[#D94B5A] px-0.5 font-mono text-[10px] whitespace-nowrap">
                           {(() => {
                             const q = getRowQty(row);
                             if (q > 0) return q;
@@ -712,11 +733,11 @@ export default function InspectionPrintSlip({ master, details = [], copyType = '
                           })()}
                         </td>
                         {/* Claim */}
-                        <td className="border-r border-[#D94B5A] px-1 font-mono">
+                        <td className="border-r border-[#D94B5A] px-0.5 font-mono">
                           {row.claim || '-'}
                         </td>
                         {/* Gross Wt. */}
-                        <td className="border-r border-[#D94B5A] px-1 font-mono text-[10.5px]">
+                        <td className="border-r border-[#D94B5A] px-0.5 font-mono text-[10px] whitespace-nowrap">
                           {grossWt > 0 ? (grossWt * 1000).toFixed(0) : ''}
                         </td>
                         {/* Moisture % */}
@@ -744,7 +765,7 @@ export default function InspectionPrintSlip({ master, details = [], copyType = '
                           {ncvKg > 0 ? ncvKg.toFixed(1) : ''}
                         </td>
                         {/* Net Wt. */}
-                        <td className="border-r border-[#D94B5A] px-1 font-mono text-[10.5px]">
+                        <td className="border-r border-[#D94B5A] px-0.5 font-mono text-[10px] whitespace-nowrap">
                           {netWt > 0 ? (netWt * 1000).toFixed(0) : (grossWt > 0 ? (grossWt * 1000).toFixed(0) : '')}
                         </td>
                         {/* Settlement Grade - Blank in Mill Inspection Slip */}
@@ -756,7 +777,7 @@ export default function InspectionPrintSlip({ master, details = [], copyType = '
                         {/* Settlement Prem./Less - Blank in Mill Inspection Slip */}
                         <td className="border-r border-[#D94B5A] px-0.5 font-mono"></td>
                         {/* Rate */}
-                        <td className="px-1 font-mono">
+                        <td className="px-0.5 font-mono whitespace-nowrap">
                           {row.rate || row.rate_qntl || ''}
                         </td>
                       </tr>
@@ -835,30 +856,30 @@ export default function InspectionPrintSlip({ master, details = [], copyType = '
             </div>
 
             {/* Bottom Footer Section with Notes & Authorized Signatory */}
-            <div className="mt-2 border-t border-[#D94B5A] pt-1.5 grid grid-cols-12 gap-4 text-[#D94B5A]">
+            <div className="mt-1.5 border-t border-[#D94B5A] pt-1.5 grid grid-cols-12 gap-3 text-[#D94B5A]">
               {/* Left Side: Legal Notes */}
-              <div className="col-span-8 pr-3 border-r border-[#D94B5A] text-[9.5px] leading-tight space-y-1">
-                <p className="font-black text-[10px]">Note:</p>
+              <div className="col-span-8 min-w-0 pr-2 border-r border-[#D94B5A] text-[9px] leading-tight space-y-0.5">
+                <p className="font-black text-[9.5px]">Note:</p>
                 <p className="font-semibold text-justify">
                   1. Initiate your offer of settlement at an early date failing which we shall refer the matter to B.C.C.I for arbitrator.
                 </p>
                 <p className="font-semibold text-justify">
                   2. Seller must remove the bales within three days from the date of serving the Mill Receipt if the rates given on the Mill Receipt by the Buyers are not acceptable to them, failing which Buyer will treat the consignment as having been accepted and will not be responsible for its being used up.
                 </p>
-                <p className="font-black text-[10.5px] tracking-wide pt-0.5 uppercase">
+                <p className="font-black text-[10px] tracking-wide pt-0.5 uppercase">
                   ORIGINAL MUST BE ATTACHED WITH BILL/COPY
                 </p>
               </div>
 
               {/* Right Side: Company Signatory Box */}
-              <div className="col-span-4 flex flex-col justify-between items-center text-center pl-2">
-                <p className="font-black text-[11.5px] uppercase tracking-wide">
+              <div className="col-span-4 min-w-0 flex flex-col justify-between items-center text-center pl-1">
+                <p className="font-black text-[10.5px] uppercase tracking-wide leading-tight">
                   FOR, BALLY JUTE COMPANY LIMITED
                 </p>
                 
-                <div className="w-full pt-8">
-                  <div className="w-48 mx-auto border-t border-[#D94B5A] mb-1"></div>
-                  <p className="font-black text-[10.5px] tracking-wider uppercase">
+                <div className="w-full pt-6">
+                  <div className="w-40 max-w-full mx-auto border-t border-[#D94B5A] mb-1"></div>
+                  <p className="font-black text-[10px] tracking-wider uppercase">
                     AUTHORISED SIGNATORY
                   </p>
                 </div>
@@ -869,9 +890,9 @@ export default function InspectionPrintSlip({ master, details = [], copyType = '
         </div>
 
         {/* Right Sprocket Feed Holes */}
-        <div className="w-[24px] bg-transparent flex flex-col justify-between py-2 shrink-0 pl-1.5 ml-2 select-none print:hidden">
+        <div className="w-[18px] bg-transparent flex flex-col justify-between py-2 shrink-0 pl-1 ml-1.5 select-none print:hidden">
           {Array.from({ length: 15 }).map((_, i) => (
-            <div key={i} className="w-3.5 h-3.5 bg-slate-100 rounded-full mx-auto shadow-inner border border-red-300/60 opacity-70"></div>
+            <div key={i} className="w-3 h-3 bg-slate-100 rounded-full mx-auto shadow-inner border border-red-300/60 opacity-70"></div>
           ))}
         </div>
 
