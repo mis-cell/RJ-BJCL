@@ -36,6 +36,26 @@ export function useFinalArrivalEntryLogic({ initialData, onSave }: UseFinalArriv
   const [temporaryArrivalList, setTemporaryArrivalList] = useState<any[]>([]);
   const [unitList, setUnitList] = useState<string[]>(['BALES', 'DRUMS', 'LOOSE', 'P.BALES', 'H.BALES']);
 
+  const formatPhotaVal = (val: any): string => {
+    if (val === undefined || val === null) return '';
+    if (Array.isArray(val)) return val.map(v => String(v ?? '').trim()).filter(Boolean).join(', ');
+    return String(val).trim();
+  };
+
+  const resolveRowPhota = (row: any, idx: number, headerSource?: any): string => {
+    const rowVal = formatPhotaVal(row?.marks_phota) || formatPhotaVal(row?.phota);
+    if (rowVal) return rowVal;
+    const headerRaw = headerSource?.marks_phota ?? headerSource?.phota;
+    if (Array.isArray(headerRaw)) {
+      const arrItem = formatPhotaVal(headerRaw[idx]);
+      if (arrItem) return arrItem;
+      return idx === 0 ? formatPhotaVal(headerRaw) : '';
+    }
+    const headerVal = formatPhotaVal(headerRaw);
+    if (!headerVal) return '';
+    return idx === 0 ? headerVal : '';
+  };
+
   const getPaddedDetails = (initialFA?: any) => {
     let pDetails: any[] = [];
     const rawGrid = initialFA?.grid_details || initialFA?.details || initialFA?.items || initialFA?.raw_item?.grid_details || initialFA?.raw_item?.details;
@@ -107,7 +127,7 @@ export function useFinalArrivalEntryLogic({ initialData, onSave }: UseFinalArriv
         quantity_rcpt: qRcpt,
         unit: u,
         remarks: d.remarks || '',
-        marks_phota: d.marks_phota || ''
+        marks_phota: resolveRowPhota(d, idx, initialFA)
       };
     });
 
@@ -144,7 +164,7 @@ export function useFinalArrivalEntryLogic({ initialData, onSave }: UseFinalArriv
         quantity_rcpt: 0,
         unit: initialFA?.unit_name || 'BALES',
         remarks: '',
-        marks_phota: ''
+        marks_phota: formatPhotaVal(initialFA?.marks_phota) || formatPhotaVal(initialFA?.phota)
       });
     }
     return padded.map((row, idx) => ({ ...row, srl_no: idx + 1 }));
@@ -668,7 +688,7 @@ export function useFinalArrivalEntryLogic({ initialData, onSave }: UseFinalArriv
               quantity_rcpt: qRcpt,
               unit: rowUnit,
               remarks: row.remarks || '',
-              marks_phota: row.marks_phota || ''
+              marks_phota: resolveRowPhota(row, idx, matchedAmad)
             };
           });
           const amadTargetWt = getLowestNetWeight(matchedAmad);
@@ -706,7 +726,7 @@ export function useFinalArrivalEntryLogic({ initialData, onSave }: UseFinalArriv
             quantity_rcpt: Number(matchedAmad.total_packets || matchedAmad.packets || 0),
             unit: amadUnit,
             remarks: matchedAmad.remarks || '',
-            marks_phota: ''
+            marks_phota: formatPhotaVal(matchedAmad?.marks_phota) || formatPhotaVal(matchedAmad?.phota)
           }]);
           return;
         }
@@ -751,7 +771,7 @@ export function useFinalArrivalEntryLogic({ initialData, onSave }: UseFinalArriv
             quantity_rcpt: qRcpt,
             unit: md.unit || rowUnit,
             remarks: md.remarks || '',
-            marks_phota: md.marks_phota || ''
+            marks_phota: resolveRowPhota(md, index, matchedAmad || matchedInsp)
           };
         });
         setDetails(newDetails);
@@ -927,7 +947,7 @@ export function useFinalArrivalEntryLogic({ initialData, onSave }: UseFinalArriv
               quantity_rcpt: qRcpt,
               unit: rowUnit,
               remarks: row.remarks || '',
-              marks_phota: row.marks_phota || ''
+              marks_phota: resolveRowPhota(row, idx, amadData)
             };
           });
         }
@@ -975,7 +995,7 @@ export function useFinalArrivalEntryLogic({ initialData, onSave }: UseFinalArriv
             quantity_rcpt: isLoose ? 0 : (Number(md.quantity) || Math.round(rawNetto)),
             unit: md.unit || rowUnit,
             remarks: '',
-            marks_phota: md.marks_phota || ''
+            marks_phota: resolveRowPhota(md, index, amadData || matchedInspection)
           };
         });
         setDetails(newDetails);
@@ -1074,7 +1094,8 @@ export function useFinalArrivalEntryLogic({ initialData, onSave }: UseFinalArriv
             quantity_chln: isLoose ? 0 : Math.round(nettoVal),
             quantity_rcpt: isLoose ? 0 : Math.round(nettoVal),
             unit: rowUnit,
-            remarks: fd.remarks || ''
+            remarks: fd.remarks || '',
+            marks_phota: formatPhotaVal(fd.marks_phota) || formatPhotaVal(fd.phota)
           };
         });
         const targetWt = getLowestNetWeight(formData);
