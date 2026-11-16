@@ -117,81 +117,208 @@ export default function InspectionPrintSlip({ master, details = [], copyType = '
     }
   };
 
-  // If details are empty, create default rows
-  const rawDetails: InspectionDetailPrintRow[] = details.length > 0 ? details : [
-    {
-      crop_year: '2026-27',
-      marka: master.area || 'NO MARK',
-      stock_grade_name: 'TD6',
-      quantity: 122,
-      challan_gross_wt: 4.92,
-      moisture_claim: master.claim_moisture || master.actual_moisture || 5,
-      actual_moisture: master.actual_moisture || 5,
-      actual_dust: master.actual_dust || 0,
-      actual_ncv: master.actual_ncv || 0,
-      moisture_deduction_kg: 246.0,
-      final_receipt_wt: 4.67,
-      settlement_moisture: '',
-      rate: ''
-    },
-    {
-      crop_year: '2026-27',
-      marka: master.area || 'NO MARK',
-      stock_grade_name: 'TD7',
-      quantity: 123,
-      challan_gross_wt: 4.96,
-      moisture_claim: master.claim_moisture || master.actual_moisture || 5,
-      actual_moisture: master.actual_moisture || 5,
-      actual_dust: master.actual_dust || 0,
-      actual_ncv: master.actual_ncv || 0,
-      moisture_deduction_kg: 248.0,
-      final_receipt_wt: 4.71,
-      settlement_moisture: '',
-      rate: ''
-    }
-  ];
+  const previewContainerRef = React.useRef<HTMLDivElement>(null);
+  const slipRef = React.useRef<HTMLDivElement>(null);
+  const [previewScale, setPreviewScale] = React.useState<number>(1);
+  const [naturalSize, setNaturalSize] = React.useState<{ width: number; height: number }>({ width: 1123, height: 794 });
 
-  const [dbChallan, setDbChallan] = React.useState<{ no: string; date: string; found: boolean } | null>(null);
+  // Measure available preview width and scale 297mm landscape slip cleanly on screen so full page is visible without right-edge clipping
+  React.useEffect(() => {
+    const updateScale = () => {
+      const container = previewContainerRef.current;
+      const slip = slipRef.current;
+      if (!container || !slip) return;
+      const availableW = Math.max(300, container.clientWidth - 24);
+      const slipW = slip.offsetWidth || 1123;
+      const slipH = slip.offsetHeight || 794;
+      setNaturalSize(prev => (prev.width === slipW && prev.height === slipH ? prev : { width: slipW, height: slipH }));
+      const nextScale = Math.max(0.35, Math.min(1, availableW / slipW));
+      setPreviewScale(prev => (Math.abs(prev - nextScale) < 0.005 ? prev : nextScale));
+    };
+
+    updateScale();
+    const raf = requestAnimationFrame(updateScale);
+    let ro: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== 'undefined') {
+      ro = new ResizeObserver(updateScale);
+      if (previewContainerRef.current) ro.observe(previewContainerRef.current);
+      if (slipRef.current) ro.observe(slipRef.current);
+    }
+    window.addEventListener('resize', updateScale);
+    return () => {
+      cancelAnimationFrame(raf);
+      ro?.disconnect();
+      window.removeEventListener('resize', updateScale);
+    };
+  }, [master?.mr_no, details]);
+
+  // Real data only (zero dummy/hardcoded fallback rows)
+  const rawDetails: InspectionDetailPrintRow[] = Array.isArray(details) ? details : [];
+
+  const [dbSupplement, setDbSupplement] = React.useState<{
+    challanNo: string;
+    challanDate: string;
+    poNo: string;
+    poDate: string;
+    remarks: string;
+    area: string;
+    agency: string;
+    lorryNumber: string;
+    supplierName: string;
+    found: boolean;
+  } | null>(null);
 
   React.useEffect(() => {
-    async function loadChallan() {
-      const poNo = master.po_no || master.mill_po_no;
-      if (!poNo) {
-        setDbChallan({ no: '', date: '', found: false });
+    let active = true;
+    async function loadSupplement() {
+      const poNo = safeStr(master.po_no || master.mill_po_no, '').trim().replace(/^#+/, '');
+      const mrKey = safeStr(master.mr_no || master.arrival_no, '').trim();
+      const arrKey = safeStr(master.arrival_no || master.mr_no, '').trim();
+      if (!supabase || (!poNo && !mrKey && !arrKey)) {
+        if (active) {
+          setDbSupplement({
+            challanNo: '',
+            challanDate: '',
+            poNo: '',
+            poDate: '',
+            remarks: '',
+            area: '',
+            agency: '',
+            lorryNumber: '',
+            supplierName: '',
+            found: false,
+          });
+        }
         return;
       }
-      
-      try {
-        const { data, error } = await supabase
-          .from("final_arrival")
-          .select("challan_railway_receipt_no, challan_rr_no, challan_rr_date")
-          .ilike("po_no", poNo.trim())
-          .order("created_at", { ascending: false })
-          .limit(1);
 
-        if (data && data.length > 0) {
-          const row = data[0];
-          setDbChallan({
-            no: row.challan_railway_receipt_no || row.challan_rr_no || '',
-            date: row.challan_rr_date || '',
-            found: true
+      try {
+        let matchedRow: any = null;
+
+        if (poNo) {
+          const { data } = await supabase
+            .from("final_arrival")
+            .select("*")
+            .ilike("po_no", poNo)
+            .order("created_at", { ascending: false })
+            .limit(1);
+          if (data && data.length > 0) {
+            matchedRow = data[0];
+          }
+        }
+
+        const lookupKey = mrKey || arrKey;
+        if (!matchedRow && lookupKey) {
+          const orExpr =
+            arrKey && arrKey.toUpperCase() !== mrKey.toUpperCase()
+              ? `final_arrival_no.ilike.${mrKey},arrival_no.ilike.${mrKey},temporary_arrival_no.ilike.${mrKey},mr_no.ilike.${mrKey},final_arrival_no.ilike.${arrKey},arrival_no.ilike.${arrKey},temporary_arrival_no.ilike.${arrKey},mr_no.ilike.${arrKey}`
+              : `final_arrival_no.ilike.${lookupKey},arrival_no.ilike.${lookupKey},temporary_arrival_no.ilike.${lookupKey},mr_no.ilike.${lookupKey}`;
+          const { data: faByMr } = await supabase
+            .from("final_arrival")
+            .select("*")
+            .or(orExpr)
+            .order("created_at", { ascending: false })
+            .limit(1);
+          if (faByMr && faByMr.length > 0) {
+            matchedRow = faByMr[0];
+          } else {
+            const tmrOrExpr =
+              arrKey && arrKey.toUpperCase() !== mrKey.toUpperCase()
+                ? `temporary_arrival_no.ilike.${mrKey},amad_no.ilike.${mrKey},arrival_no.ilike.${mrKey},mr_no.ilike.${mrKey},temporary_arrival_no.ilike.${arrKey},amad_no.ilike.${arrKey},arrival_no.ilike.${arrKey},mr_no.ilike.${arrKey}`
+                : `temporary_arrival_no.ilike.${lookupKey},amad_no.ilike.${lookupKey},arrival_no.ilike.${lookupKey},mr_no.ilike.${lookupKey}`;
+            const { data: tmrByMr } = await supabase
+              .from("temporary_material_received")
+              .select("*")
+              .or(tmrOrExpr)
+              .order("created_at", { ascending: false })
+              .limit(1);
+            if (tmrByMr && tmrByMr.length > 0) {
+              matchedRow = tmrByMr[0];
+            }
+          }
+        }
+
+        if (!active) return;
+
+        if (matchedRow) {
+          const resolvedPo = safeStr(matchedRow.po_no || poNo, '').trim();
+          let resolvedPoDt = safeStr(matchedRow.po_date, '').trim();
+          if (resolvedPo && !resolvedPoDt && !safeStr(master.po_date || master.mill_po_date, '').trim()) {
+            const { data: pmRows } = await supabase
+              .from("purchase_master")
+              .select("po_date, sauda_date, date")
+              .ilike("po_no", resolvedPo.replace(/^#+/, ''))
+              .limit(1);
+            const pm = Array.isArray(pmRows) ? pmRows[0] : pmRows;
+            if (pm) {
+              resolvedPoDt = safeStr(pm.sauda_date || pm.po_date || pm.date, '').trim();
+            }
+          }
+
+          setDbSupplement({
+            challanNo: safeStr(matchedRow.challan_railway_receipt_no || matchedRow.challan_rr_no, '').trim(),
+            challanDate: safeStr(matchedRow.challan_rr_date, '').trim(),
+            poNo: resolvedPo,
+            poDate: resolvedPoDt,
+            remarks: safeStr(matchedRow.remarks, '').trim(),
+            area: safeStr(matchedRow.arrival_area_name || matchedRow.arrival_area, '').trim(),
+            agency: safeStr(matchedRow.agency_name || matchedRow.agency, '').trim(),
+            lorryNumber: safeStr(matchedRow.lorry_number, '').trim(),
+            supplierName: safeStr(matchedRow.supplier || matchedRow.challan_supplier, '').trim(),
+            found: true,
           });
         } else {
-          setDbChallan({ no: '', date: '', found: false });
+          setDbSupplement({
+            challanNo: '',
+            challanDate: '',
+            poNo: '',
+            poDate: '',
+            remarks: '',
+            area: '',
+            agency: '',
+            lorryNumber: '',
+            supplierName: '',
+            found: false,
+          });
         }
       } catch (err) {
-        console.warn("Error fetching challan details for print preview:", err);
-        setDbChallan({ no: '', date: '', found: false });
+        console.warn("Error fetching arrival/challan details for print preview:", err);
+        if (active) {
+          setDbSupplement({
+            challanNo: '',
+            challanDate: '',
+            poNo: '',
+            poDate: '',
+            remarks: '',
+            area: '',
+            agency: '',
+            lorryNumber: '',
+            supplierName: '',
+            found: false,
+          });
+        }
       }
     }
-    loadChallan();
-  }, [master.po_no, master.mill_po_no]);
+    loadSupplement();
+    return () => {
+      active = false;
+    };
+  }, [master.po_no, master.mill_po_no, master.mr_no, master.arrival_no]);
 
-  // Exclude rows where quantity is 0 or empty (User requirement: if quantity is 0, do not show row in print preview)
-  const effectiveDetails: InspectionDetailPrintRow[] = rawDetails.filter((r) => {
+  const getRowQty = (r: any): number =>
+    Number(r?.quantity ?? r?.quantity_rcpt ?? r?.quantity_chln ?? r?.rcpt ?? r?.chln ?? r?.bales ?? r?.packets ?? 0);
+
+  // Exclude empty placeholder rows while preserving LOOSE / positive weight / quantity rows
+  const effectiveDetails: InspectionDetailPrintRow[] = rawDetails.filter((r: any) => {
     if (!r) return false;
-    const qty = Number(r.quantity);
-    return !isNaN(qty) && qty > 0;
+    const qty = getRowQty(r);
+    const gross = Number(r.challan_gross_wt ?? r.gross_weight_batch ?? r.receipt_gross_wt ?? r.netto_pnto ?? r.weight_mt ?? 0);
+    const unitUpper = String(r.unit || '').trim().toUpperCase();
+    const hasGrade = Boolean(r.stock_grade_name || r.arrival_grade || r.receipt_grade_name || r.receipt_grade || r.grade_name || r.stock_grade_code);
+    if (!isNaN(qty) && qty > 0) return true;
+    if (unitUpper.includes('LOOSE') && gross > 0) return true;
+    if (gross > 0 && hasGrade && (r.quantity === undefined || r.quantity === null || r.quantity === '')) return true;
+    return false;
   });
 
   // Helper calculation for detail row deductions & weights
@@ -212,7 +339,7 @@ export default function InspectionPrintSlip({ master, details = [], copyType = '
       };
     }
 
-    const grossWt = Number(r.challan_gross_wt ?? r.gross_weight_batch ?? r.receipt_gross_wt ?? r.weight_mt ?? 0);
+    const grossWt = Number(r.challan_gross_wt ?? r.gross_weight_batch ?? r.receipt_gross_wt ?? (r as any).netto_pnto ?? r.weight_mt ?? 0);
     
     // Moisture % priority: moisture_claim -> claim_moisture -> settlement_moisture -> moisture_act -> actual_moisture -> master
     const moistPctRaw = r.moisture_claim ?? r.claim_moisture ?? r.settlement_moisture ?? r.moisture_act ?? r.actual_moisture ?? master.claim_moisture ?? master.actual_moisture ?? '';
@@ -267,7 +394,7 @@ export default function InspectionPrintSlip({ master, details = [], copyType = '
   }
 
   // Calculate totals
-  const totalQuantity = effectiveDetails.reduce((sum, r) => sum + (Number(r?.quantity) || 0), 0);
+  const totalQuantity = effectiveDetails.reduce((sum, r) => sum + (getRowQty(r) || 0), 0);
   const totalGrossWt = effectiveDetails.reduce((sum, r) => {
     const calcs = getRowCalculations(r);
     return sum + calcs.grossWt;
@@ -293,12 +420,14 @@ export default function InspectionPrintSlip({ master, details = [], copyType = '
     return sum + calcs.netWt;
   }, 0);
 
-  // Extract unique Area and Agency values from Inspection Details rows (or fallback to master)
+  const resolvedMasterArea = safeStr(master.area || (master as any).arrival_area || dbSupplement?.area, '');
+  const resolvedMasterAgency = safeStr((master as any)?.agency || dbSupplement?.agency, '');
+
   const allRowsForStations = effectiveDetails.length > 0 ? effectiveDetails : rawDetails;
   const uniqueAreas = Array.from(
     new Set(
       allRowsForStations
-        .map((r: any) => (r?.area || r?.area_name || r?.arrival_area_name || r?.purch_area_name || master.area || '').toString().trim())
+        .map((r: any) => (r?.area || r?.area_name || r?.arrival_area_name || r?.purch_area_name || resolvedMasterArea || '').toString().trim())
         .filter(val => val && val !== '-' && val !== 'N/A' && val.toLowerCase() !== 'null' && val.toLowerCase() !== 'undefined')
     )
   );
@@ -306,7 +435,7 @@ export default function InspectionPrintSlip({ master, details = [], copyType = '
   const uniqueAgencies = Array.from(
     new Set(
       allRowsForStations
-        .map((r: any) => (r?.agency || r?.agency_name || r?.arrival_agency_name || r?.purch_agency_name || (master as any)?.agency || '').toString().trim())
+        .map((r: any) => (r?.agency || r?.agency_name || r?.arrival_agency_name || r?.purch_agency_name || resolvedMasterAgency || '').toString().trim())
         .filter(val => val && val !== '-' && val !== 'N/A' && val.toLowerCase() !== 'null' && val.toLowerCase() !== 'undefined')
     )
   );
@@ -324,24 +453,25 @@ export default function InspectionPrintSlip({ master, details = [], copyType = '
 
   const stationsDisplay = stationParts.length > 0 
     ? stationParts.join(' / ') 
-    : safeStr(master.station || master.area || (master as any)?.agency, 'BALLY MILL');
+    : safeStr(master.station || resolvedMasterArea || resolvedMasterAgency, 'BALLY MILL');
 
-  const orderNo = safeStr(master.po_no || master.mill_po_no, '');
-  const orderDate = master.po_date || master.mill_po_date || master.mr_date || master.arrival_date;
+  const orderNo = safeStr(master.po_no || master.mill_po_no || dbSupplement?.poNo, '');
+  const orderDate = master.po_date || master.mill_po_date || dbSupplement?.poDate || master.mr_date || master.arrival_date;
   const mrDate = master.mr_date || master.arrival_date;
   const mrNo = safeStr(master.mr_no || master.arrival_no, '');
-  const resolvedChallanNo = dbChallan && dbChallan.found 
-    ? dbChallan.no 
-    : (master.challan_no || master.arrival_no || '');
-  const resolvedChallanDate = dbChallan && dbChallan.found 
-    ? dbChallan.date 
+  const resolvedChallanNo = (dbSupplement && dbSupplement.found && dbSupplement.challanNo)
+    ? dbSupplement.challanNo
+    : (master.challan_no || master.arrival_no || mrNo || '');
+  const resolvedChallanDate = (dbSupplement && dbSupplement.found && dbSupplement.challanDate)
+    ? dbSupplement.challanDate
     : (master.challan_date || master.arrival_date || '');
 
   //const challanDisplay = resolvedChallanNo ? `${safeStr(resolvedChallanNo)} ${resolvedChallanDate ? `& ${formatDate(resolvedChallanDate)}` : ''}`: '';
   const challanDisplay = resolvedChallanNo ? `${safeStr(resolvedChallanNo)}`: '';
+  const remarksDisplay = safeStr(master.remarks || dbSupplement?.remarks, '');
 
   return (
-    <div className="bg-[#525659] p-3 sm:p-5 flex justify-center items-center print:block print:bg-white print:p-0 font-sans select-text w-full overflow-x-auto">
+    <div ref={previewContainerRef} className="bg-[#525659] p-3 sm:p-4 flex justify-center items-start print:block print:bg-white print:p-0 font-sans select-text w-full overflow-x-auto">
       <style>{`
         @media print {
           @page {
@@ -357,6 +487,10 @@ export default function InspectionPrintSlip({ master, details = [], copyType = '
           .no-print {
             display: none !important;
           }
+          .inspection-slip-scale-box {
+            width: auto !important;
+            height: auto !important;
+          }
           .print-stationery-landscape {
             width: 297mm !important;
             height: 210mm !important;
@@ -368,12 +502,36 @@ export default function InspectionPrintSlip({ master, details = [], copyType = '
             box-shadow: none !important;
             border: none !important;
             box-sizing: border-box !important;
+            transform: none !important;
           }
         }
       `}</style>
 
+      {/* SCALED VIEWPORT WRAPPER FOR FULL-PAGE ON-SCREEN PREVIEW */}
+      <div
+        className="inspection-slip-scale-box relative mx-auto shrink-0 print:w-auto print:h-auto"
+        style={
+          previewScale < 0.999
+            ? {
+                width: `${Math.round(naturalSize.width * previewScale)}px`,
+                height: `${Math.round(naturalSize.height * previewScale)}px`,
+              }
+            : undefined
+        }
+      >
       {/* CONTINUOUS STATIONERY FORM WRAPPER (LANDSCAPE 297mm x 210mm) */}
-      <div className="print-stationery-landscape w-[297mm] min-h-[210mm] max-w-[297mm] bg-[#ffffff] shadow-2xl border border-red-200 p-5 sm:p-6 flex select-text shrink-0 relative overflow-hidden print:shadow-none print:border-none print:bg-white box-sizing:border-box text-[#D94B5A]">
+      <div
+        ref={slipRef}
+        style={
+          previewScale < 0.999
+            ? {
+                transform: `scale(${previewScale})`,
+                transformOrigin: 'top left',
+              }
+            : undefined
+        }
+        className="print-stationery-landscape w-[297mm] min-h-[210mm] max-w-[297mm] bg-[#ffffff] shadow-2xl border border-red-200 p-5 sm:p-6 flex select-text shrink-0 relative overflow-hidden print:shadow-none print:border-none print:bg-white box-sizing:border-box text-[#D94B5A]"
+      >
         
         {/* Left Sprocket Feed Holes */}
         <div className="w-[24px] bg-transparent flex flex-col justify-between py-2 shrink-0 pr-1.5 mr-2 select-none print:hidden">
@@ -431,7 +589,7 @@ export default function InspectionPrintSlip({ master, details = [], copyType = '
               <div className="flex items-end">
                 <span className="shrink-0 font-black mr-2 text-[12px]">From :</span>
                 <span className="flex-1 border-b border-[#D94B5A] pb-0.5 px-2 font-black text-[12.5px] uppercase text-[#D94B5A] whitespace-normal">
-                  {safeStr(master.supplier_name || (master as any).supplier, '')}
+                  {safeStr(master.supplier_name || (master as any).supplier || dbSupplement?.supplierName, '')}
                 </span>
               </div>
 
@@ -539,15 +697,19 @@ export default function InspectionPrintSlip({ master, details = [], copyType = '
                         </td>
                         {/* Mark */}
                         <td className="border-r border-[#D94B5A] px-1 font-mono uppercase">
-                          {row.marka || row.marks || master.area || 'NO MARK'}
+                          {(row as any).marka || row.marks || (row as any).challan_marka_name || (row as any).marka_name || resolvedMasterArea || 'NO MARK'}
                         </td>
                         {/* Quality */}
                         <td className="border-r border-[#D94B5A] px-1 font-bold uppercase">
-                          {row.stock_grade_name || row.arrival_grade || row.stock_grade_code || 'TD6'}
+                          {row.stock_grade_name || row.arrival_grade || (row as any).receipt_grade_name || (row as any).receipt_grade || (row as any).grade_name || row.stock_grade_code || ''}
                         </td>
                         {/* Quantity */}
                         <td className="border-r border-[#D94B5A] px-1 font-mono text-[10.5px]">
-                          {row.quantity !== undefined && row.quantity !== '' ? row.quantity : ''}
+                          {(() => {
+                            const q = getRowQty(row);
+                            if (q > 0) return q;
+                            return String(row.unit || '').toUpperCase().includes('LOOSE') ? 'LOOSE' : '';
+                          })()}
                         </td>
                         {/* Claim */}
                         <td className="border-r border-[#D94B5A] px-1 font-mono">
@@ -642,30 +804,30 @@ export default function InspectionPrintSlip({ master, details = [], copyType = '
             <div className="mt-2 flex items-start text-[11.5px] font-bold text-[#D94B5A]">
               <span className="shrink-0 font-black mr-2 text-[12px]">Remarks:</span>
               <p className="flex-1 font-semibold text-xs text-[#D94B5A] min-h-[16px] leading-snug">
-                {safeStr(master.remarks, '')}
+                {remarksDisplay}
               </p>
             </div>
 
             {/* Boxed Information Section (Challan No & Date, Vehicle, Stations) with full text width */}
             <div className="mt-2 border-2 border-[#D94B5A] p-2 bg-white text-[11.5px] font-bold text-[#D94B5A]">
               <div className="grid grid-cols-12 gap-3 items-center">
-                <div className="col-span-4 flex items-center">
+                <div className="col-span-4 flex items-center min-w-0">
                   <span className="shrink-0 font-black mr-1.5">Challan No & Date :</span>
-                  <span className="flex-1 border-b border-[#D94B5A] pb-0.5 px-1.5 font-mono whitespace-nowrap overflow-visible">
+                  <span className="flex-1 border-b border-[#D94B5A] pb-0.5 px-1.5 font-mono truncate">
                     {challanDisplay}
                   </span>
                 </div>
 
-                <div className="col-span-4 flex items-center">
+                <div className="col-span-4 flex items-center min-w-0">
                   <span className="shrink-0 font-black mr-1.5">Vehicle :</span>
-                  <span className="flex-1 border-b border-[#D94B5A] pb-0.5 px-1.5 font-mono uppercase whitespace-nowrap overflow-visible">
-                    {safeStr(master.lorry_number || master.vehicle_no, '')}
+                  <span className="flex-1 border-b border-[#D94B5A] pb-0.5 px-1.5 font-mono uppercase truncate">
+                    {safeStr(master.lorry_number || master.vehicle_no || dbSupplement?.lorryNumber, '')}
                   </span>
                 </div>
 
-                <div className="col-span-4 flex items-center">
+                <div className="col-span-4 flex items-center min-w-0">
                   <span className="shrink-0 font-black mr-1.5">Stations :</span>
-                  <span className="flex-1 border-b border-[#D94B5A] pb-0.5 px-1.5 uppercase whitespace-nowrap overflow-visible font-semibold">
+                  <span className="flex-1 border-b border-[#D94B5A] pb-0.5 px-1.5 uppercase truncate font-semibold">
                     {stationsDisplay}
                   </span>
                 </div>
@@ -713,6 +875,7 @@ export default function InspectionPrintSlip({ master, details = [], copyType = '
           ))}
         </div>
 
+      </div>
       </div>
     </div>
   );

@@ -9,7 +9,20 @@ import html2canvas from 'html2canvas';
 // prefix), so any print-preview slip can be emailed as a real PDF attachment.
 async function slipElementToPdfBase64(el: HTMLElement): Promise<string> {
   try {
-    const canvas = await html2canvas(el, { scale: 2, backgroundColor: '#ffffff', useCORS: true });
+    const canvas = await html2canvas(el, {
+      scale: 2,
+      backgroundColor: '#ffffff',
+      useCORS: true,
+      onclone: (clonedDoc) => {
+        clonedDoc.querySelectorAll<HTMLElement>('.inspection-slip-scale-box').forEach((box) => {
+          box.style.width = 'auto';
+          box.style.height = 'auto';
+        });
+        clonedDoc.querySelectorAll<HTMLElement>('.print-stationery-landscape').forEach((slip) => {
+          slip.style.transform = 'none';
+        });
+      },
+    });
     const imgData = canvas.toDataURL('image/png');
     const pdf = new jsPDF({ unit: 'pt', format: 'a4' });
     const pageWidth = pdf.internal.pageSize.getWidth();
@@ -186,7 +199,7 @@ export default function PrintModal({ isOpen, onClose, title, children, showTip =
     >
       <div 
         id="print-modal-inner" 
-        className="w-full max-w-[1250px] bg-[#FBCFCB] border-2 border-white shadow-[3px_3px_10px_rgba(0,0,0,0.6)] flex flex-col my-4 sm:my-6 print:my-0 print:border-none print:shadow-none"
+        className="w-full max-w-[96vw] xl:max-w-[1320px] bg-[#FBCFCB] border-2 border-white shadow-[3px_3px_10px_rgba(0,0,0,0.6)] flex flex-col my-4 sm:my-6 print:my-0 print:max-w-none print:border-none print:shadow-none"
       >
         {/* Top Retro Menubar */}
         <div className="bg-[#2a3088] text-white px-3 py-1.5 flex justify-between items-center text-xs font-black  border-b border-white no-print">

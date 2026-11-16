@@ -938,7 +938,8 @@ async function tryUpdateExistingRowInPlace(
 async function populateMissingInsertDefaults(
   table: string,
   row: Record<string, any>,
-  validCols: Set<string>
+  validCols: Set<string>,
+  intIdState?: { next?: number }
 ): Promise<void> {
   const colTypes = tableColumnTypesCache.get(table);
 
@@ -955,8 +956,22 @@ async function populateMissingInsertDefaults(
 
     if (isIntId) {
       if (row.id === undefined || row.id === null || String(row.id).trim() === '' || !Number.isFinite(Number(row.id))) {
-        const maxRes = await pool.query(`SELECT COALESCE(MAX("id"), 0) + 1 AS next_id FROM "${table}"`);
-        row.id = Number(maxRes.rows[0]?.next_id || 1);
+        if (intIdState && typeof intIdState.next === 'number' && Number.isFinite(intIdState.next)) {
+          row.id = intIdState.next;
+          intIdState.next = intIdState.next + 1;
+        } else {
+          const maxRes = await pool.query(`SELECT COALESCE(MAX("id"), 0) + 1 AS next_id FROM "${table}"`);
+          const nextId = Number(maxRes.rows[0]?.next_id || 1);
+          row.id = nextId;
+          if (intIdState) {
+            intIdState.next = nextId + 1;
+          }
+        }
+      } else if (intIdState) {
+        const curId = Number(row.id);
+        if (Number.isFinite(curId)) {
+          intIdState.next = Math.max(intIdState.next || 0, curId + 1);
+        }
       }
     } else if (idType === 'uuid') {
       if (row.id === undefined || row.id === null || String(row.id).trim() === '' || !isValidUuid(String(row.id))) {
@@ -1038,8 +1053,9 @@ export async function executeInsert(payload: QueryPayload) {
 
   const validCols = await getValidTableColumns(table);
   const cleanedRows = rawValues.map(r => filterRowByValidColumns(r, validCols, table));
+  const intIdState: { next?: number } = {};
   for (const r of cleanedRows) {
-    await populateMissingInsertDefaults(table, r, validCols);
+    await populateMissingInsertDefaults(table, r, validCols, intIdState);
   }
 
   const sample = cleanedRows[0];

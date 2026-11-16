@@ -1730,20 +1730,341 @@ export function useInspectionLogic() {
   };
 
   const handlePrintRecord = async (record: InspectionMasterRecord) => {
+    const cleanMr = String(record.mr_no || record.arrival_no || "").trim();
+    const cleanArr = String(record.arrival_no || record.mr_no || "").trim();
+    const lookupKey = cleanMr || cleanArr;
+    const isBlankField = (v: any) => {
+      const s = String(v ?? "").trim().toUpperCase();
+      return !s || s === "NO" || s === "N/A" || s === "NONE" || s === "NULL" || s === "UNDEFINED" || s === "-";
+    };
+
+    setPrintingDetails([]);
     setPrintingRecord(record);
+
+    const hasValidFormRows =
+      viewMode === "form" &&
+      Array.isArray(detailRows) &&
+      detailRows.some(
+        (r) =>
+          Boolean(r.arrival_grade || r.stock_grade_name) ||
+          Number(r.quantity || 0) > 0 ||
+          Number(r.challan_gross_wt || r.receipt_gross_wt || 0) > 0
+      );
+
     try {
-      if (supabase && record.mr_no) {
-        const [midRes, millDetailRes] = await Promise.all([
-          supabase.from("material_inspection_details").select("*").eq("mr_no", record.mr_no).order("srl_no", { ascending: true }),
-          supabase.from("mill_inspection_detail").select("*").eq("mr_no", record.mr_no).order("srl_no", { ascending: true })
+      if (supabase && lookupKey) {
+        const mrOrFilter =
+          cleanArr && cleanArr.toUpperCase() !== cleanMr.toUpperCase()
+            ? `mr_no.ilike.${cleanMr},arrival_no.ilike.${cleanMr},mr_no.ilike.${cleanArr},arrival_no.ilike.${cleanArr}`
+            : `mr_no.ilike.${lookupKey},arrival_no.ilike.${lookupKey}`;
+        const detailMrFilter =
+          cleanArr && cleanArr.toUpperCase() !== cleanMr.toUpperCase()
+            ? `mr_no.ilike.${cleanMr},mr_no.ilike.${cleanArr}`
+            : `mr_no.ilike.${lookupKey}`;
+        const faFilter =
+          cleanArr && cleanArr.toUpperCase() !== cleanMr.toUpperCase()
+            ? `final_arrival_no.ilike.${cleanMr},arrival_no.ilike.${cleanMr},temporary_arrival_no.ilike.${cleanMr},mr_no.ilike.${cleanMr},final_arrival_no.ilike.${cleanArr},arrival_no.ilike.${cleanArr},temporary_arrival_no.ilike.${cleanArr},mr_no.ilike.${cleanArr}`
+            : `final_arrival_no.ilike.${lookupKey},arrival_no.ilike.${lookupKey},temporary_arrival_no.ilike.${lookupKey},mr_no.ilike.${lookupKey}`;
+        const tmrFilter =
+          cleanArr && cleanArr.toUpperCase() !== cleanMr.toUpperCase()
+            ? `temporary_arrival_no.ilike.${cleanMr},amad_no.ilike.${cleanMr},arrival_no.ilike.${cleanMr},mr_no.ilike.${cleanMr},temporary_arrival_no.ilike.${cleanArr},amad_no.ilike.${cleanArr},arrival_no.ilike.${cleanArr},mr_no.ilike.${cleanArr}`
+            : `temporary_arrival_no.ilike.${lookupKey},amad_no.ilike.${lookupKey},arrival_no.ilike.${lookupKey},mr_no.ilike.${lookupKey}`;
+
+        const [
+          miRes,
+          mimRes,
+          midRes,
+          millDetailRes,
+          inspDetailRes,
+          faPrintRes,
+          tmrPrintRes
+        ] = await Promise.all([
+          supabase.from("material_inspection").select("*").or(mrOrFilter).limit(1),
+          supabase.from("mill_inspection_master").select("*").or(mrOrFilter).limit(1),
+          supabase.from("material_inspection_details").select("*").or(detailMrFilter).order("srl_no", { ascending: true }),
+          supabase.from("mill_inspection_detail").select("*").or(detailMrFilter).order("srl_no", { ascending: true }),
+          supabase.from("inspection_details").select("*").or(detailMrFilter).order("srl_no", { ascending: true }),
+          supabase.from("final_arrival").select("*").or(faFilter).limit(1),
+          supabase.from("temporary_material_received").select("*").or(tmrFilter).limit(1)
         ]);
-        const data = (midRes.data && midRes.data.length > 0) ? midRes.data : (millDetailRes.data || []);
-        setPrintingDetails(data && data.length > 0 ? data : detailRows);
+
+        const dbMi = Array.isArray(miRes.data) ? miRes.data[0] : miRes.data;
+        const dbMim = Array.isArray(mimRes.data) ? mimRes.data[0] : mimRes.data;
+        const dbFa = Array.isArray(faPrintRes.data) ? faPrintRes.data[0] : faPrintRes.data;
+        const dbTmr = Array.isArray(tmrPrintRes.data) ? tmrPrintRes.data[0] : tmrPrintRes.data;
+
+        const dbDetailRows =
+          midRes.data && midRes.data.length > 0
+            ? midRes.data
+            : millDetailRes.data && millDetailRes.data.length > 0
+            ? millDetailRes.data
+            : inspDetailRes.data && inspDetailRes.data.length > 0
+            ? inspDetailRes.data
+            : [];
+
+        const gridFallbackRows = [
+          parseGridSafe((record as any).grid_details || (record as any).details),
+          parseGridSafe(dbMi?.grid_details || dbMi?.details || dbMi?.quality_matrix),
+          parseGridSafe(dbMim?.grid_details || dbMim?.details || dbMim?.quality_matrix),
+          parseGridSafe(dbFa?.grid_details || dbFa?.details || dbFa?.items),
+          parseGridSafe(dbTmr?.grid_details || dbTmr?.details || dbTmr?.items),
+        ].find((arr) => Array.isArray(arr) && arr.length > 0) || [];
+
+        let rawPrintRows: any[] = [];
+        if (hasValidFormRows) {
+          rawPrintRows = detailRows;
+        } else if (dbDetailRows.length > 0) {
+          rawPrintRows = dbDetailRows;
+        } else if (gridFallbackRows.length > 0) {
+          rawPrintRows = gridFallbackRows;
+        }
+
+        const resolvedPoNo =
+          [
+            record.po_no,
+            record.mill_po_no,
+            dbMi?.po_no,
+            dbMi?.mill_po_no,
+            dbMim?.po_no,
+            dbMim?.mill_po_no,
+            dbFa?.po_no,
+            dbTmr?.po_no,
+            rawPrintRows[0]?.po_no,
+          ].find((v) => !isBlankField(v)) || "";
+
+        let resolvedPoDate =
+          [
+            record.po_date,
+            record.mill_po_date,
+            dbMi?.po_date,
+            dbMi?.mill_po_date,
+            dbMim?.po_date,
+            dbMim?.mill_po_date,
+            dbFa?.po_date,
+            dbTmr?.po_date,
+          ].find((v) => !isBlankField(v)) || "";
+
+        let poDetailRates: any[] = [];
+        if (resolvedPoNo) {
+          const cleanPo = String(resolvedPoNo).trim().replace(/^#+/, "");
+          const [pmRes, pdmRes, scpDetRes] = await Promise.all([
+            !resolvedPoDate
+              ? supabase.from("purchase_master").select("po_date, sauda_date, date").ilike("po_no", cleanPo).limit(1)
+              : Promise.resolve({ data: null }),
+            supabase.from("purchase_detail_master").select("*").ilike("po_no", cleanPo),
+            supabase.from("sauda_check_point_details").select("*").ilike("po_no", cleanPo),
+          ]);
+          const pmRow = Array.isArray(pmRes.data) ? pmRes.data[0] : pmRes.data;
+          if (!resolvedPoDate && pmRow) {
+            resolvedPoDate = pmRow.sauda_date || pmRow.po_date || pmRow.date || "";
+          }
+          poDetailRates =
+            scpDetRes.data && scpDetRes.data.length > 0
+              ? scpDetRes.data
+              : pdmRes.data || [];
+        }
+
+        const resolvedArea =
+          [
+            record.arrival_area,
+            (record as any).area,
+            dbMi?.arrival_area,
+            dbMi?.arrival_area_name,
+            dbMim?.arrival_area,
+            dbMim?.arrival_area_name,
+            dbFa?.arrival_area_name,
+            dbFa?.arrival_area,
+            dbTmr?.arrival_area_name,
+            dbTmr?.arrival_area,
+          ].find((v) => !isBlankField(v)) || "";
+
+        const resolvedAgency =
+          [
+            (record as any).agency,
+            (record as any).agency_name,
+            dbMi?.agency,
+            dbFa?.agency_name,
+            dbFa?.agency,
+            dbTmr?.agency_name,
+            dbTmr?.agency,
+          ].find((v) => !isBlankField(v)) || "";
+
+        const resolvedChallanNo =
+          [
+            (record as any).challan_no,
+            dbMi?.challan_no,
+            dbMim?.challan_no,
+            dbFa?.challan_railway_receipt_no,
+            dbFa?.challan_rr_no,
+            dbTmr?.challan_railway_receipt_no,
+            dbTmr?.challan_rr_no,
+          ].find((v) => !isBlankField(v)) || "";
+
+        const resolvedChallanDate =
+          [
+            (record as any).challan_date,
+            dbMi?.challan_date,
+            dbMim?.challan_date,
+            dbFa?.challan_rr_date,
+            dbTmr?.challan_rr_date,
+          ].find((v) => !isBlankField(v)) || "";
+
+        const resolvedRemarks =
+          [
+            record.remarks,
+            dbMi?.remarks,
+            dbMim?.remarks,
+            dbFa?.remarks,
+            dbTmr?.remarks,
+          ].find((v) => !isBlankField(v)) || "";
+
+        const enrichedMaster: InspectionMasterRecord = {
+          ...(dbMim || {}),
+          ...(dbMi || {}),
+          ...record,
+          mr_no: record.mr_no || dbMi?.mr_no || dbMim?.mr_no || lookupKey,
+          mr_date:
+            record.mr_date ||
+            dbMi?.mr_date ||
+            dbMim?.mr_date ||
+            dbFa?.date ||
+            dbFa?.arrival_date ||
+            record.arrival_date ||
+            "",
+          arrival_no:
+            record.arrival_no ||
+            dbMi?.arrival_no ||
+            dbFa?.final_arrival_no ||
+            dbFa?.arrival_no ||
+            dbTmr?.temporary_arrival_no ||
+            "",
+          arrival_date:
+            record.arrival_date ||
+            dbMi?.arrival_date ||
+            dbFa?.date ||
+            dbFa?.arrival_date ||
+            record.mr_date ||
+            "",
+          po_no: resolvedPoNo,
+          mill_po_no: resolvedPoNo || record.mill_po_no || "",
+          po_date: resolvedPoDate,
+          mill_po_date: resolvedPoDate || record.mill_po_date || "",
+          supplier_name:
+            [
+              record.supplier_name,
+              (record as any).supplier,
+              dbMi?.supplier_name,
+              dbMim?.supplier_name,
+              dbFa?.supplier,
+              dbFa?.challan_supplier,
+              dbTmr?.supplier,
+              dbTmr?.challan_supplier,
+            ].find((v) => !isBlankField(v)) || "",
+          broker_name:
+            [
+              record.broker_name,
+              (record as any).broker,
+              dbMi?.broker_name,
+              dbMim?.broker_name,
+              dbFa?.broker,
+              dbTmr?.broker,
+            ].find((v) => !isBlankField(v)) || "",
+          lorry_number:
+            [
+              record.lorry_number,
+              (record as any).vehicle_no,
+              dbMi?.lorry_number,
+              dbMim?.lorry_number,
+              dbFa?.lorry_number,
+              dbTmr?.lorry_number,
+            ].find((v) => !isBlankField(v)) || "",
+          arrival_area: resolvedArea,
+          remarks: resolvedRemarks,
+          actual_moisture: Number(record.actual_moisture ?? dbMi?.actual_moisture ?? dbMim?.actual_moisture ?? 0) || 0,
+          claim_moisture: Number(record.claim_moisture ?? dbMi?.claim_moisture ?? dbMim?.claim_moisture ?? 0) || 0,
+          actual_dust: Number(record.actual_dust ?? dbMi?.actual_dust ?? dbMim?.actual_dust ?? 0) || 0,
+          claim_dust: Number(record.claim_dust ?? dbMi?.claim_dust ?? dbMim?.claim_dust ?? 0) || 0,
+          actual_ncv: Number(record.actual_ncv ?? dbMi?.actual_ncv ?? dbMim?.actual_ncv ?? 0) || 0,
+          claim_ncv: Number(record.claim_ncv ?? dbMi?.claim_ncv ?? dbMim?.claim_ncv ?? 0) || 0,
+          ...(resolvedChallanNo ? { challan_no: resolvedChallanNo } : {}),
+          ...(resolvedChallanDate ? { challan_date: resolvedChallanDate } : {}),
+          ...(resolvedArea ? { area: resolvedArea } : {}),
+          ...(resolvedAgency ? { agency: resolvedAgency } : {}),
+        } as any;
+
+        const normalizedRows = rawPrintRows.map((d: any, idx: number) => {
+          const gradeName =
+            d.stock_grade_name ||
+            d.arrival_grade ||
+            d.receipt_grade_name ||
+            d.receipt_grade ||
+            d.grade_name ||
+            d.stock_grade_code ||
+            "";
+          const matchedPoRateRow = poDetailRates.find((p: any) => {
+            const pGrade = String(p.grade_name || p.stock_grade_name || p.arrival_grade || "").trim().toUpperCase();
+            return pGrade && gradeName && pGrade === String(gradeName).trim().toUpperCase();
+          });
+          const rowQty = Number(
+            d.quantity ?? d.quantity_rcpt ?? d.quantity_chln ?? d.rcpt ?? d.chln ?? d.bales ?? d.packets ?? 0
+          );
+          const rowGrossWt = Number(
+            d.challan_gross_wt ?? d.receipt_gross_wt ?? d.gross_weight_batch ?? d.netto_pnto ?? d.weight_mt ?? d.weight ?? 0
+          );
+          const rowRate = Number(
+            d.rate || d.rate_qntl || matchedPoRateRow?.rate || matchedPoRateRow?.rate_qntl || 0
+          );
+          const moistAct = Number(
+            d.moisture_act ?? d.actual_moisture ?? d.moisture_actual ?? enrichedMaster.actual_moisture ?? 0
+          );
+          const moistClaim = Number(
+            d.moisture_claim ?? d.claim_moisture ?? enrichedMaster.claim_moisture ?? 0
+          );
+          const dustAct = Number(d.dust_act ?? d.actual_dust ?? enrichedMaster.actual_dust ?? 0);
+          const dustClaim = Number(d.dust_claim ?? d.claim_dust ?? enrichedMaster.claim_dust ?? 0);
+          const ncvAct = Number(d.ncv_act ?? d.actual_ncv ?? enrichedMaster.actual_ncv ?? 0);
+          const ncvClaim = Number(d.ncv_claim ?? d.claim_ncv ?? enrichedMaster.claim_ncv ?? 0);
+
+          return {
+            ...d,
+            srl_no: d.srl_no || idx + 1,
+            crop_year: d.crop_year || d.crop || "2026-27",
+            marka: d.marka || d.marks || d.challan_marka_name || d.marka_name || resolvedArea || "NO MARK",
+            marks: d.marks || d.marka || d.challan_marka_name || d.marka_name || resolvedArea || "NO MARK",
+            stock_grade_name: gradeName,
+            arrival_grade: d.arrival_grade || gradeName,
+            area: d.area || d.area_name || d.arrival_area_name || resolvedArea || "",
+            agency: d.agency || d.agency_name || resolvedAgency || "",
+            unit: d.unit || d.unit_name || dbTmr?.unit_name || dbFa?.unit_name || "BALES",
+            quantity: Number.isFinite(rowQty) ? rowQty : 0,
+            challan_gross_wt: Number.isFinite(rowGrossWt) ? rowGrossWt : 0,
+            receipt_gross_wt: Number(d.receipt_gross_wt ?? rowGrossWt) || 0,
+            moisture_act: moistAct,
+            actual_moisture: moistAct,
+            moisture_claim: moistClaim,
+            claim_moisture: moistClaim,
+            dust_act: dustAct,
+            actual_dust: dustAct,
+            dust_claim: dustClaim,
+            claim_dust: dustClaim,
+            ncv_act: ncvAct,
+            actual_ncv: ncvAct,
+            ncv_claim: ncvClaim,
+            claim_ncv: ncvClaim,
+            final_receipt_wt: d.final_receipt_wt ?? d.reduced_weight ?? d.net_wt ?? "",
+            rate: rowRate || "",
+            rate_qntl: rowRate || "",
+          };
+        });
+
+        setPrintingRecord(enrichedMaster);
+        setPrintingDetails(normalizedRows);
       } else {
-        setPrintingDetails(detailRows);
+        setPrintingDetails(hasValidFormRows ? detailRows : parseGridSafe((record as any).grid_details || (record as any).details));
       }
     } catch (e) {
-      setPrintingDetails(detailRows);
+      console.warn("Failed to resolve full print data for Mill Inspection:", e);
+      setPrintingDetails(hasValidFormRows ? detailRows : parseGridSafe((record as any).grid_details || (record as any).details));
     }
   };
 
