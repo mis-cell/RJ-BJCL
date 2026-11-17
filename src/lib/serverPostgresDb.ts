@@ -364,24 +364,38 @@ export async function cleanupDuplicateClubbingAndStubRows(): Promise<{
       const cols = await getCols(inspTable);
 
       const makeInspStubCond = (p: string): string => {
-        const identityParts = ['supplier_name', 'supplier', 'lorry_number']
+        const identityParts = ['supplier_name', 'supplier', 'broker_name', 'broker', 'lorry_number', 'lorry_no']
           .filter((c) => cols.has(c))
           .map((c) => `NULLIF(TRIM(${p}"${c}"), '')`);
-        const nullChecks = ['date', 'mr_date', 'arrival_date', 'actual_moisture', 'claim_moisture', 'grid_details', 'details']
+        const measureChecks = [
+          'actual_moisture',
+          'claim_moisture',
+          'actual_dust',
+          'claim_dust',
+          'actual_ncv',
+          'claim_ncv',
+          'grid_details',
+          'details'
+        ]
           .filter((c) => cols.has(c))
           .map((c) => `${p}"${c}" IS NULL`);
 
-        if (identityParts.length === 0 || nullChecks.length === 0) {
+        if (cols.has('final_receipt_wt')) {
+          measureChecks.push(`COALESCE(${p}"final_receipt_wt", 0) = 0`);
+        }
+
+        if (identityParts.length === 0 || measureChecks.length === 0) {
           return 'FALSE';
         }
         return `
           COALESCE(${identityParts.join(', ')}) IS NULL
-          AND ${nullChecks.join(' AND ')}
+          AND ${measureChecks.join(' AND ')}
         `;
       };
 
-      // Propagate po_no / po_date / mill_po_no / status from stub rows onto real inspection rows before removing stubs
+      // Propagate po_no / po_date / mill_po_no / status from stub rows onto real inspection rows (including AR<->MR & final_arrival mapping)
       if (cols.has('mr_no') && cols.has('po_no')) {
+        const hasFaTable = await tableExists('final_arrival');
         const setParts: string[] = [
           `"po_no" = CASE
             WHEN COALESCE(NULLIF(TRIM(r."po_no"), ''), '') IN ('', 'NO', 'N/A', 'NONE')
@@ -392,10 +406,10 @@ export async function cleanupDuplicateClubbingAndStubRows(): Promise<{
           setParts.push(`"po_date" = COALESCE(r."po_date", s."po_date")`);
         }
         if (cols.has('mill_po_no')) {
-          setParts.push(`"mill_po_no" = COALESCE(NULLIF(TRIM(r."mill_po_no"), ''), NULLIF(TRIM(s."mill_po_no"), ''))`);
+          setParts.push(`"mill_po_no" = COALESCE(NULLIF(TRIM(r."mill_po_no"), ''), NULLIF(TRIM(s."mill_po_no"), ''), CASE WHEN COALESCE(NULLIF(TRIM(s."po_no"), ''), '') NOT IN ('', 'NO', 'N/A', 'NONE') THEN s."po_no" ELSE NULL END)`);
         }
         if (cols.has('mill_po_date')) {
-          setParts.push(`"mill_po_date" = COALESCE(r."mill_po_date", s."mill_po_date")`);
+          setParts.push(`"mill_po_date" = COALESCE(r."mill_po_date", s."mill_po_date", s."po_date")`);
         }
         if (cols.has('status')) {
           setParts.push(`"status" = CASE WHEN LOWER(COALESCE(s."status", '')) = 'settled' THEN 'settled' ELSE r."status" END`);
@@ -405,7 +419,12 @@ export async function cleanupDuplicateClubbingAndStubRows(): Promise<{
           `(NULLIF(TRIM(s."mr_no"), '') IS NOT NULL AND (
             TRIM(UPPER(COALESCE(r."mr_no", ''))) = TRIM(UPPER(s."mr_no"))
             ${cols.has('arrival_no') ? `OR TRIM(UPPER(COALESCE(r."arrival_no", ''))) = TRIM(UPPER(s."mr_no"))` : ''}
-          ))`
+          ))`,
+          `(
+            TRIM(UPPER(COALESCE(s."mr_no", ''))) ~ '^AR0*[0-9]+$'
+            AND TRIM(UPPER(COALESCE(r."mr_no", ''))) ~ '^MR0*[0-9]+$'
+            AND REGEXP_REPLACE(TRIM(UPPER(s."mr_no")), '^AR0*', '') = REGEXP_REPLACE(TRIM(UPPER(r."mr_no")), '^MR0*', '')
+          )`
         ];
         if (cols.has('arrival_no')) {
           mrMatchClauses.push(
@@ -415,17 +434,80 @@ export async function cleanupDuplicateClubbingAndStubRows(): Promise<{
             ))`
           );
         }
+        if (hasFaTable) {
+          mrMatchClauses.push(
+            `(
+              NULLIF(TRIM(fa."temporary_arrival_no"), '') IS NOT NULL
+              AND (
+                TRIM(UPPER(COALESCE(r."mr_no", ''))) = TRIM(UPPER(fa."temporary_arrival_no"))
+                ${cols.has('arrival_no') ? `OR TRIM(UPPER(COALESCE(r."arrival_no", ''))) = TRIM(UPPER(fa."temporary_arrival_no"))` : ''}
+              )
+            )`,
+            `(
+              NULLIF(TRIM(fa."mr_no"), '') IS NOT NULL
+              AND TRIM(UPPER(COALESCE(r."mr_no", ''))) = TRIM(UPPER(fa."mr_no"))
+            )`
+          );
+        }
+
+        const faJoinSql = hasFaTable
+          ? `LEFT JOIN "final_arrival" fa
+               ON NULLIF(TRIM(s."mr_no"), '') IS NOT NULL
+              AND (
+                TRIM(UPPER(COALESCE(fa."final_arrival_no", ''))) = TRIM(UPPER(s."mr_no"))
+                OR TRIM(UPPER(COALESCE(fa."mr_no", ''))) = TRIM(UPPER(s."mr_no"))
+                OR TRIM(UPPER(COALESCE(fa."temporary_arrival_no", ''))) = TRIM(UPPER(s."mr_no"))
+              )`
+          : '';
 
         await runSavepoint(`prop_${inspTable}`, () =>
           client.query(`
             UPDATE "${inspTable}" r
             SET ${setParts.join(', ')}
             FROM "${inspTable}" s
+            ${faJoinSql}
             WHERE (${makeInspStubCond('s.')})
               AND NOT (${makeInspStubCond('r.')})
               AND (${mrMatchClauses.join(' OR ')})
           `)
         );
+
+        // Also backfill missing P.O. onto real inspection rows from clubbed_pomr (active merges)
+        if (await tableExists('clubbed_pomr')) {
+          const clubSetParts: string[] = [
+            `"po_no" = c."po_no"`
+          ];
+          if (cols.has('po_date')) {
+            clubSetParts.push(`"po_date" = COALESCE(r."po_date", c."po_date")`);
+          }
+          if (cols.has('mill_po_no')) {
+            clubSetParts.push(`"mill_po_no" = COALESCE(NULLIF(TRIM(r."mill_po_no"), ''), c."po_no")`);
+          }
+          if (cols.has('mill_po_date')) {
+            clubSetParts.push(`"mill_po_date" = COALESCE(r."mill_po_date", c."po_date")`);
+          }
+          await runSavepoint(`prop_club_${inspTable}`, () =>
+            client.query(`
+              UPDATE "${inspTable}" r
+              SET ${clubSetParts.join(', ')}
+              FROM "clubbed_pomr" c
+              WHERE UPPER(COALESCE(c."status", 'ACTIVE')) <> 'DELETED'
+                AND COALESCE(NULLIF(TRIM(c."po_no"), ''), '') NOT IN ('', 'NO', 'N/A', 'NONE')
+                AND COALESCE(NULLIF(TRIM(r."po_no"), ''), '') IN ('', 'NO', 'N/A', 'NONE')
+                AND NOT (${makeInspStubCond('r.')})
+                AND (
+                  TRIM(UPPER(COALESCE(r."mr_no", ''))) = TRIM(UPPER(COALESCE(c."temporary_arrival_no", '')))
+                  OR TRIM(UPPER(COALESCE(r."mr_no", ''))) = TRIM(UPPER(COALESCE(c."final_arrival_no", '')))
+                  OR TRIM(UPPER(COALESCE(r."mr_no", ''))) = TRIM(UPPER(COALESCE(c."mr_no", '')))
+                  OR (
+                    TRIM(UPPER(COALESCE(c."final_arrival_no", ''))) ~ '^AR0*[0-9]+$'
+                    AND TRIM(UPPER(COALESCE(r."mr_no", ''))) ~ '^MR0*[0-9]+$'
+                    AND REGEXP_REPLACE(TRIM(UPPER(c."final_arrival_no")), '^AR0*', '') = REGEXP_REPLACE(TRIM(UPPER(r."mr_no")), '^MR0*', '')
+                  )
+                )
+            `)
+          );
+        }
       }
 
       // Delete stub rows inserted by accidental update->insert fallback
@@ -795,7 +877,7 @@ async function ensureDuplicateClubbingCleanupOnce(): Promise<void> {
       `);
       const chk = await client.query(
         `SELECT 1 FROM "app_one_time_migrations" WHERE "migration_key" = $1 LIMIT 1`,
-        ['dedup_clubbed_temp_final_mill_v1']
+        ['dedup_clubbed_temp_final_mill_v2']
       );
       shouldRun = (chk.rowCount || 0) === 0;
     } finally {
@@ -809,7 +891,7 @@ async function ensureDuplicateClubbingCleanupOnce(): Promise<void> {
           `INSERT INTO "app_one_time_migrations" ("migration_key", "details")
            VALUES ($1, $2)
            ON CONFLICT ("migration_key") DO NOTHING`,
-          ['dedup_clubbed_temp_final_mill_v1', JSON.stringify(res.deleted)]
+          ['dedup_clubbed_temp_final_mill_v2', JSON.stringify(res.deleted)]
         ).catch(() => {});
       }
     }

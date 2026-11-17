@@ -801,19 +801,34 @@ export default function ClubPOMR({ onClose }: { onClose?: () => void }) {
         ...(poDate ? { mill_po_date: poDate } : {})
       };
 
-      const inspLookupKeys = Array.from(
-        new Set(
-          [
-            faNo,
-            exactFaRecord.mr_no,
-            tempArrivalNo,
-            exactFaRecord.temporary_arrival_no,
-            exactFaRecord.arrival_no
-          ]
-            .map((v) => String(v || '').trim())
-            .filter(Boolean)
-        )
-      );
+      const baseInspSeeds = [
+        faNo,
+        exactFaRecord.mr_no,
+        tempArrivalNo,
+        exactFaRecord.temporary_arrival_no,
+        exactFaRecord.arrival_no
+      ]
+        .map((v) => String(v || '').trim())
+        .filter(Boolean);
+
+      const expandedInspSet = new Set<string>();
+      const numericSuffixes = new Set<string>();
+      for (const seed of baseInspSeeds) {
+        expandedInspSet.add(seed);
+        const upper = seed.toUpperCase();
+        expandedInspSet.add(upper);
+        const m = upper.match(/^(?:AR|MR)0*([0-9]+.*)$/);
+        if (m && m[1]) {
+          const numPart = m[1];
+          numericSuffixes.add(numPart);
+          expandedInspSet.add(`MR${numPart}`);
+          expandedInspSet.add(`MR0${numPart}`);
+          expandedInspSet.add(`MR00${numPart}`);
+          expandedInspSet.add(`AR${numPart}`);
+          expandedInspSet.add(`AR0${numPart}`);
+        }
+      }
+      const inspLookupKeys = Array.from(expandedInspSet);
 
       if (supabase && inspLookupKeys.length > 0) {
         const inspectionTables = [
@@ -825,12 +840,38 @@ export default function ClubPOMR({ onClose }: { onClose?: () => void }) {
 
         for (const tbl of inspectionTables) {
           try {
-            const [byMr, byArr] = await Promise.all([
-              supabase.from(tbl.name).select('mr_no').in('mr_no', inspLookupKeys).then((r: any) => r.data || [], () => []),
-              supabase.from(tbl.name).select('mr_no').in('arrival_no', inspLookupKeys).then((r: any) => r.data || [], () => [])
-            ]);
+            const byMr = await supabase
+              .from(tbl.name)
+              .select('mr_no')
+              .in('mr_no', inspLookupKeys)
+              .then((r: any) => r.data || [], () => []);
+
+            let matchedRows = byMr;
+            if ((!matchedRows || matchedRows.length === 0) && numericSuffixes.size > 0) {
+              const suffixList = Array.from(numericSuffixes).filter((s) => s.length >= 3);
+              for (const sfx of suffixList) {
+                const bySuffix = await supabase
+                  .from(tbl.name)
+                  .select('mr_no')
+                  .ilike('mr_no', `MR%${sfx}`)
+                  .then((r: any) => r.data || [], () => []);
+                if (bySuffix && bySuffix.length > 0) {
+                  matchedRows = [...matchedRows, ...bySuffix];
+                }
+              }
+            }
+
+            if (!matchedRows || matchedRows.length === 0) {
+              const byArr = await supabase
+                .from(tbl.name)
+                .select('mr_no')
+                .in('arrival_no', inspLookupKeys)
+                .then((r: any) => r.data || [], () => []);
+              matchedRows = byArr;
+            }
+
             const matchedMrNos = Array.from(
-              new Set([...byMr, ...byArr].map((r: any) => r?.mr_no).filter(Boolean))
+              new Set((matchedRows || []).map((r: any) => r?.mr_no).filter(Boolean))
             );
             for (const matchedMr of matchedMrNos) {
               await supabase.from(tbl.name).update(tbl.payload).eq('mr_no', matchedMr);
