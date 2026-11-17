@@ -480,11 +480,103 @@ export const PoHistogramHistoryModal: React.FC<PoHistogramHistoryModalProps> = (
       : 0;
     const totalPremiumSum = dbInspections.reduce((sum, i) => sum + (parseFloat(i.premium_amount || i.premium_total || 0) || 0), 0);
     
-    const inspectionmrno = dbInspections.map(a => a.mr_no || a.mr_no || a.mr_no || a.mr_no).filter(Boolean).join(', ');
-    const inspectionmrweught = dbInspections.map(a => a.final_receipt_wt || a.final_receipt_wt || a.final_receipt_wt || a.final_receipt_wt).filter(Boolean).join(', ');
-    /* dbInspections.length > 0
-      ? (dbInspections.reduce((sum, i) => sum + (parseFloat(i.final_receipt_wt || i.final_receipt_wt || i.final_receipt_wt || 0) || 0), 0))
-      : 0; */
+    const getInspectionWeightMt = (insp: any): number => {
+      if (!insp) return 0;
+      const directCandidates = [
+        insp.final_receipt_wt,
+        insp.received_weight_mt,
+        insp.reduced_weight,
+        insp.receipt_gross_wt,
+        insp.challan_gross_wt,
+        insp.total_receipt_gross_wt,
+        insp.total_challan_gross_wt,
+        insp.net_weight,
+        insp.weight_mt,
+      ];
+      for (const c of directCandidates) {
+        const val = parseFloat(c);
+        if (!isNaN(val) && val > 0) return val;
+      }
+
+      const rawDetails =
+        insp.grid_details ||
+        insp.material_inspection_details ||
+        insp.mill_inspection_detail ||
+        insp.inspection_details ||
+        insp.details ||
+        insp.items;
+      let detailRows: any[] = [];
+      if (Array.isArray(rawDetails)) {
+        detailRows = rawDetails;
+      } else if (typeof rawDetails === 'string' && rawDetails.trim().startsWith('[')) {
+        try {
+          const parsed = JSON.parse(rawDetails);
+          if (Array.isArray(parsed)) detailRows = parsed;
+        } catch (_e) {}
+      }
+
+      if (detailRows.length > 0) {
+        const sumWt = detailRows.reduce((sum, r) => {
+          if (!r) return sum;
+          const rowWt = parseFloat(
+            r.final_receipt_wt ||
+              r.reduced_weight ||
+              r.qty_in_mt ||
+              r.receipt_gross_wt ||
+              r.challan_gross_wt ||
+              r.gross_weight_batch ||
+              r.netto_pnto ||
+              r.weight_mt ||
+              r.weight ||
+              0
+          );
+          return sum + (!isNaN(rowWt) && rowWt > 0 ? rowWt : 0);
+        }, 0);
+        if (sumWt > 0) return Math.round(sumWt * 1000) / 1000;
+      }
+
+      const inspKeys = [
+        insp.mr_no,
+        insp.arrival_no,
+        insp.final_arrival_no,
+        insp.temporary_arrival_no,
+      ]
+        .map((k) => String(k || '').trim().toUpperCase())
+        .filter(Boolean);
+
+      if (inspKeys.length > 0) {
+        const matchedArr = dbArrivals.find((a) => {
+          const arrKeys = [
+            a.final_arrival_no,
+            a.mr_no,
+            a.arrival_no,
+            a.temporary_arrival_no,
+            a.amad_no,
+          ]
+            .map((k) => String(k || '').trim().toUpperCase())
+            .filter(Boolean);
+          return inspKeys.some((k) => arrKeys.includes(k));
+        });
+        if (matchedArr) {
+          const arrWt = getArrivalWeightMt(matchedArr);
+          if (arrWt > 0) return arrWt;
+        }
+      }
+
+      return 0;
+    };
+
+    const inspectionmrno = dbInspections
+      .map((a) => a.mr_no || a.arrival_no || a.final_arrival_no || a.temporary_arrival_no)
+      .filter(Boolean)
+      .join(', ');
+    const inspectionmrweught = dbInspections
+      .map((a) => {
+        const wt = getInspectionWeightMt(a);
+        return wt > 0 ? `${wt.toFixed(3)} MT` : null;
+      })
+      .filter(Boolean)
+      .join(', ');
     
     // Aggregate Payment metrics
     const totalPaidAmount = dbPayments.reduce((sum, p) => sum + (parseFloat(p.amount_paid || p.payable_net_amount || p.amount || 0) || 0), 0);
