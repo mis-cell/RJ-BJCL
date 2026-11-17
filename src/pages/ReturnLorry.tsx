@@ -421,7 +421,6 @@ export default function ReturnLorry({ onClose }: ReturnLorryProps) {
                   </label>
                   <input
                     type="text"
-                    readOnly
                     disabled
                     value={displayPoNo}
                     title="Auto-Generated 4000-Series P.O. Number"
