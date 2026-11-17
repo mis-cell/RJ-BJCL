@@ -37,6 +37,7 @@ export default function ReturnLorry({ onClose }: ReturnLorryProps) {
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [viewMode, setViewMode] = useState<'register' | 'form'>('register');
   const [activeRecord, setActiveRecord] = useState<ReturnLorryRecord | null>(null);
+  const [poContractInput, setPoContractInput] = useState<string>('');
   const [bRateInput, setBRateInput] = useState<string>('');
   const [itemRates, setItemRates] = useState<Record<number, string>>({});
   const [toast, setToast] = useState<{ type: 'success' | 'info' | 'error'; message: string } | null>(null);
@@ -92,6 +93,7 @@ export default function ReturnLorry({ onClose }: ReturnLorryProps) {
 
   const handleOpenRecordInForm = (rec: ReturnLorryRecord) => {
     setActiveRecord(rec);
+    setPoContractInput(String(rec.new_po_no || rec.po_no || '').trim());
     const initialBRate = Number(rec.b_rate) > 0 ? String(rec.b_rate) : '';
     setBRateInput(initialBRate);
 
@@ -147,11 +149,13 @@ export default function ReturnLorry({ onClose }: ReturnLorryProps) {
 
     setSaving(true);
     try {
+      const finalPoContract = poContractInput.trim() || activeRecord.new_po_no;
       const updatedItems: ReturnLorryItemRow[] = (activeRecord.items || []).map((it, idx) => {
         const srl = it.srl_no || idx + 1;
         const rowRate = Number(itemRates[srl]) > 0 ? Number(itemRates[srl]) : finalBRate;
         return {
           ...it,
+          return_po_no: finalPoContract,
           srl_no: srl,
           rate_qntl: rowRate,
         };
@@ -159,6 +163,8 @@ export default function ReturnLorry({ onClose }: ReturnLorryProps) {
 
       const recordToSave: ReturnLorryRecord = {
         ...activeRecord,
+        new_po_no: finalPoContract,
+        po_no: finalPoContract,
         b_rate: finalBRate,
         items: updatedItems,
       };
@@ -218,9 +224,6 @@ export default function ReturnLorry({ onClose }: ReturnLorryProps) {
   // EXCEPT Rate (Rate / Qntl & B Rate) which user manually inputs.
   // ============================================================================
   if (viewMode === 'form' && activeRecord) {
-    const displayPoNo = hasEnteredRate || activeRecord.saved_to_sauda_checkpoint
-      ? activeRecord.new_po_no
-      : `${activeRecord.new_po_no} (Auto-Generated on Rate Input)`;
 
     const formItems: ReturnLorryItemRow[] =
       activeRecord.items && activeRecord.items.length > 0
@@ -421,10 +424,11 @@ export default function ReturnLorry({ onClose }: ReturnLorryProps) {
                   </label>
                   <input
                     type="text"
-                    disabled
-                    value={displayPoNo}
-                    title="Auto-Generated 4000-Series P.O. Number"
-                    className="flex-1 bg-red-50 border-2 border-red-600 p-0.5 outline-none font-mono font-black text-red-900 cursor-not-allowed"
+                    value={poContractInput}
+                    onChange={(e) => setPoContractInput(e.target.value)}
+                    placeholder="Enter P.O Contract"
+                    title="Editable P.O Contract Number"
+                    className="flex-1 bg-white border-2 border-red-600 focus:border-indigo-600 p-0.5 outline-none font-mono font-black text-red-900"
                   />
                 </div>
 

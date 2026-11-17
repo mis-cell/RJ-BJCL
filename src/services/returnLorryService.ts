@@ -827,8 +827,8 @@ export async function saveReturnLorryToSaudaCheckPoint(
 ): Promise<ReturnLorryRecord> {
   ensureReturnLorryTablesExist();
 
-  let finalPoNo = record.new_po_no;
-  if (!finalPoNo || !is4000SeriesPo(finalPoNo)) {
+  let finalPoNo = String(record.new_po_no || '').trim();
+  if (!finalPoNo) {
     finalPoNo = await generateNext4000SeriesPoNo(record.reference_po_no, record.financial_year || '2026-2027');
   }
 
@@ -860,9 +860,19 @@ export async function saveReturnLorryToSaudaCheckPoint(
       delete dbRecordPayload.raw_inspection;
       delete dbRecordPayload.raw_sauda_check_point;
 
-      await dbModule.upsert('return_lorry', dbRecordPayload, 'new_po_no').catch(async () => {
-        await supabase!.from('return_lorry').upsert(dbRecordPayload, { onConflict: 'new_po_no' }).then(() => {}, () => {});
-      });
+      if (savedRecord.id) {
+        await dbModule.update('return_lorry', 'id', savedRecord.id, dbRecordPayload).catch(async () => {
+          await supabase!.from('return_lorry').update(dbRecordPayload).eq('id', savedRecord.id).then(() => {}, () => {});
+        });
+      } else if (savedRecord.mr_no) {
+        await dbModule.upsert('return_lorry', dbRecordPayload, 'mr_no').catch(async () => {
+          await supabase!.from('return_lorry').upsert(dbRecordPayload, { onConflict: 'new_po_no' }).then(() => {}, () => {});
+        });
+      } else {
+        await dbModule.upsert('return_lorry', dbRecordPayload, 'new_po_no').catch(async () => {
+          await supabase!.from('return_lorry').upsert(dbRecordPayload, { onConflict: 'new_po_no' }).then(() => {}, () => {});
+        });
+      }
 
       if (updatedItems.length > 0) {
         await supabase.from('return_lorry_details').delete().eq('return_po_no', finalPoNo).then(() => {}, () => {});
