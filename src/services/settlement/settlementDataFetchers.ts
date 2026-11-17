@@ -2,6 +2,16 @@ import { supabase } from '../../lib/supabase';
 import { dbModule } from '../dbModule';
 import { resolveGradeName, resolveAgencyName } from './settlementResolvers';
 import { syncExcessShortDeductionForSinglePo } from '../excessShortAutoSyncService';
+import {
+  buildFinalArrivalIndex,
+  resolveRecordOfficialArrivalId,
+  resolveOfficialArrivalId,
+  isArrivalFinalized,
+  getLinkedArrivalKeys,
+  normalizeArrivalToken,
+  isMrIdentifier,
+  extractFinalArrivalOfficialMr
+} from '../../utils/arrivalMrResolver';
 
 const parseGridOrItems = (raw: any): any[] => {
   if (!raw) return [];
@@ -511,7 +521,7 @@ export const fetchSaudaCheckpointDeduction = async (cleanPoNo: string) => {
             supabase.from('purchase_master').select('po_no, total_contract_mt').ilike('po_no', `%${rawPoNo}%`).limit(5).then(r => r.data || [], () => []),
             supabase.from('material_inspection').select('mr_no, arrival_no, final_arrival_no, date, mr_date, inspection_date, created_at, receipt_gross_wt, challan_gross_wt, gross_weight, total_final_receipt_wt, final_receipt_wt, weight_reduced, reduced_weight, electronic_net_weight, final_weight_mt, weight_qtl, weight, grid_details, details').ilike('po_no', `%${rawPoNo}%`).then(r => r.data || [], () => []),
             supabase.from('temporary_material_received').select('temporary_arrival_no, amad_no, mr_no, arrival_no, date, arrival_date, created_at, receipt_gross_wt, gross_weight, total_final_receipt_wt, final_receipt_wt, weight_reduced, reduced_weight, electronic_net_weight, final_weight_mt, weight_qtl, weight').ilike('po_no', `%${rawPoNo}%`).then(r => r.data || [], () => []),
-            supabase.from('final_arrival').select('final_arrival_no, mr_no, arrival_no, date, arrival_date, created_at, weight_qtl, electronic_net_weight, challan_material_weight, weight').ilike('po_no', `%${rawPoNo}%`).then(r => r.data || [], () => [])
+            supabase.from('final_arrival').select('final_arrival_no, mr_no, arrival_no, temporary_arrival_no, temp_arrival_no, amad_no, final_arrival_id, date, arrival_date, created_at, weight_qtl, electronic_net_weight, challan_material_weight, weight').ilike('po_no', `%${rawPoNo}%`).then(r => r.data || [], () => [])
           ]);
 
           const findExactPo = (rows: any[]) =>
@@ -529,13 +539,10 @@ export const fetchSaudaCheckpointDeduction = async (cleanPoNo: string) => {
             changed = true;
           }
 
+          const faIndex = buildFinalArrivalIndex(faRes as any[]);
           const extractMrSeq = (mr: string): number => {
             const m = String(mr || '').trim().match(/(\d+)$/);
             return m ? parseInt(m[1], 10) : 0;
-          };
-          const canonicalMrKey = (mr: string): string => {
-            const seq = extractMrSeq(mr);
-            return seq > 0 ? `MR_${seq}` : String(mr || '').trim().toUpperCase();
           };
           const toMtFromRawWt = (val: any): number => {
             const n = Number(val || 0);
@@ -547,25 +554,40 @@ export const fetchSaudaCheckpointDeduction = async (cleanPoNo: string) => {
 
           const uniqueMrMap = new Map<string, any>();
           (miRes || []).forEach((insp: any) => {
-            const num = String(insp.mr_no || insp.arrival_no || insp.final_arrival_no || '').trim();
+            const { officialId, isFinalized } = resolveRecordOfficialArrivalId(insp, faIndex);
+            const num = String(officialId || insp.mr_no || insp.arrival_no || insp.final_arrival_no || '').trim();
             if (num) {
-              const key = canonicalMrKey(num);
+              const key = normalizeArrivalToken(num);
               const existing = uniqueMrMap.get(key);
-              if (!existing || (!existing.source?.grid_details && insp.grid_details)) {
-                uniqueMrMap.set(key, { mrNo: num, source: insp, date: insp.arrival_date || insp.mr_date || insp.inspection_date || insp.date || insp.created_at || '' });
+              const preferNew =
+                !existing ||
+                (!isMrIdentifier(existing.mrNo) && (isFinalized || isMrIdentifier(num))) ||
+                (!existing.source?.grid_details && insp.grid_details);
+              if (preferNew) {
+                uniqueMrMap.set(key, {
+                  mrNo: num,
+                  key,
+                  source: { ...insp, mr_no: isFinalized ? num : insp.mr_no },
+                  date: insp.arrival_date || insp.mr_date || insp.inspection_date || insp.date || insp.created_at || ''
+                });
               }
             }
           });
           (tmrRes || []).forEach((ar: any) => {
-            const num = String(ar.temporary_arrival_no || ar.amad_no || ar.mr_no || ar.arrival_no || '').trim();
-            if (num && !uniqueMrMap.has(canonicalMrKey(num))) {
-              uniqueMrMap.set(canonicalMrKey(num), { mrNo: num, source: ar, date: ar.arrival_date || ar.date || ar.created_at || '' });
+            if (isArrivalFinalized(ar, faIndex)) return;
+            const { officialId } = resolveRecordOfficialArrivalId(ar, faIndex);
+            const num = String(officialId || ar.temporary_arrival_no || ar.amad_no || ar.mr_no || ar.arrival_no || '').trim();
+            const key = normalizeArrivalToken(num);
+            if (num && key && !uniqueMrMap.has(key)) {
+              uniqueMrMap.set(key, { mrNo: num, key, source: ar, date: ar.arrival_date || ar.date || ar.created_at || '' });
             }
           });
           (faRes || []).forEach((ar: any) => {
-            const num = String(ar.final_arrival_no || ar.mr_no || ar.arrival_no || '').trim();
-            if (num && !uniqueMrMap.has(canonicalMrKey(num))) {
-              uniqueMrMap.set(canonicalMrKey(num), { mrNo: num, source: ar, date: ar.arrival_date || ar.date || ar.created_at || '' });
+            const { officialId } = resolveRecordOfficialArrivalId(ar, faIndex);
+            const num = String(extractFinalArrivalOfficialMr(ar) || officialId || ar.final_arrival_no || ar.mr_no || ar.arrival_no || '').trim();
+            const key = normalizeArrivalToken(num);
+            if (num && key && !uniqueMrMap.has(key)) {
+              uniqueMrMap.set(key, { mrNo: num, key, source: { ...ar, mr_no: num }, date: ar.arrival_date || ar.date || ar.created_at || '' });
             }
           });
 
@@ -578,18 +600,18 @@ export const fetchSaudaCheckpointDeduction = async (cleanPoNo: string) => {
           });
 
           if (mrEntries.length > 0) {
-            // Fetch material_inspection_details for all matched MRs of this PO
+            // Fetch material_inspection_details for all matched MRs and linked temp arrival keys of this PO
             let liveInspectionDetails: any[] = [];
             const mrCandidateList = Array.from(
               new Set(
                 mrEntries.flatMap(e => {
                   const raw = String(e.mrNo || '').trim();
-                  const seq = extractMrSeq(raw);
+                  const linked = getLinkedArrivalKeys(e.source || raw, faIndex);
                   return [
                     raw,
-                    seq > 0 ? `MR${seq}` : '',
-                    seq > 0 ? `MR0${seq}` : '',
-                    seq > 0 ? `MR00${seq}` : ''
+                    ...linked,
+                    ...(e.source?.arrival_no ? [String(e.source.arrival_no).trim()] : []),
+                    ...(e.source?.mr_no ? [String(e.source.mr_no).trim()] : [])
                   ].filter(Boolean);
                 })
               )
@@ -616,7 +638,8 @@ export const fetchSaudaCheckpointDeduction = async (cleanPoNo: string) => {
 
             mrEntries.forEach((entry, idx) => {
               const src = entry.source;
-              const mrKey = canonicalMrKey(entry.mrNo);
+              const entryLinkedKeys = new Set(getLinkedArrivalKeys(src || entry.mrNo, faIndex));
+              entryLinkedKeys.add(normalizeArrivalToken(entry.mrNo));
               const isLast = idx === mrEntries.length - 1;
               let mrGrossMt = 0;
               let mrNetMt = 0;
@@ -643,7 +666,9 @@ export const fetchSaudaCheckpointDeduction = async (cleanPoNo: string) => {
 
               const matchingDetails = (liveInspectionDetails || []).filter((d: any) => {
                 const dMr = String(d.mr_no || '').trim();
-                return dMr && canonicalMrKey(dMr) === mrKey;
+                const dNorm = normalizeArrivalToken(dMr);
+                const dResolved = normalizeArrivalToken(resolveOfficialArrivalId(dMr, faIndex));
+                return Boolean((dNorm && entryLinkedKeys.has(dNorm)) || (dResolved && entryLinkedKeys.has(dResolved)));
               });
 
               const rawDetailItems = (Array.isArray(embeddedGrid) && embeddedGrid.length > 0) ? embeddedGrid : matchingDetails;
@@ -655,7 +680,11 @@ export const fetchSaudaCheckpointDeduction = async (cleanPoNo: string) => {
                 rawDetailItems.forEach((it: any, itIdx: number) => {
                   if (!it || typeof it !== 'object') return;
                   const itMr = String(it.mr_no || '').trim();
-                  if (itMr && canonicalMrKey(itMr) !== mrKey) return;
+                  if (itMr) {
+                    const itNorm = normalizeArrivalToken(itMr);
+                    const itResolved = normalizeArrivalToken(resolveOfficialArrivalId(itMr, faIndex));
+                    if (!entryLinkedKeys.has(itNorm) && !entryLinkedKeys.has(itResolved)) return;
+                  }
                   const gRaw = Number(it.challan_gross_wt ?? it.receipt_gross_wt ?? it.gross_weight_batch ?? it.gross_weight ?? 0);
                   const nRaw = Number(it.final_receipt_wt ?? it.reduced_weight ?? it.netto_pnto ?? 0);
                   if (gRaw <= 0 && nRaw <= 0) return;

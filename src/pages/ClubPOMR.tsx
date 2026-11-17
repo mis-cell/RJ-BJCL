@@ -37,6 +37,12 @@ import {
 } from "../types/clubPomr.types";
 import { ClubbingHistoryModal } from "../components/club-pomr/ClubbingHistoryModal";
 import { ManualClubbingBindModal } from "../components/club-pomr/ManualClubbingBindModal";
+import {
+  buildFinalArrivalIndex,
+  isArrivalFinalized,
+  extractFinalArrivalOfficialMr,
+  extractFinalArrivalLinkedTemp
+} from '../utils/arrivalMrResolver';
 
 export type { ClubbingRecord };
 
@@ -263,10 +269,12 @@ export default function ClubPOMR({ onClose }: { onClose?: () => void }) {
       };
     };
 
+    const faIndex = buildFinalArrivalIndex(allFinalArrivals || []);
+
     const dedupeByFaNo = (rows: any[]) => {
       const seen = new Set<string>();
       return rows.filter((r: any) => {
-        const key = normalize(r.final_arrival_no || r.mr_no || r.final_arrival_id || '');
+        const key = normalize(extractFinalArrivalOfficialMr(r) || r.final_arrival_no || r.mr_no || r.final_arrival_id || '');
         if (!key) return true;
         if (seen.has(key)) return false;
         seen.add(key);
@@ -429,7 +437,7 @@ export default function ClubPOMR({ onClose }: { onClose?: () => void }) {
       const rawMatchingFinal = queryPoIndex(finalByPoIndex, poKeys);
       const seenFinalKeys = new Set<string>();
       const matchingFinal = rawMatchingFinal.filter((f: any) => {
-        const key = normalize(f.final_arrival_no || f.arrival_no || f.mr_no || f.temporary_arrival_no || f.id || '');
+        const key = normalize(extractFinalArrivalOfficialMr(f) || f.final_arrival_no || f.mr_no || f.arrival_no || f.temporary_arrival_no || f.id || '');
         if (!key) return true;
         if (seenFinalKeys.has(key)) return false;
         seenFinalKeys.add(key);
@@ -441,6 +449,8 @@ export default function ClubPOMR({ onClose }: { onClose?: () => void }) {
       // Deduplicate Temp Arrivals that are already represented in Final Arrivals (1 Lorry = 1 MR)
       const seenTempKeys = new Set<string>();
       const matchingTempDeduped = matchingTempArrivals.filter((ar: any) => {
+        if (isArrivalFinalized(ar, faIndex)) return false;
+
         const matchedInThisPoFinal = matchingFinal.some(
           (f: any) =>
             (f.temporary_arrival_no &&
@@ -454,18 +464,9 @@ export default function ClubPOMR({ onClose }: { onClose?: () => void }) {
               normalize(f.mr_no) === normalize(ar.temporary_arrival_no || ar.amad_no)) ||
             (f.final_arrival_no &&
               (ar.temporary_arrival_no || ar.amad_no || ar.mr_no) &&
-              normalize(f.final_arrival_no) === normalize(ar.temporary_arrival_no || ar.amad_no || ar.mr_no)) ||
-            (f.lorry_number &&
-              ar.lorry_number &&
-              normalize(f.lorry_number) === normalize(ar.lorry_number))
+              normalize(f.final_arrival_no) === normalize(ar.temporary_arrival_no || ar.amad_no || ar.mr_no))
         );
         if (matchedInThisPoFinal) return false;
-
-        const tempId = normalize(ar.temporary_arrival_no || ar.amad_no || '');
-        const mrId = normalize(ar.mr_no || ar.arrival_no || '');
-        if ((tempId && allPromotedTempTokens.has(tempId)) || (mrId && allPromotedTempTokens.has(mrId))) {
-          return false;
-        }
 
         const key = normalize(ar.temporary_arrival_no || ar.amad_no || ar.mr_no || ar.id || '');
         if (key) {
@@ -484,7 +485,7 @@ export default function ClubPOMR({ onClose }: { onClose?: () => void }) {
       const linkedMrNos = Array.from(
         new Set(
           [
-            ...matchingFinal.map((r: any) => String(r.final_arrival_no || r.mr_no || '').trim()),
+            ...matchingFinal.map((r: any) => String(extractFinalArrivalOfficialMr(r) || r.final_arrival_no || r.mr_no || '').trim()),
             ...matchingTempDeduped.map((r: any) => String(r.temporary_arrival_no || r.amad_no || r.mr_no || '').trim())
           ].filter(Boolean)
         )
@@ -644,7 +645,10 @@ export default function ClubPOMR({ onClose }: { onClose?: () => void }) {
       await ensureClubbedPomrSchema();
 
       const faNo = String(
-        selectedArrivalForBind.final_arrival_no || selectedArrivalForBind.mr_no || ''
+        extractFinalArrivalOfficialMr(selectedArrivalForBind) ||
+          selectedArrivalForBind.final_arrival_no ||
+          selectedArrivalForBind.mr_no ||
+          ''
       ).trim();
       const poNo = String(chosenPoForBind.po_no || chosenPoForBind.ptf_no || '').trim();
       const poDate = String(
@@ -676,13 +680,16 @@ export default function ClubPOMR({ onClose }: { onClose?: () => void }) {
         }
       }
 
+      const resolvedFaNo = extractFinalArrivalOfficialMr(exactFaRecord) || faNo;
+
       // Extract `temporary_arrival_no` from Final Arrival table (`final_arrival.temporary_arrival_no`)
       const tempArrivalNo = String(
-        exactFaRecord.temporary_arrival_no ||
+        extractFinalArrivalLinkedTemp(exactFaRecord) ||
+          exactFaRecord.temporary_arrival_no ||
           exactFaRecord.arrival_no ||
           exactFaRecord.amad_no ||
           selectedArrivalForBind.temporary_arrival_no ||
-          faNo
+          resolvedFaNo
       ).trim();
 
       const faWeightMt = getArrivalWeightMt(exactFaRecord);
@@ -743,7 +750,7 @@ export default function ClubPOMR({ onClose }: { onClose?: () => void }) {
         const { data: matchedFaRows } = await supabase
           .from('final_arrival')
           .select('final_arrival_id')
-          .or(`final_arrival_no.eq.${faNo},mr_no.eq.${faNo}`)
+          .or(`final_arrival_no.eq.${resolvedFaNo},mr_no.eq.${resolvedFaNo}`)
           .catch(() => ({ data: [] as any[] }));
         (matchedFaRows || []).forEach((r: any) => {
           if (r?.final_arrival_id) faMatchIds.add(String(r.final_arrival_id));
@@ -767,7 +774,7 @@ export default function ClubPOMR({ onClose }: { onClose?: () => void }) {
             exactFaRecord.temporary_arrival_no,
             exactFaRecord.arrival_no,
             exactFaRecord.amad_no,
-            faNo
+            resolvedFaNo
           ]
             .map((v) => String(v || '').trim())
             .filter(Boolean)
@@ -802,7 +809,7 @@ export default function ClubPOMR({ onClose }: { onClose?: () => void }) {
       };
 
       const baseInspSeeds = [
-        faNo,
+        resolvedFaNo,
         exactFaRecord.mr_no,
         tempArrivalNo,
         exactFaRecord.temporary_arrival_no,
@@ -889,13 +896,13 @@ export default function ClubPOMR({ onClose }: { onClose?: () => void }) {
 
       const mergedRemarks =
         clubbingRemarks ||
-        `Merged MR ${faNo} (Temp Arrival: ${tempArrivalNo}) with P.O ${poNo} (Lorry ${newReceivedLorriesCount}/${contractLorries})`;
+        `Merged MR ${resolvedFaNo} (Temp Arrival: ${tempArrivalNo}) with P.O ${poNo} (Lorry ${newReceivedLorriesCount}/${contractLorries})`;
 
       const existingClubCandidates = supabase
         ? await supabase
             .from('clubbed_pomr')
             .select('id, club_id, po_no, clubbed_po_nos, po_nos, status')
-            .or(`final_arrival_no.eq.${faNo},mr_no.eq.${faNo},primary_mr_no.eq.${faNo}`)
+            .or(`final_arrival_no.eq.${resolvedFaNo},mr_no.eq.${resolvedFaNo},primary_mr_no.eq.${resolvedFaNo}`)
             .then((r: any) => r.data || [], () => [])
         : [];
 
@@ -919,13 +926,13 @@ export default function ClubPOMR({ onClose }: { onClose?: () => void }) {
         po_date: poDate || null,
         clubbed_po_nos: [poNo],
         po_nos: JSON.stringify([poNo]),
-        primary_mr_no: faNo,
-        mr_no: faNo,
-        final_arrival_no: faNo,
+        primary_mr_no: resolvedFaNo,
+        mr_no: resolvedFaNo,
+        final_arrival_no: resolvedFaNo,
         temporary_arrival_no: tempArrivalNo,
         arrival_date: arrivalDateStr || null,
-        clubbed_mr_nos: [faNo],
-        amad_nos: JSON.stringify([faNo]),
+        clubbed_mr_nos: [resolvedFaNo],
+        amad_nos: JSON.stringify([resolvedFaNo]),
         supplier: supplierName,
         challan_supplier: exactFaRecord.challan_supplier || supplierName,
         broker: brokerName,
@@ -967,7 +974,7 @@ export default function ClubPOMR({ onClose }: { onClose?: () => void }) {
       notifyDataChanged('clubbed_pomr');
 
       setSuccessToast(
-        `${isUpdatingExistingClub ? 'Updated Merge:' : 'Merged:'} MR #${faNo} (Temp Arrival #${tempArrivalNo}) with P.O #${poNo} [Lorry ${newReceivedLorriesCount}/${contractLorries}] — Updated Final Arrival, Temporary Arrival & Mill Inspection.`
+        `${isUpdatingExistingClub ? 'Updated Merge:' : 'Merged:'} MR #${resolvedFaNo} (Temp Arrival #${tempArrivalNo}) with P.O #${poNo} [Lorry ${newReceivedLorriesCount}/${contractLorries}] — Updated Final Arrival, Temporary Arrival & Mill Inspection.`
       );
 
       // Reset modal state

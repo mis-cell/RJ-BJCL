@@ -26,39 +26,22 @@ const SearchablePendingArrivalSelect: React.FC<SearchablePendingArrivalSelectPro
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  /* const filteredList = pendingArrivalList.filter((fa) => {
-    if (!searchTerm.trim()) return true;
-    const q = searchTerm.toLowerCase().trim();
-    const faNo = String(fa.final_arrival_no || fa.mr_no || "").toLowerCase();
-    const poNo = String(fa.po_no || "").toLowerCase();
-    const supplier = String(fa.supplier || fa.challan_supplier || "").toLowerCase();
-    const lorry = String(fa.lorry_number || "").toLowerCase();
-    const broker = String(fa.broker || "").toLowerCase();
-
-    return (
-      faNo.includes(q) ||
-      poNo.includes(q) ||
-      supplier.includes(q) ||
-      lorry.includes(q) ||
-      broker.includes(q)
-    );
-  }); */
   const filteredList = pendingArrivalList.filter((fa) => {
-    // Show only MR records, exclude AR records
-    const faNo = String(fa.final_arrival_no || fa.mr_no || "").toLowerCase();
-
-    if (!faNo.startsWith("mr")) return false;
-
     if (!searchTerm.trim()) return true;
 
     const q = searchTerm.toLowerCase().trim();
-    const poNo = String(fa.po_no || "").toLowerCase();
+    const faNo = String(fa.final_arrival_no || fa.mr_no || fa.arrival_no || fa.temporary_arrival_no || "").toLowerCase();
+    const mrNo = String(fa.mr_no || "").toLowerCase();
+    const tempNo = String(fa.temporary_arrival_no || fa.amad_no || "").toLowerCase();
+    const poNo = String(fa.po_no || "without p.o.").toLowerCase();
     const supplier = String(fa.supplier || fa.challan_supplier || "").toLowerCase();
-    const lorry = String(fa.lorry_number || "").toLowerCase();
+    const lorry = String(fa.lorry_number || fa.lorry_no || "").toLowerCase();
     const broker = String(fa.broker || "").toLowerCase();
 
     return (
       faNo.includes(q) ||
+      mrNo.includes(q) ||
+      tempNo.includes(q) ||
       poNo.includes(q) ||
       supplier.includes(q) ||
       lorry.includes(q) ||
@@ -131,11 +114,13 @@ const SearchablePendingArrivalSelect: React.FC<SearchablePendingArrivalSelectPro
               </div>
             ) : (
               filteredList.map((fa, idx) => {
-                const arrNo = fa.final_arrival_no || 'MR';
-                const poNo = fa.po_no || '-';
+                const arrNo = fa.final_arrival_no || fa.mr_no || fa.arrival_no || fa.temporary_arrival_no || 'MR';
+                const rawPo = String(fa.po_no || '').trim();
+                const hasPo = rawPo !== '' && !['NO', 'N/A', 'NONE', '-'].includes(rawPo.toUpperCase());
+                const poDisplay = hasPo ? `PO: ${rawPo}` : 'Without P.O.';
                 const suppName = fa.supplier || fa.challan_supplier || 'Supplier';
-                const lorryNo = fa.lorry_number || '-';
-                const labelStr = `Arrival ${arrNo} | PO: ${poNo} | ${suppName} | Lorry: ${lorryNo}`;
+                const lorryNo = fa.lorry_number || fa.lorry_no || '-';
+                const labelStr = `Arrival ${arrNo} | ${poDisplay} | ${suppName} | Lorry: ${lorryNo}`;
 
                 return (
                   <div
@@ -151,7 +136,7 @@ const SearchablePendingArrivalSelect: React.FC<SearchablePendingArrivalSelectPro
                       <div className="font-bold text-slate-900 flex items-center gap-2">
                         <span className="text-emerald-700">{arrNo}</span>
                         <span className="text-slate-400">|</span>
-                        <span>PO: {poNo}</span>
+                        <span className={hasPo ? "" : "text-amber-700"}>{poDisplay}</span>
                       </div>
                       <div className="text-[11px] text-slate-500 mt-0.5">
                         {suppName} • Lorry: {lorryNo}
@@ -402,7 +387,7 @@ export const InspectionHeaderCard: React.FC<InspectionHeaderCardProps> = ({
           <label className="text-xs font-extrabold text-slate-700">Lorry Number <span className="text-rose-600 font-black text-sm">*</span></label>
           <input
             type="text"
-            value={headerForm.lorry_number.toUpperCase() || ""}
+            value={(headerForm.lorry_number || "").toUpperCase()}
             onChange={(e) => onHeaderChange("lorry_number", e.target.value.toUpperCase())}
             required
             className="w-full border border-slate-300 rounded-lg px-3 py-2 text-xs font-mono font-bold bg-white text-slate-900 focus:outline-none"

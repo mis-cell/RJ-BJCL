@@ -1,5 +1,5 @@
 import { supabase } from "../../lib/supabase";
-import { dbModule } from "../../services/dbModule";
+import { dbModule, notifyDataChanged } from "../../services/dbModule";
 import { getCurrentUserContext } from "../../lib/permissions";
 import { logChange } from "../../services/auditLogService";
 import {
@@ -503,33 +503,145 @@ export async function saveInspectionRecordToDb(
   };
 }
 
-export async function deleteInspectionRecordFromDb(mr_no: string): Promise<boolean> {
-  const cleanMr = String(mr_no || "").trim();
-  if (!cleanMr) return false;
+export async function deleteInspectionRecordFromDb(
+  mr_no: string,
+  record?: Partial<InspectionMasterRecord>
+): Promise<boolean> {
+  const cleanMr = String(mr_no || record?.mr_no || record?.arrival_no || "").trim();
+  const cleanId = record?.id !== undefined && record?.id !== null ? String(record.id).trim() : "";
+  if (!cleanMr && !cleanId) return false;
+
+  const rawKeys = Array.from(
+    new Set(
+      [cleanMr, record?.mr_no, record?.arrival_no]
+        .map((v) => String(v || "").trim())
+        .filter(Boolean)
+    )
+  );
+  const keys = Array.from(
+    new Set(rawKeys.map((v) => v.toUpperCase()))
+  );
+  const fallbackKeys = Array.from(new Set([...rawKeys, ...keys]));
 
   const currentUser = getCurrentUserContext();
   const userName =
     currentUser.username || currentUser.userName || currentUser.userId || "Operator";
 
   const esc = (v: string) => `'${v.replace(/'/g, "''")}'`;
-  await dbModule.executeTransaction([
-    `DELETE FROM material_inspection_details WHERE mr_no = ${esc(cleanMr)};`,
-    `DELETE FROM material_inspection_deductions WHERE mr_no = ${esc(cleanMr)};`,
-    `DELETE FROM mill_inspection_deduction WHERE mr_no = ${esc(cleanMr)};`,
-    `DELETE FROM material_inspection WHERE mr_no = ${esc(cleanMr)};`,
-  ]);
+  const pgKeyArray = `ARRAY[${keys.map(esc).join(", ")}]::text[]`;
 
+  const doSql = `
+    DO $$
+    DECLARE
+      v_keys TEXT[] := ${keys.length > 0 ? pgKeyArray : "ARRAY[]::text[]"};
+      v_id TEXT := ${cleanId ? esc(cleanId) : "NULL"};
+      t TEXT;
+      child_tbls TEXT[] := ARRAY[
+        'material_inspection_details',
+        'mill_inspection_detail',
+        'material_inspection_deductions',
+        'mill_inspection_deduction',
+        'inspection_details',
+        'inspection_checklist_details'
+      ];
+      master_tbls TEXT[] := ARRAY[
+        'material_inspection',
+        'mill_inspection_master',
+        'inspection_master',
+        'inspection_checklist'
+      ];
+      has_mr BOOLEAN;
+      has_arr BOOLEAN;
+      has_insp BOOLEAN;
+      has_id BOOLEAN;
+    BEGIN
+      IF array_length(v_keys, 1) IS NOT NULL THEN
+        FOREACH t IN ARRAY child_tbls LOOP
+          IF to_regclass(format('public.%I', t)) IS NOT NULL THEN
+            SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name=t AND column_name='mr_no') INTO has_mr;
+            SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name=t AND column_name='arrival_no') INTO has_arr;
+            SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name=t AND column_name='inspection_no') INTO has_insp;
+            IF has_mr THEN
+              EXECUTE format('DELETE FROM public.%I WHERE TRIM(UPPER(COALESCE(mr_no::text, ''''))) = ANY($1)', t) USING v_keys;
+            END IF;
+            IF has_arr THEN
+              EXECUTE format('DELETE FROM public.%I WHERE TRIM(UPPER(COALESCE(arrival_no::text, ''''))) = ANY($1)', t) USING v_keys;
+            END IF;
+            IF has_insp THEN
+              EXECUTE format('DELETE FROM public.%I WHERE TRIM(UPPER(COALESCE(inspection_no::text, ''''))) = ANY($1)', t) USING v_keys;
+            END IF;
+          END IF;
+        END LOOP;
+      END IF;
+
+      FOREACH t IN ARRAY master_tbls LOOP
+        IF to_regclass(format('public.%I', t)) IS NOT NULL THEN
+          SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name=t AND column_name='mr_no') INTO has_mr;
+          SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name=t AND column_name='arrival_no') INTO has_arr;
+          SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name=t AND column_name='inspection_no') INTO has_insp;
+          SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name=t AND column_name='id') INTO has_id;
+          IF array_length(v_keys, 1) IS NOT NULL THEN
+            IF has_mr THEN
+              EXECUTE format('DELETE FROM public.%I WHERE TRIM(UPPER(COALESCE(mr_no::text, ''''))) = ANY($1)', t) USING v_keys;
+            END IF;
+            IF has_arr THEN
+              EXECUTE format('DELETE FROM public.%I WHERE TRIM(UPPER(COALESCE(arrival_no::text, ''''))) = ANY($1)', t) USING v_keys;
+            END IF;
+            IF has_insp THEN
+              EXECUTE format('DELETE FROM public.%I WHERE TRIM(UPPER(COALESCE(inspection_no::text, ''''))) = ANY($1)', t) USING v_keys;
+            END IF;
+          END IF;
+          IF v_id IS NOT NULL AND has_id AND t IN ('material_inspection', 'mill_inspection_master') THEN
+            EXECUTE format('DELETE FROM public.%I WHERE id::text = $1', t) USING v_id;
+          END IF;
+        END IF;
+      END LOOP;
+    END $$;
+  `;
+
+  try {
+    await dbModule.executeTransaction(doSql);
+  } catch (txErr) {
+    if (supabase) {
+      const targetTables = [
+        "material_inspection_details",
+        "mill_inspection_detail",
+        "material_inspection_deductions",
+        "mill_inspection_deduction",
+        "material_inspection",
+        "mill_inspection_master",
+      ];
+      for (const tbl of targetTables) {
+        for (const k of fallbackKeys) {
+          await Promise.resolve(supabase.from(tbl).delete().eq("mr_no", k)).catch(() => {});
+          await Promise.resolve(supabase.from(tbl).delete().eq("arrival_no", k)).catch(() => {});
+        }
+        if (cleanId && (tbl === "material_inspection" || tbl === "mill_inspection_master")) {
+          await Promise.resolve(supabase.from(tbl).delete().eq("id", cleanId)).catch(() => {});
+        }
+      }
+    } else {
+      throw txErr;
+    }
+  }
+
+  notifyDataChanged("material_inspection");
+  notifyDataChanged("mill_inspection_master");
+  notifyDataChanged("material_inspection_details");
+  notifyDataChanged("material_inspection_deductions");
+
+  const logKey = cleanMr || cleanId;
   await logChange({
     module: "Mill Inspection",
     entity_name: "Inspection Record",
-    record_id: cleanMr,
+    record_id: logKey,
     action: "DELETE",
     field_name: "inspection_record",
-    field_label: `Deleted Inspection (${cleanMr})`,
-    old_value: `Record ${cleanMr}`,
+    field_label: `Deleted Inspection (${logKey})`,
+    old_value: `Record ${logKey}`,
     new_value: "DELETED",
     user_name: userName,
-    remarks: `Deleted Inspection record ${cleanMr}`,
+    remarks: `Deleted Inspection record ${logKey}`,
   });
 
   return true;

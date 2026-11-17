@@ -439,14 +439,21 @@ export function useInspectionLogic() {
             faList = [...faRes.data];
           }
           if (tmrRes?.data && Array.isArray(tmrRes.data)) {
-            const existingFaNos = new Set(faList.map(f => (f.final_arrival_no || f.temporary_arrival_no || f.arrival_no || '').trim().toUpperCase()).filter(Boolean));
+            const existingFaNos = new Set<string>();
+            faList.forEach(f => {
+              [f.final_arrival_no, f.temporary_arrival_no, f.arrival_no, f.mr_no, f.amad_no].forEach(k => {
+                const clean = String(k || '').trim().toUpperCase();
+                if (clean) existingFaNos.add(clean);
+              });
+            });
             tmrRes.data.forEach((t: any) => {
-              const tNo = (t.temporary_arrival_no || t.arrival_no || '').trim().toUpperCase();
-              if (tNo && !existingFaNos.has(tNo)) {
+              const tNo = (t.temporary_arrival_no || t.amad_no || t.arrival_no || '').trim().toUpperCase();
+              const tMr = (t.mr_no || '').trim().toUpperCase();
+              if (tNo && !existingFaNos.has(tNo) && (!tMr || !existingFaNos.has(tMr))) {
                 faList.push({
                   ...t,
-                  final_arrival_no: t.temporary_arrival_no || t.arrival_no,
-                  arrival_no: t.temporary_arrival_no || t.arrival_no,
+                  final_arrival_no: t.temporary_arrival_no || t.amad_no || t.arrival_no,
+                  arrival_no: t.temporary_arrival_no || t.amad_no || t.arrival_no,
                   arrival_date: t.date || t.temporary_arrival_date
                 });
                 existingFaNos.add(tNo);
@@ -1061,7 +1068,7 @@ export function useInspectionLogic() {
           arrival_date: arrDate,
           po_no: fa.po_no || "",
           mr_date: arrDate,
-          po_date: sanitizeDate(fa.po_date || fa.date) || "",
+          po_date: fa.po_no ? (sanitizeDate(fa.po_date || fa.date) || "") : (sanitizeDate(fa.po_date) || ""),
           supplier_name: fa.supplier || fa.challan_supplier || fa.supplier_name || "",
           broker_name: fa.broker || fa.broker_name || "",
           lorry_number: fa.lorry_number || fa.lorry_no || "",
@@ -2119,15 +2126,25 @@ export function useInspectionLogic() {
     }
   };
 
-  const handleDeleteRecord = async (mr_no: string) => {
-    const cleanMr = String(mr_no || "").trim();
-    if (!cleanMr) return;
-    if (!confirm(`Are you sure you want to delete inspection record ${cleanMr}?`)) return;
+  const handleDeleteRecord = async (mr_no: string, record?: InspectionMasterRecord) => {
+    const cleanMr = String(mr_no || record?.mr_no || record?.arrival_no || "").trim();
+    if (!cleanMr && !record?.id) return;
+    const displayLabel = cleanMr || String(record?.id || "");
+    if (!confirm(`Are you sure you want to delete inspection record ${displayLabel}?`)) return;
     try {
-      const ok = await deleteInspectionRecordFromDb(cleanMr);
+      const ok = await deleteInspectionRecordFromDb(cleanMr, record);
       if (ok) {
-        setRecords(prev => prev.filter(r => r.mr_no !== cleanMr));
-        showToast(`Record ${cleanMr} deleted.`);
+        const cleanUpper = cleanMr.toUpperCase();
+        setRecords(prev =>
+          prev.filter(r => {
+            if (record?.id && r.id && String(r.id) === String(record.id)) return false;
+            const rMr = String(r.mr_no || "").trim().toUpperCase();
+            const rArr = String(r.arrival_no || "").trim().toUpperCase();
+            if (cleanUpper && (rMr === cleanUpper || rArr === cleanUpper)) return false;
+            return true;
+          })
+        );
+        showToast(`Record ${displayLabel} deleted.`);
       }
     } catch (err: any) {
       alert("Delete failed: " + err.message);

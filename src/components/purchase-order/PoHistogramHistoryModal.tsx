@@ -39,6 +39,15 @@ import { cn } from '../../lib/utils';
 import { supabase } from '../../lib/supabase';
 import { dbModule } from '../../services/dbModule';
 import { calculateWeightTolerance } from '../../lib/weightTolerance';
+import {
+  buildFinalArrivalIndex,
+  extractFinalArrivalOfficialMr,
+  getLinkedArrivalKeys,
+  isMrIdentifier,
+  mergeArrivalsFinalFirst,
+  normalizeArrivalToken,
+  resolveOfficialArrivalId,
+} from '../../utils/arrivalMrResolver';
 
 import {
   ComparisonField,
@@ -155,28 +164,29 @@ export const PoHistogramHistoryModal: React.FC<PoHistogramHistoryModalProps> = (
           supabase ? Promise.resolve(supabase.from('satta_master').select('*').limit(50)).catch(() => ({ data: [] })) : Promise.resolve({ data: [] })
         ]);
 
-        // 1. Merge all Arrivals
-        const rawArrivals = [
-          ...((arrivalsDbRes as any)?.data || []),
+        // 1. Build authoritative Final Arrival bridge and merge Arrivals (Final M.R. wins over Temp AR)
+        const allFinalSource = [
           ...((finalArrDbRes as any)?.data || []),
-          ...(Array.isArray(arrivalsModuleRes) ? arrivalsModuleRes : []),
           ...(Array.isArray(finalArrModuleRes) ? finalArrModuleRes : []),
-          ...(Array.isArray(allArrivals) ? allArrivals : [])
+          ...(Array.isArray(allArrivals)
+            ? allArrivals.filter((a: any) => a && (a.final_arrival_id || a.final_arrival_no || isMrIdentifier(a.mr_no)))
+            : [])
+        ];
+        const faIndex = buildFinalArrivalIndex(allFinalSource);
+
+        const rawTempSource = [
+          ...((arrivalsDbRes as any)?.data || []),
+          ...(Array.isArray(arrivalsModuleRes) ? arrivalsModuleRes : []),
+          ...(Array.isArray(allArrivals)
+            ? allArrivals.filter((a: any) => a && !(a.final_arrival_id || a.final_arrival_no))
+            : [])
         ];
 
-        // Deduplicate arrivals by arrival_no / mr_no
-        const arrivalMap = new Map<string, any>();
-        rawArrivals.forEach((a: any) => {
-          if (a && isPoMatch(a)) {
-            const key = String(a.temporary_arrival_no || a.mr_no || a.amad_no || a.arrival_no || a.final_arrival_no || a.id || Math.random()).trim().toUpperCase();
-            if (!arrivalMap.has(key)) {
-              arrivalMap.set(key, a);
-            }
-          }
-        });
-        const matchedArrivals = Array.from(arrivalMap.values());
+        const poFinalArrivals = allFinalSource.filter((a: any) => a && isPoMatch(a));
+        const poTempArrivals = rawTempSource.filter((a: any) => a && isPoMatch(a));
+        const matchedArrivals = mergeArrivalsFinalFirst(poTempArrivals, poFinalArrivals, faIndex);
 
-        // Helper to extract clean genuine MR identifiers (e.g. MR00748, MR00694)
+        // Helper to extract clean genuine identifiers (e.g. MR00748, or unfinalized AR01609)
         const isGenuineMr = (val: any): boolean => {
           if (!val) return false;
           const str = String(val).trim().toUpperCase();
@@ -188,24 +198,37 @@ export const PoHistogramHistoryModal: React.FC<PoHistogramHistoryModalProps> = (
         };
 
         const mrSet = new Set<string>();
-        matchedArrivals.forEach(a => {
-          const mr = a.temporary_arrival_no || a.mr_no || a.mr_number || a.amad_no || a.arrival_no || a.final_arrival_no;
-          if (mr && isGenuineMr(mr)) mrSet.add(String(mr).trim().toUpperCase());
+        const mrMatchTokens = new Set<string>();
+        matchedArrivals.forEach((a: any) => {
+          const official = a._officialId || resolveOfficialArrivalId(extractFinalArrivalOfficialMr(a) || a.temporary_arrival_no, faIndex);
+          if (official && isGenuineMr(official)) mrSet.add(String(official).trim().toUpperCase());
+          getLinkedArrivalKeys(a, faIndex).forEach((k) => {
+            if (isGenuineMr(k)) mrMatchTokens.add(k);
+          });
         });
-        if (po.mr_no && isGenuineMr(po.mr_no)) mrSet.add(String(po.mr_no).trim().toUpperCase());
+        if (po.mr_no && isGenuineMr(po.mr_no)) {
+          const resolved = resolveOfficialArrivalId(po.mr_no, faIndex);
+          mrSet.add(resolved.toUpperCase());
+          getLinkedArrivalKeys(po.mr_no, faIndex).forEach((k) => mrMatchTokens.add(k));
+        }
         if (po.linked_mrs && Array.isArray(po.linked_mrs)) {
-          po.linked_mrs.forEach((m: any) => m && isGenuineMr(m) && mrSet.add(String(m).trim().toUpperCase()));
+          po.linked_mrs.forEach((m: any) => {
+            if (m && isGenuineMr(m)) {
+              const resolved = resolveOfficialArrivalId(m, faIndex);
+              mrSet.add(resolved.toUpperCase());
+              getLinkedArrivalKeys(m, faIndex).forEach((k) => mrMatchTokens.add(k));
+            }
+          });
         }
 
         const isPoOrMrMatch = (rec: any) => {
           if (!rec) return false;
           if (isPoMatch(rec)) return true;
-          const rMr = String(rec.mr_no || rec.mr_number || rec.arrival_no || rec.ref_arrival_no || rec.temporary_arrival_no || rec.final_arrival_no || '').trim().toUpperCase();
-          if (rMr && mrSet.has(rMr)) return true;
-          return false;
+          const keys = getLinkedArrivalKeys(rec, faIndex);
+          return keys.some((k) => mrSet.has(k) || mrMatchTokens.has(k));
         };
 
-        // 2. Merge Inspections
+        // 2. Merge Inspections (normalized by finalized M.R. No. so AR & MR don't duplicate)
         const rawInspections = [
           ...((inspectionsDbRes as any)?.data || []),
           ...((matInspectionsDbRes as any)?.data || []),
@@ -215,9 +238,15 @@ export const PoHistogramHistoryModal: React.FC<PoHistogramHistoryModalProps> = (
         const inspectionMap = new Map<string, any>();
         rawInspections.forEach((i: any) => {
           if (i && isPoOrMrMatch(i)) {
-            const key = String(i.arrival_no || i.temporary_arrival_no || i.final_arrival_no || i.mr_no || i.mr_number || i.id || Math.random()).trim().toUpperCase();
+            const rawId = i.mr_no || i.final_arrival_no || i.arrival_no || i.temporary_arrival_no || i.mr_number || i.id || '';
+            const officialId = resolveOfficialArrivalId(rawId, faIndex);
+            const key = normalizeArrivalToken(officialId) || String(i.id || Math.random()).toUpperCase();
             if (!inspectionMap.has(key)) {
-              inspectionMap.set(key, i);
+              inspectionMap.set(key, {
+                ...i,
+                mr_no: isMrIdentifier(officialId) ? officialId : (i.mr_no || officialId),
+                _officialId: officialId,
+              });
             }
           }
         });
@@ -232,9 +261,10 @@ export const PoHistogramHistoryModal: React.FC<PoHistogramHistoryModalProps> = (
         const paymentMap = new Map<string, any>();
         rawPayments.forEach((p: any) => {
           if (p && isPoOrMrMatch(p)) {
+            const officialMr = p.mr_no ? resolveOfficialArrivalId(p.mr_no, faIndex) : '';
             const key = String(p.voucher_no || p.id || Math.random()).trim().toUpperCase();
             if (!paymentMap.has(key)) {
-              paymentMap.set(key, p);
+              paymentMap.set(key, officialMr ? { ...p, mr_no: officialMr } : p);
             }
           }
         });
@@ -249,9 +279,11 @@ export const PoHistogramHistoryModal: React.FC<PoHistogramHistoryModalProps> = (
         const settlementMap = new Map<string, any>();
         rawSettlements.forEach((s: any) => {
           if (s && isPoOrMrMatch(s)) {
-            const key = String(s.mr_no || s.mr_number || s.id || Math.random()).trim().toUpperCase();
+            const rawMr = s.mr_no || s.mr_number || s.arrival_no || '';
+            const officialMr = resolveOfficialArrivalId(rawMr, faIndex);
+            const key = normalizeArrivalToken(officialMr) || String(s.id || Math.random()).toUpperCase();
             if (!settlementMap.has(key)) {
-              settlementMap.set(key, s);
+              settlementMap.set(key, officialMr ? { ...s, mr_no: officialMr } : s);
             }
           }
         });
@@ -353,92 +385,86 @@ export const PoHistogramHistoryModal: React.FC<PoHistogramHistoryModalProps> = (
     });
     return Array.from(mrSet);
   }, [dbArrivals, dbInspections, dbSettlements, dbPayments, po]); */
+  const histogramFaIndex = useMemo(() => buildFinalArrivalIndex(dbArrivals || []), [dbArrivals]);
+
   const linkedMrs = useMemo(() => {
-  const isGenuineMr = (val: any): boolean => {
-    if (!val) return false;
+    const isGenuineMr = (val: any): boolean => {
+      if (!val) return false;
+      const str = String(val).trim().toUpperCase();
+      if (!str) return false;
+      if (!str.startsWith('MR')) return false;
+      if (
+        str.startsWith('MRRC-') ||
+        str.startsWith('INSP-') ||
+        str.startsWith('CERT-') ||
+        str.startsWith('TEST-') ||
+        str.startsWith('SETTLEMENT-')
+      ) {
+        return false;
+      }
+      return true;
+    };
 
-    const str = String(val).trim().toUpperCase();
-    if (!str) return false;
+    const mrSet = new Set<string>();
 
-    // Only allow MR series
-    if (!str.startsWith('MR')) return false;
+    // 1. Finalized Arrivals first (always prefer official M.R. No. over temporary_arrival_no)
+    dbArrivals.forEach((a: any) => {
+      const mr =
+        a._officialId ||
+        a.mr_no ||
+        a.final_arrival_no ||
+        a.arrival_no ||
+        a.mr_number ||
+        a.temporary_arrival_no ||
+        a.amad_no;
 
-    // Exclude non-MR reference numbers
-    if (
-      str.startsWith('MRRC-') ||
-      str.startsWith('INSP-') ||
-      str.startsWith('CERT-') ||
-      str.startsWith('TEST-') ||
-      str.startsWith('SETTLEMENT-')
-    ) {
-      return false;
-    }
-
-    return true;
-  };
-
-  const mrSet = new Set<string>();
-
-  // 1. Temporary Arrival / Final Arrival records
-  dbArrivals.forEach((a: any) => {
-    const mr =
-      a.temporary_arrival_no ||
-      a.mr_no ||
-      a.final_arrival_no ||
-      a.mr_number ||
-      a.amad_no ||
-      a.arrival_no;
-
-    if (mr && isGenuineMr(mr)) {
-      mrSet.add(String(mr).trim().toUpperCase());
-    }
-  });
-
-  // 2. Current PO MR number
-  if (po?.mr_no && isGenuineMr(po.mr_no)) {
-    mrSet.add(String(po.mr_no).trim().toUpperCase());
-  }
-
-  // 3. Linked MRs
-  if (po?.linked_mrs && Array.isArray(po.linked_mrs)) {
-    po.linked_mrs.forEach((m: any) => {
-      if (m && isGenuineMr(m)) {
-        mrSet.add(String(m).trim().toUpperCase());
+      if (mr && isGenuineMr(mr)) {
+        mrSet.add(String(mr).trim().toUpperCase());
       }
     });
-  }
 
-  // 4. Settlement records
-  dbSettlements.forEach((s: any) => {
-    const mr = s.mr_no || s.mr_number || s.arrival_no;
-
-    if (mr && isGenuineMr(mr)) {
-      mrSet.add(String(mr).trim().toUpperCase());
+    // 2. Current PO MR number
+    if (po?.mr_no) {
+      const resolved = resolveOfficialArrivalId(po.mr_no, histogramFaIndex);
+      if (isGenuineMr(resolved)) mrSet.add(String(resolved).trim().toUpperCase());
     }
-  });
 
-  // 5. Inspection records
-  dbInspections.forEach((i: any) => {
-    const arrRef = i.arrival_no || i.ref_arrival_no || i.final_arrival_no;
-
-    if (arrRef && isGenuineMr(arrRef)) {
-      mrSet.add(String(arrRef).trim().toUpperCase());
-    } else if (i.mr_no && isGenuineMr(i.mr_no)) {
-      mrSet.add(String(i.mr_no).trim().toUpperCase());
+    // 3. Linked MRs
+    if (po?.linked_mrs && Array.isArray(po.linked_mrs)) {
+      po.linked_mrs.forEach((m: any) => {
+        const resolved = resolveOfficialArrivalId(m, histogramFaIndex);
+        if (resolved && isGenuineMr(resolved)) {
+          mrSet.add(String(resolved).trim().toUpperCase());
+        }
+      });
     }
-  });
 
-  // 6. Payment records
-  dbPayments.forEach((p: any) => {
-    const mr = p.mr_no || p.arrival_no;
+    // 4. Settlement records
+    dbSettlements.forEach((s: any) => {
+      const mr = resolveOfficialArrivalId(s.mr_no || s.mr_number || s.arrival_no, histogramFaIndex);
+      if (mr && isGenuineMr(mr)) {
+        mrSet.add(String(mr).trim().toUpperCase());
+      }
+    });
 
-    if (mr && isGenuineMr(mr)) {
-      mrSet.add(String(mr).trim().toUpperCase());
-    }
-  });
+    // 5. Inspection records
+    dbInspections.forEach((i: any) => {
+      const mr = resolveOfficialArrivalId(i._officialId || i.mr_no || i.final_arrival_no || i.arrival_no || i.ref_arrival_no, histogramFaIndex);
+      if (mr && isGenuineMr(mr)) {
+        mrSet.add(String(mr).trim().toUpperCase());
+      }
+    });
 
-  return Array.from(mrSet);
-}, [dbArrivals, dbInspections, dbSettlements, dbPayments, po]);
+    // 6. Payment records
+    dbPayments.forEach((p: any) => {
+      const mr = resolveOfficialArrivalId(p.mr_no || p.arrival_no, histogramFaIndex);
+      if (mr && isGenuineMr(mr)) {
+        mrSet.add(String(mr).trim().toUpperCase());
+      }
+    });
+
+    return Array.from(mrSet);
+  }, [dbArrivals, dbInspections, dbSettlements, dbPayments, po, histogramFaIndex]);
 
   // Comprehensive Comparison Engine
   const comparisonResults = useMemo(() => {
@@ -901,16 +927,13 @@ export const PoHistogramHistoryModal: React.FC<PoHistogramHistoryModalProps> = (
 
     // Multi-MR Per-MR Comparison Breakdown
     const mrComparisons: MrComparisonData[] = linkedMrs.map(mrNo => {
+      const targetKeys = new Set(getLinkedArrivalKeys(mrNo, histogramFaIndex));
+      targetKeys.add(String(mrNo).trim().toUpperCase());
+
       const isRecordMatchMr = (rec: any) => {
         if (!rec) return false;
-        const c1 = String(rec.temporary_arrival_no || '').trim().toUpperCase();
-        const c2 = String(rec.mr_no || '').trim().toUpperCase();
-        const c3 = String(rec.arrival_no || '').trim().toUpperCase();
-        const c4 = String(rec.final_arrival_no || '').trim().toUpperCase();
-        const c5 = String(rec.amad_no || '').trim().toUpperCase();
-        const c6 = String(rec.mr_number || '').trim().toUpperCase();
-        const c7 = String(rec.ref_arrival_no || '').trim().toUpperCase();
-        return c1 === mrNo || c2 === mrNo || c3 === mrNo || c4 === mrNo || c5 === mrNo || c6 === mrNo || c7 === mrNo;
+        const recKeys = getLinkedArrivalKeys(rec, histogramFaIndex);
+        return recKeys.some((k) => targetKeys.has(k));
       };
 
       const arr = dbArrivals.find(isRecordMatchMr) || {};
@@ -925,11 +948,15 @@ export const PoHistogramHistoryModal: React.FC<PoHistogramHistoryModalProps> = (
       const inspDust = parseFloat(insp.actual_dust || insp.dust_percent || insp.dust || 0) || 0;
       const inspNcv = parseFloat(insp.actual_ncv || insp.ncv_percent || insp.ncv || 0) || 0;
 
+      const officialMrDisplay = arr._officialId || arr.mr_no || arr.final_arrival_no || mrNo;
+      const linkedTempDisplay = arr._linkedTempNo || arr.temporary_arrival_no || '';
       const mrTempArrivalFields: ComparisonField[] = [
         {
-          name: 'Temporary M.R No.',
+          name: 'M.R. No. (Linked Arrival)',
           referenceValue: mrNo,
-          actualValue: arr.temporary_arrival_no || arr.mr_no || mrNo,
+          actualValue: linkedTempDisplay && linkedTempDisplay !== officialMrDisplay
+            ? `${officialMrDisplay} (Temp: ${linkedTempDisplay})`
+            : officialMrDisplay,
           status: 'match'
         },
         {

@@ -34,7 +34,7 @@ export interface InspectionRegisterViewProps {
   setPageSize: (s: number) => void;
   onEditRecord: (rec: InspectionMasterRecord) => void;
   onPrintRecord: (rec: InspectionMasterRecord) => void;
-  onDeleteRecord: (mr_no: string) => Promise<void>;
+  onDeleteRecord: (mr_no: string, rec?: InspectionMasterRecord) => Promise<void>;
   onOpenNewForm?: () => void;
   onRefresh?: () => void;
 }
@@ -351,7 +351,7 @@ export const InspectionRegisterView: React.FC<InspectionRegisterViewProps> = ({
                           <Printer className="w-3.5 h-3.5" />
                         </button>
                         <button
-                          onClick={() => onDeleteRecord(r.mr_no)}
+                          onClick={() => onDeleteRecord(r.mr_no || r.arrival_no || "", r)}
                           className="p-1 hover:bg-rose-100 text-rose-700 rounded transition-colors cursor-pointer"
                           title="Delete"
                         >
