@@ -16,6 +16,16 @@ import {
   pickFirstValidRecordDate,
   MONTH_NAMES
 } from './dashboardCalculationHelpers';
+import {
+  buildFinalArrivalIndex,
+  resolveOfficialArrivalId,
+  resolveRecordOfficialArrivalId,
+  isArrivalFinalized,
+  getLinkedArrivalKeys,
+  extractFinalArrivalOfficialMr,
+  normalizeArrivalToken,
+  isMrIdentifier
+} from '../utils/arrivalMrResolver';
 
 function isCancelledOrArchivedRecord(rec: any): boolean {
   if (!rec || typeof rec !== 'object') return false;
@@ -40,6 +50,8 @@ export function computeInspectionMetrics(params: ComputeInspectionMetricsParams)
     settlements = [],
     selectedYear 
   } = params;
+
+  const faIndex = buildFinalArrivalIndex(finalArrivals || []);
 
   // Pre-calculate available years from all authoritative section dates using strict Indian Date rules
   const yearsSet = new Set<number>();
@@ -298,15 +310,18 @@ export function computeInspectionMetrics(params: ComputeInspectionMetricsParams)
     registerPremium(st.voucher_no, st, "Settlement Audit");
   });
 
-  // Build detail rows mapping by MR No / Inspection ID
+  // Build detail rows mapping by official MR No / Inspection ID (and linked temp keys)
   const detailRowsByMr = new Map<string, any[]>();
   inspectionDetails.forEach(det => {
-    const mr = normalizePoRef(det.mr_no || det.inspection_id || det.arrival_no || '');
-    if (mr) {
+    const rawKey = det.mr_no || det.inspection_id || det.arrival_no || '';
+    const officialDetMr = normalizePoRef(resolveOfficialArrivalId(rawKey, faIndex) || rawKey);
+    const rawDetNorm = normalizePoRef(rawKey);
+    const keys = new Set<string>([officialDetMr, rawDetNorm].filter(Boolean));
+    keys.forEach((mr) => {
       const existing = detailRowsByMr.get(mr) || [];
       existing.push(det);
       detailRowsByMr.set(mr, existing);
-    }
+    });
   });
 
   // Build arrivals lookup map strictly to enrich missing metadata on real Mill Inspection records
@@ -317,24 +332,27 @@ export function computeInspectionMetrics(params: ComputeInspectionMetricsParams)
       isRealBusinessRef(item.mr_no),
       isRealBusinessRef(item.temporary_arrival_no),
       isRealBusinessRef(item.amad_no),
-      isRealBusinessRef(item.arrival_no)
+      isRealBusinessRef(item.arrival_no),
+      ...getLinkedArrivalKeys(item, faIndex)
     ].filter(Boolean);
     keys.forEach(k => {
       if (!arrivalsByMr.has(k)) arrivalsByMr.set(k, item);
     });
   });
 
-  // Build consolidated map of REAL Mill Inspection records keyed strictly by column "M.R. No."
+  // Build consolidated map of REAL Mill Inspection records keyed strictly by official "M.R. No."
   // (Never inject uninspected Temporary Arrivals or Payment vouchers as completed Mill Inspections)
   const mapByMr = new Map<string, any>();
 
   const mergeRealInspection = (item: any, source: 'material' | 'mill') => {
     if (isCancelledOrArchivedRecord(item)) return;
-    const mr = isRealBusinessRef(item.mr_no);
+    const { officialId, linkedTempNo, isFinalized } = resolveRecordOfficialArrivalId(item, faIndex);
+    const mr = isRealBusinessRef(officialId || item.mr_no);
     if (!mr) return;
 
     const arr =
       arrivalsByMr.get(mr) ||
+      arrivalsByMr.get(isRealBusinessRef(linkedTempNo)) ||
       arrivalsByMr.get(isRealBusinessRef(item.arrival_no)) ||
       {};
     const existing = mapByMr.get(mr);
@@ -347,12 +365,18 @@ export function computeInspectionMetrics(params: ComputeInspectionMetricsParams)
       Boolean(item.mill_code) ||
       Boolean(item.mill_name);
 
+    const existingIsOfficialMr = existing ? isMrIdentifier(existing.mr_no) : false;
+    const itemIsOfficialMr = isFinalized || isMrIdentifier(officialId || item.mr_no);
+    const resolvedMrDisplay = itemIsOfficialMr
+      ? (officialId || item.mr_no || existing?.mr_no)
+      : (existingIsOfficialMr ? existing.mr_no : (item.mr_no || existing?.mr_no || officialId));
+
     mapByMr.set(mr, {
       ...arr,
       ...(existing || {}),
       ...item,
-      mr_no: item.mr_no || existing?.mr_no,
-      arrival_no: item.arrival_no || existing?.arrival_no || arr?.temporary_arrival_no || '',
+      mr_no: resolvedMrDisplay,
+      arrival_no: linkedTempNo || item.arrival_no || existing?.arrival_no || arr?.temporary_arrival_no || '',
       arrival_date: item.arrival_date || existing?.arrival_date || item.date || existing?.date || arr?.date || '',
       date: item.date || existing?.date || item.arrival_date || existing?.arrival_date || arr?.date || '',
       mr_date: item.mr_date || existing?.mr_date || '',
@@ -394,7 +418,7 @@ export function computeInspectionMetrics(params: ComputeInspectionMetricsParams)
     }
 
     if (raw.is_inspected) {
-      [cleanMr, isRealBusinessRef(raw.arrival_no), isRealBusinessRef(raw.temporary_arrival_no), isRealBusinessRef(raw.amad_no)]
+      [cleanMr, isRealBusinessRef(raw.arrival_no), isRealBusinessRef(raw.temporary_arrival_no), isRealBusinessRef(raw.amad_no), ...getLinkedArrivalKeys(raw, faIndex)]
         .filter(Boolean)
         .forEach(k => {
           allInspectedLookupSet.add(k);
@@ -774,23 +798,26 @@ export function computeInspectionMetrics(params: ComputeInspectionMetricsParams)
     }
   });
 
-  // Populate Stage 2: Final Arrivals (Column ONLY: "Arrival" = final_arrival_no; Date: "Voucher Date" = fa.date)
+  // Populate Stage 2: Final Arrivals (Official Identifier: M.R. No. / final_arrival_no; Linked Temp: temporary_arrival_no)
   let yearTotalFinalArrivalsCount = 0;
   let yearTotalFinalBales = 0;
   let yearTotalFinalWeightMt = 0;
   finalArrivals.forEach((fa) => {
     if (isCancelledOrArchivedRecord(fa)) return;
-    const cleanFinalNo = isRealBusinessRef(fa.final_arrival_no);
+    const officialMr = extractFinalArrivalOfficialMr(fa) || fa.final_arrival_no;
+    const cleanFinalNo = isRealBusinessRef(officialMr) || isRealBusinessRef(fa.final_arrival_no);
     if (!cleanFinalNo) return;
     if (finalArrivalSeenGlobal.has(cleanFinalNo)) return;
     finalArrivalSeenGlobal.add(cleanFinalNo);
 
-    // Index all valid reference tokens on this active Final Arrival row for Below-FMR matching
+    // Index all linked reference tokens on this active Final Arrival row for Below-FMR matching
     [
       cleanFinalNo,
+      isRealBusinessRef(fa.final_arrival_no),
       isRealBusinessRef(fa.temporary_arrival_no),
       isRealBusinessRef(fa.arrival_no),
-      isRealBusinessRef(fa.mr_no)
+      isRealBusinessRef(fa.mr_no),
+      ...getLinkedArrivalKeys(fa, faIndex)
     ].filter(Boolean).forEach(k => {
       finalArrivalsSet.add(k);
       finalArrivalsSet.add(k.replace(/[\s\-_]/g, ''));
@@ -805,19 +832,25 @@ export function computeInspectionMetrics(params: ComputeInspectionMetricsParams)
     }
   });
 
-  // Populate Stage 4: Payments (Column: "M.R / P.O Reference"; Date: PaymentDashboardView.getPaymentDate)
+  // Populate Stage 4: Payments (Column: "M.R / P.O Reference"; resolved via FinalArrivalIndex to official M.R. No.)
   const yearUniquePaymentRefs = new Set<string>();
   let totalYearPaidAmount = 0;
   paymentRecords.forEach(p => {
     if (isCancelledOrArchivedRecord(p)) return;
-    const mrRef = isRealBusinessRef(p.mr_no || p.arrival_no);
+    const rawMrRef = p.mr_no || p.arrival_no;
+    const resolvedMr = resolveOfficialArrivalId(rawMrRef, faIndex) || rawMrRef;
+    const mrRef = isRealBusinessRef(resolvedMr);
     const poRef = isRealBusinessRef(p.po_no || p.reference_no);
     const refKey = mrRef ? `MR:${mrRef}` : (poRef ? `PO:${poRef}` : '');
     if (!refKey) return;
 
     if (mrRef) {
-      allPaymentMrSet.add(mrRef);
-      allPaymentMrSet.add(mrRef.replace(/[\s\-_]/g, ''));
+      [mrRef, ...getLinkedArrivalKeys(mrRef, faIndex), ...getLinkedArrivalKeys(rawMrRef, faIndex)]
+        .filter(Boolean)
+        .forEach(k => {
+          allPaymentMrSet.add(k);
+          allPaymentMrSet.add(k.replace(/[\s\-_]/g, ''));
+        });
     }
     if (poRef) {
       allPaymentPoSet.add(poRef);
@@ -841,16 +874,21 @@ export function computeInspectionMetrics(params: ComputeInspectionMetricsParams)
   });
   const totalYearPayments = yearUniquePaymentRefs.size;
 
-  // Populate Stage 5: Settlements (Column: "M.R. No."; Date: SettlementRegisterView.getSettlementDate)
+  // Populate Stage 5: Settlements (Column: "M.R. No."; resolved via FinalArrivalIndex to official M.R. No.)
   const yearUniqueSettlementMrs = new Set<string>();
   let totalYearSettledAmount = 0;
   settlements.forEach(s => {
     if (isCancelledOrArchivedRecord(s)) return;
-    const mrRef = isRealBusinessRef(s.mr_no);
+    const resolvedMr = resolveOfficialArrivalId(s.mr_no, faIndex) || s.mr_no;
+    const mrRef = isRealBusinessRef(resolvedMr);
     if (!mrRef) return;
 
-    allSettlementMrSet.add(mrRef);
-    allSettlementMrSet.add(mrRef.replace(/[\s\-_]/g, ''));
+    [mrRef, ...getLinkedArrivalKeys(s, faIndex)]
+      .filter(Boolean)
+      .forEach(k => {
+        allSettlementMrSet.add(k);
+        allSettlementMrSet.add(k.replace(/[\s\-_]/g, ''));
+      });
     const poRef = isRealBusinessRef(s.po_no);
     if (poRef) allSettlementPoSet.add(poRef);
 
@@ -894,6 +932,7 @@ export function computeInspectionMetrics(params: ComputeInspectionMetricsParams)
     const finalArrivalsBales = monthFinalArrivals.reduce((sum, f) => sum + getRecordBales(f), 0);
     const finalArrivalsWeightMt = monthFinalArrivals.reduce((sum, f) => sum + getRecordNetWeightMt(f), 0);
     const pendingFmrCount = monthArrivals.filter(a => {
+      if (isArrivalFinalized(a, faIndex)) return false;
       const k = isRealBusinessRef(a.temporary_arrival_no || a.amad_no);
       const kStripped = k.replace(/[\s\-_]/g, '');
       const hasLinkedFinal = (k && finalArrivalsSet.has(k)) || (kStripped && finalArrivalsSet.has(kStripped));
@@ -993,6 +1032,7 @@ export function computeInspectionMetrics(params: ComputeInspectionMetricsParams)
 
     // 1. Pipeline: MR -> Final MR (Pending FMR)
     const pendingFmrList: PendingStageRecord[] = monthArrivals.filter(a => {
+      if (isArrivalFinalized(a, faIndex)) return false;
       const k = isRealBusinessRef(a.temporary_arrival_no || a.amad_no);
       const k2 = k.replace(/[\s\-_]/g, '');
       const isCompleted = (k && finalArrivalsSet.has(k)) || (k2 && finalArrivalsSet.has(k2));
@@ -1029,17 +1069,19 @@ export function computeInspectionMetrics(params: ComputeInspectionMetricsParams)
     // 2. Pipeline: Final MR -> Mill Inspection (Pending Inspection against global completed Mill Inspections)
     const pendingInspectionList: PendingStageRecord[] = monthFinalArrivals.filter(fa => {
       const candidateKeys = [
+        isRealBusinessRef(extractFinalArrivalOfficialMr(fa)),
         isRealBusinessRef(fa.final_arrival_no),
         isRealBusinessRef(fa.mr_no),
         isRealBusinessRef(fa.arrival_no),
-        isRealBusinessRef(fa.temporary_arrival_no)
+        isRealBusinessRef(fa.temporary_arrival_no),
+        ...getLinkedArrivalKeys(fa, faIndex)
       ].filter(Boolean);
       const isInspected = candidateKeys.some(k =>
         allInspectedLookupSet.has(k) || allInspectedLookupSet.has(k.replace(/[\s\-_]/g, ''))
       );
       return !isInspected;
     }).map((fa, idx) => {
-      const rawMr = fa.final_arrival_no || `FA-${idx}`;
+      const rawMr = extractFinalArrivalOfficialMr(fa) || fa.final_arrival_no || `FA-${idx}`;
       const rawPo = fa.po_no || fa.mill_po_no || fa.contract_no || '';
       const wtMt = getRecordNetWeightMt(fa);
       const bales = getRecordBales(fa);
@@ -1265,6 +1307,7 @@ export function computeInspectionMetrics(params: ComputeInspectionMetricsParams)
 
   const totalYearTemporaryArrivalsCount = yearArrivals.length;
   const totalYearPendingFmrCount = yearArrivals.filter(a => {
+    if (isArrivalFinalized(a, faIndex)) return false;
     const k = isRealBusinessRef(a.temporary_arrival_no || a.amad_no);
     const k2 = k.replace(/[\s\-_]/g, '');
     return !((k && finalArrivalsSet.has(k)) || (k2 && finalArrivalsSet.has(k2)));

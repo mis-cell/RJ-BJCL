@@ -10,6 +10,12 @@ import {
 import { sanitizeDate } from "../../utils/inspectionCalculations";
 import { checkAndProcessReturnLorryOnInspection } from "../../services/returnLorryService";
 import { syncExcessShortDeductionForSinglePo } from "../../services/excessShortAutoSyncService";
+import {
+  buildFinalArrivalIndex,
+  isMrIdentifier,
+  normalizeArrivalToken,
+  resolveOfficialArrivalId,
+} from "../../utils/arrivalMrResolver";
 
 export interface SaveInspectionResult {
   success: boolean;
@@ -22,7 +28,30 @@ export async function saveInspectionRecordToDb(
   detailRows: InspectionDetailRow[],
   deductionRows: DeductionRow[]
 ): Promise<SaveInspectionResult> {
-  const cleanMrNo = headerForm.mr_no.trim();
+  let cleanMrNo = headerForm.mr_no.trim();
+  let cleanArrivalNo = (headerForm.arrival_no || "").trim();
+
+  if (supabase && (cleanMrNo || cleanArrivalNo)) {
+    try {
+      const { data: faRows } = await supabase
+        .from("final_arrival")
+        .select("final_arrival_no, mr_no, arrival_no, temporary_arrival_no");
+      if (Array.isArray(faRows) && faRows.length > 0) {
+        const faBridge = buildFinalArrivalIndex(faRows);
+        const resolvedMr = resolveOfficialArrivalId(cleanMrNo || cleanArrivalNo, faBridge);
+        const resolvedArr = resolveOfficialArrivalId(cleanArrivalNo || cleanMrNo, faBridge);
+        if (resolvedMr && isMrIdentifier(resolvedMr)) {
+          cleanMrNo = resolvedMr;
+        }
+        if (resolvedArr && isMrIdentifier(resolvedArr)) {
+          cleanArrivalNo = resolvedArr;
+        } else if (isMrIdentifier(cleanMrNo)) {
+          cleanArrivalNo = cleanMrNo;
+        }
+      }
+    } catch (_e) {}
+  }
+
   const validDetails = detailRows.filter(
     (r) =>
       r.arrival_grade ||
@@ -80,7 +109,7 @@ export async function saveInspectionRecordToDb(
     mr_no: cleanMrNo,
     mr_date: resolvedMrDate,
     date: resolvedArrivalDate,
-    arrival_no: headerForm.arrival_no || null,
+    arrival_no: cleanArrivalNo || cleanMrNo || null,
     arrival_date: resolvedArrivalDate,
     po_no: headerForm.po_no || null,
     po_date: resolvedPoDate,

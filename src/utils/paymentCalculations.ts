@@ -10,6 +10,12 @@ import {
   getPoContractLorryCount,
   getUniquePoLorryGroups
 } from '../services/settlementService';
+import {
+  FinalArrivalIndex,
+  buildFinalArrivalIndex,
+  getLinkedArrivalKeys,
+  resolveOfficialArrivalId
+} from './arrivalMrResolver';
 
 export const hasDetailColData = (col?: PaymentDetailColumn): boolean => {
   if (!col) return false;
@@ -268,15 +274,40 @@ export async function resolvePaymentDeductionsForPoAndMr(params: {
   let totalDeductionsAndPenalties = 0;
   let deductionSummaryText = '';
 
-  const cleanMr = rawMrNo.replace(/^MR[-_ ]?/i, '').trim();
+  // Expand MR candidate keys via final_arrival bridge if available so finalized AR -> MR always resolves cleanly
+  let resolvedOfficialMr = rawMrNo;
+  const linkedKeysFromResolver: string[] = [];
+  if (rawMrNo && supabase) {
+    try {
+      const { data: faBridgeRows } = await supabase
+        .from('final_arrival')
+        .select('final_arrival_no, mr_no, arrival_no, temporary_arrival_no')
+        .or(`final_arrival_no.eq.${rawMrNo},mr_no.eq.${rawMrNo},arrival_no.eq.${rawMrNo},temporary_arrival_no.eq.${rawMrNo}`)
+        .limit(10)
+        .then(r => r, () => ({ data: [] as any[] }));
+      if (faBridgeRows && faBridgeRows.length > 0) {
+        const faIdx = buildFinalArrivalIndex(faBridgeRows);
+        resolvedOfficialMr = resolveOfficialArrivalId(rawMrNo, faIdx) || rawMrNo;
+        getLinkedArrivalKeys(rawMrNo, faIdx).forEach(k => linkedKeysFromResolver.push(k));
+        if (arrival) {
+          getLinkedArrivalKeys(arrival, faIdx).forEach(k => linkedKeysFromResolver.push(k));
+        }
+      }
+    } catch (_e) {}
+  }
+
+  const cleanMr = resolvedOfficialMr.replace(/^MR[-_ ]?/i, '').trim();
   const mrCandidateKeys = Array.from(
     new Set(
       [
+        resolvedOfficialMr,
         rawMrNo,
         arrival?.mr_no,
         arrival?.final_arrival_no,
         arrival?.arrival_no,
         arrival?.temporary_arrival_no,
+        arrival?.linked_temp_no,
+        ...linkedKeysFromResolver,
         cleanMr ? cleanMr : '',
         cleanMr ? `MR${cleanMr}` : '',
         cleanMr ? `MR-${cleanMr}` : '',
@@ -1238,18 +1269,15 @@ export function isMrAlreadyProcessed(
   mrNoOrArrival: string | any,
   paymentList: any[],
   currentVoucherNo?: string,
-  poNo?: string
+  poNo?: string,
+  faIndex?: FinalArrivalIndex | null
 ): { isPaid: boolean; paidPayment?: any } {
   if (!mrNoOrArrival || !paymentList || paymentList.length === 0) {
     return { isPaid: false };
   }
 
-  const mrStr = typeof mrNoOrArrival === 'string'
-    ? mrNoOrArrival
-    : (mrNoOrArrival.mr_no || mrNoOrArrival.final_arrival_no || mrNoOrArrival.arrival_no || mrNoOrArrival.temporary_arrival_no || '');
-  
-  const cleanMr = String(mrStr).trim().toUpperCase();
-  if (!cleanMr || cleanMr === 'N/A') {
+  const targetKeys = new Set(getLinkedArrivalKeys(mrNoOrArrival, faIndex));
+  if (targetKeys.size === 0) {
     return { isPaid: false };
   }
 
@@ -1269,11 +1297,10 @@ export function isMrAlreadyProcessed(
       return false;
     }
 
-    const pMr = String(p.mr_no || p.arrival_no || '').trim().toUpperCase();
-    if (!pMr) return false;
+    const pKeys = getLinkedArrivalKeys(p, faIndex);
+    if (pKeys.length === 0) return false;
 
-    // Direct MR match
-    const isMrMatch = pMr === cleanMr;
+    const isMrMatch = pKeys.some(k => targetKeys.has(k));
 
     if (isMrMatch) {
       if (cleanPo) {

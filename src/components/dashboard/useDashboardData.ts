@@ -9,6 +9,13 @@ import {
   ArrivalsMetrics,
   QuickReportState
 } from './types';
+import {
+  buildFinalArrivalIndex,
+  resolveRecordOfficialArrivalId,
+  isArrivalFinalized,
+  getLinkedArrivalKeys,
+  normalizeArrivalToken
+} from '../../utils/arrivalMrResolver';
 
 export function useDashboardData(isActive: boolean = true) {
   const [stats, setStats] = React.useState<DashboardStats>({
@@ -271,13 +278,21 @@ export function useDashboardData(isActive: boolean = true) {
         })()
       ]);
 
+      const faIndex = buildFinalArrivalIndex(finalArrivals || []);
       const taggedMaterial = (inspRes || []).map((m: any) => ({ ...m, inspection_source: 'material' }));
       const taggedMill = (millInspRes || []).map((m: any) => ({ ...m, inspection_source: 'mill' }));
       const allMasters = [...taggedMaterial, ...taggedMill];
       const mastersMap = new Map<string, any>();
       allMasters.forEach((m: any, idx: number) => {
-        const k = String(m.mr_no || m.id || `M-${idx}`).trim().toUpperCase();
-        if (!mastersMap.has(k)) mastersMap.set(k, m);
+        const { officialId, linkedTempNo, isFinalized } = resolveRecordOfficialArrivalId(m, faIndex);
+        const k = normalizeArrivalToken(officialId || m.mr_no) || String(m.id || `M-${idx}`).trim().toUpperCase();
+        if (!mastersMap.has(k)) {
+          mastersMap.set(k, {
+            ...m,
+            mr_no: isFinalized ? officialId : (m.mr_no || officialId),
+            arrival_no: linkedTempNo || m.arrival_no || ''
+          });
+        }
       });
       const finalInspectionMasters = Array.from(mastersMap.values());
 
@@ -378,6 +393,7 @@ export function useDashboardData(isActive: boolean = true) {
         );
         const matchingTemp = (arrivals || []).filter((ar: any) => 
           (matchPoNo(p.po_no, ar.po_no) || matchPoNo(p.contract_po_no, ar.po_no)) &&
+          !isArrivalFinalized(ar, faIndex) &&
           !matchingFinal.some((f: any) => f.temporary_arrival_no === ar.temporary_arrival_no || f.mr_no === ar.amad_no)
         );
         const getLowestNetWeight = (item: any): number => {
@@ -506,14 +522,22 @@ export function useDashboardData(isActive: boolean = true) {
         : (settlements || []);
       
       settledMasters.forEach((s: any) => {
-        if (s.mr_no) settledMrNos.add(String(s.mr_no).trim().toUpperCase());
+        const keys = getLinkedArrivalKeys(s, faIndex);
+        if (keys.length > 0) {
+          keys.forEach((k) => settledMrNos.add(k));
+        } else if (s.mr_no) {
+          settledMrNos.add(normalizeArrivalToken(s.mr_no));
+        }
       });
       setRawSettlements(settledMasters);
       setStockNodeStocks(finalOpList);
 
       const pendingInspections = materialInspectionData.filter((insp: any) => {
-        const mr = insp.mr_no ? String(insp.mr_no).trim().toUpperCase() : '';
-        return mr && !settledMrNos.has(mr);
+        const { officialId } = resolveRecordOfficialArrivalId(insp, faIndex);
+        const mrNorm = normalizeArrivalToken(officialId || insp.mr_no);
+        const linked = getLinkedArrivalKeys(insp, faIndex);
+        const isSettled = Boolean((mrNorm && settledMrNos.has(mrNorm)) || linked.some((k) => settledMrNos.has(k)));
+        return Boolean(mrNorm && !isSettled);
       });
 
       setQuickReportData({
