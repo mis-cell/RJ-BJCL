@@ -374,15 +374,14 @@ export async function cleanupDuplicateClubbingAndStubRows(): Promise<{
           'claim_dust',
           'actual_ncv',
           'claim_ncv',
-          'final_receipt_wt'
+          'grid_details',
+          'details'
         ]
           .filter((c) => cols.has(c))
-          .map((c) => `COALESCE(${p}"${c}", 0) = 0`);
+          .map((c) => `${p}"${c}" IS NULL`);
 
-        for (const jsonCol of ['grid_details', 'details']) {
-          if (cols.has(jsonCol)) {
-            measureChecks.push(`${p}"${jsonCol}" IS NULL`);
-          }
+        if (cols.has('final_receipt_wt')) {
+          measureChecks.push(`COALESCE(${p}"final_receipt_wt", 0) = 0`);
         }
 
         if (identityParts.length === 0 || measureChecks.length === 0) {
@@ -878,7 +877,7 @@ async function ensureDuplicateClubbingCleanupOnce(): Promise<void> {
       `);
       const chk = await client.query(
         `SELECT 1 FROM "app_one_time_migrations" WHERE "migration_key" = $1 LIMIT 1`,
-        ['dedup_clubbed_temp_final_mill_v3']
+        ['dedup_clubbed_temp_final_mill_v2']
       );
       shouldRun = (chk.rowCount || 0) === 0;
     } finally {
@@ -892,7 +891,7 @@ async function ensureDuplicateClubbingCleanupOnce(): Promise<void> {
           `INSERT INTO "app_one_time_migrations" ("migration_key", "details")
            VALUES ($1, $2)
            ON CONFLICT ("migration_key") DO NOTHING`,
-          ['dedup_clubbed_temp_final_mill_v3', JSON.stringify(res.deleted)]
+          ['dedup_clubbed_temp_final_mill_v2', JSON.stringify(res.deleted)]
         ).catch(() => {});
       }
     }

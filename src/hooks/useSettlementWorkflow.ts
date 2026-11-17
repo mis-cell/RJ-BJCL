@@ -28,16 +28,6 @@ import {
   getUniquePoLorryGroups,
   deduplicateArrivalItems
 } from "../services/settlementService";
-import {
-  FinalArrivalIndex,
-  buildFinalArrivalIndex,
-  resolveOfficialArrivalId,
-  resolveRecordOfficialArrivalId,
-  getLinkedArrivalKeys,
-  normalizeArrivalToken,
-  isMrIdentifier,
-  extractFinalArrivalOfficialMr
-} from "../utils/arrivalMrResolver";
 
 import {
   SettlementDeductionItem,
@@ -155,7 +145,6 @@ export function useSettlementWorkflow({ onClose, onLogEvent }: { onClose?: () =>
   const [lastSyncTime, setLastSyncTime] = useState<string>('');
   const [showSuccessAnim, setShowSuccessAnim] = useState<boolean>(false);
   const [paymentList, setPaymentList] = useState<any[]>([]);
-  const [finalArrivalIndex, setFinalArrivalIndex] = useState<FinalArrivalIndex | null>(null);
   const [paymentValidationInfo, setPaymentValidationInfo] = useState<{ mrNo: string; poNo: string; paidAmount: number; voucherNo: string; advanceDone?: string } | null>(null);
   
   // Overwrite Authorization / Audit modal state
@@ -167,43 +156,29 @@ export function useSettlementWorkflow({ onClose, onLogEvent }: { onClose?: () =>
     targetMrNo: string;
   } | null>(null);
 
-  const syncPaymentModuleData = async (
-    mrNo: string,
-    poNo: string,
-    faIndexOverride?: FinalArrivalIndex | null
-  ): Promise<{ totalPaid: number; payDetails: any[]; hasMatchedPayment: boolean }> => {
+  const syncPaymentModuleData = async (mrNo: string, poNo: string): Promise<{ totalPaid: number; payDetails: any[]; hasMatchedPayment: boolean }> => {
     try {
-      const activeFaIdx = faIndexOverride ?? finalArrivalIndex;
-      const officialMr = resolveOfficialArrivalId(mrNo, activeFaIdx) || mrNo;
-      const cleanMr = (officialMr || '').replace(/#/g, '').trim();
+      const cleanMr = (mrNo || '').replace(/#/g, '').trim();
       const cleanPo = (poNo || '').replace(/#/g, '').trim();
-      const linkedLookupVariants = Array.from(
-        new Set(
-          [cleanMr, (mrNo || '').replace(/#/g, '').trim(), ...getLinkedArrivalKeys(mrNo, activeFaIdx), ...getLinkedArrivalKeys(cleanMr, activeFaIdx)].filter(Boolean)
-        )
-      );
 
-      // 1. Direct targeted queries for this specific MR number and its linked temp arrival keys
+      // 1. Direct targeted queries for this specific MR number to ensure instant, complete matching even with pagination
       let targetedDetails: any[] = [];
       let targetedPayments: any[] = [];
 
-      if (supabase && linkedLookupVariants.length > 0) {
+      if (supabase && cleanMr) {
         try {
           const { data: dData } = await supabase
             .from('payment_details')
             .select('*')
-            .in('mr_no', linkedLookupVariants);
+            .or(`mr_no.eq.${cleanMr},mr_no.ilike.${cleanMr}`);
           if (dData && dData.length > 0) targetedDetails.push(...dData);
         } catch (e) {}
 
         try {
-          const orFilter = linkedLookupVariants
-            .flatMap((v) => [`mr_no.eq.${v}`, `mr_no.ilike.${v}`, `arrival_no.eq.${v}`])
-            .join(',');
           const { data: pData } = await supabase
             .from('payment_master')
             .select('*')
-            .or(orFilter);
+            .or(`mr_no.eq.${cleanMr},mr_no.ilike.${cleanMr},arrival_no.eq.${cleanMr}`);
           if (pData && pData.length > 0) {
             targetedPayments.push(...pData);
             const vNos = Array.from(new Set(pData.map(p => p.voucher_no).filter(Boolean)));
@@ -270,28 +245,23 @@ export function useSettlementWorkflow({ onClose, onLogEvent }: { onClose?: () =>
       setPaymentList(payments);
 
       const cleanStr = (s: string) => (s || '').replace(/#/g, '').replace(/[\s\-\/]/g, '').trim().toLowerCase();
-      const targetLinkedSet = new Set(
-        linkedLookupVariants.map(k => normalizeArrivalToken(k)).filter(Boolean)
-      );
-      targetLinkedSet.add(normalizeArrivalToken(cleanMr));
-      targetLinkedSet.add(normalizeArrivalToken(mrNo));
-
+      const extractCoreMrToken = (s: string) => {
+        const raw = String(s || '').replace(/#/g, '').trim().toUpperCase();
+        const withoutPrefix = raw.replace(/^(MR|AMAD|TEMP|FA|BJCL)[-\/\s]*/i, '').replace(/^20\d{2}-20\d{2}\//, '');
+        const digits = withoutPrefix.replace(/[^0-9]/g, '').replace(/^0+/, '');
+        return digits || cleanStr(s);
+      };
       const exactMrMatch = (a: string, b: string) => {
         const ca = cleanStr(a);
         const cb = cleanStr(b);
         if (!ca || !cb) return false;
         if (ca === cb) return true;
-        const na = normalizeArrivalToken(a);
-        const nb = normalizeArrivalToken(b);
-        if (na && nb && na === nb) return true;
-        const ra = normalizeArrivalToken(resolveOfficialArrivalId(a, activeFaIdx));
-        const rb = normalizeArrivalToken(resolveOfficialArrivalId(b, activeFaIdx));
-        if (ra && rb && ra === rb) return true;
-        if (targetLinkedSet.has(na) && targetLinkedSet.has(nb)) return true;
-        return false;
+        const da = extractCoreMrToken(a);
+        const db = extractCoreMrToken(b);
+        return Boolean(da && db && da === db);
       };
 
-      const targetMrClean = cleanStr(cleanMr || mrNo);
+      const targetMrClean = cleanStr(mrNo);
 
       // If no MR is selected yet, do not aggregate payments across the whole PO into On/Ac Adv
       if (!targetMrClean) {
@@ -582,30 +552,23 @@ export function useSettlementWorkflow({ onClose, onLogEvent }: { onClose?: () =>
     if (!targetMrNo) return;
     try {
       setLoading(true);
-      const rawTargetMr = String(targetMrNo).trim();
-      const resolvedOfficial = resolveOfficialArrivalId(rawTargetMr, finalArrivalIndex) || rawTargetMr;
-      const cleanTargetMr = resolvedOfficial.trim();
-      const linkedTargets = Array.from(
-        new Set([cleanTargetMr, rawTargetMr, ...getLinkedArrivalKeys(rawTargetMr, finalArrivalIndex), ...getLinkedArrivalKeys(cleanTargetMr, finalArrivalIndex)].filter(Boolean))
-      );
-      const linkedTargetsSet = new Set(linkedTargets.map(t => normalizeArrivalToken(t)));
+      const cleanTargetMr = String(targetMrNo).trim();
       let foundMaster: any = null;
       let foundDetails: any[] = [];
 
       if (supabase) {
         try {
-          const { data: mDataList } = await supabase
+          const { data: mData } = await supabase
             .from('mr_settlement_master')
             .select('*')
-            .in('mr_no', linkedTargets);
-          if (mDataList && mDataList.length > 0) {
-            foundMaster = mDataList.find((m: any) => normalizeArrivalToken(m.mr_no) === normalizeArrivalToken(cleanTargetMr)) || mDataList[0];
-          }
+            .eq('mr_no', cleanTargetMr)
+            .maybeSingle();
+          if (mData) foundMaster = mData;
 
           const { data: dData } = await supabase
             .from('mr_settlement_detail')
             .select('*')
-            .in('mr_no', linkedTargets)
+            .eq('mr_no', cleanTargetMr)
             .order('col_index', { ascending: true });
           if (dData && dData.length > 0) foundDetails = dData;
         } catch (e) {}
@@ -613,7 +576,7 @@ export function useSettlementWorkflow({ onClose, onLogEvent }: { onClose?: () =>
 
       if (!foundMaster) {
         foundMaster = settledList.find(
-          (m: any) => linkedTargetsSet.has(normalizeArrivalToken(m?.mr_no))
+          (m: any) => String(m?.mr_no || '').trim().toUpperCase() === cleanTargetMr.toUpperCase()
         ) || null;
       }
 
@@ -621,7 +584,7 @@ export function useSettlementWorkflow({ onClose, onLogEvent }: { onClose?: () =>
         const localMasters = await dbModule.fetchAll('mr_settlement_master').catch(() => []);
         if (Array.isArray(localMasters)) {
           foundMaster = localMasters.find(
-            (m: any) => linkedTargetsSet.has(normalizeArrivalToken(m?.mr_no))
+            (m: any) => String(m?.mr_no || '').trim().toUpperCase() === cleanTargetMr.toUpperCase()
           );
         }
       }
@@ -630,7 +593,7 @@ export function useSettlementWorkflow({ onClose, onLogEvent }: { onClose?: () =>
         const localDetails = await dbModule.fetchAll('mr_settlement_detail').catch(() => []);
         if (Array.isArray(localDetails)) {
           foundDetails = localDetails.filter(
-            (d: any) => linkedTargetsSet.has(normalizeArrivalToken(d?.mr_no))
+            (d: any) => String(d?.mr_no || '').trim().toUpperCase() === cleanTargetMr.toUpperCase()
           );
         }
       }
@@ -654,26 +617,23 @@ export function useSettlementWorkflow({ onClose, onLogEvent }: { onClose?: () =>
 
       if (supabase) {
         try {
-          const [matInspExactList, matInspDetRes] = await Promise.all([
-            supabase.from('material_inspection').select('*').in('mr_no', linkedTargets),
-            supabase.from('material_inspection_details').select('*').in('mr_no', linkedTargets).order('srl_no', { ascending: true })
+          const [matInspExact, matInspDetRes] = await Promise.all([
+            supabase.from('material_inspection').select('*').eq('mr_no', cleanTargetMr).maybeSingle(),
+            supabase.from('material_inspection_details').select('*').eq('mr_no', cleanTargetMr).order('srl_no', { ascending: true })
           ]);
-          if (matInspExactList.data && matInspExactList.data.length > 0) {
-            inspRecord = matInspExactList.data.find((r: any) => normalizeArrivalToken(r.mr_no) === normalizeArrivalToken(cleanTargetMr)) || matInspExactList.data[0];
+          if (matInspExact.data) {
+            inspRecord = matInspExact.data;
           } else {
-            const { data: matInspFallback } = await supabase.from('material_inspection').select('*').in('arrival_no', linkedTargets).limit(5);
+            const { data: matInspFallback } = await supabase.from('material_inspection').select('*').eq('arrival_no', cleanTargetMr).limit(1);
             if (matInspFallback && matInspFallback.length > 0) inspRecord = matInspFallback[0];
           }
           if (matInspDetRes.data) inspDetailsList = matInspDetRes.data;
 
           const targetArrForFa = inspRecord?.arrival_no || cleanTargetMr;
-          const faOrClauses = Array.from(new Set([...linkedTargets, targetArrForFa].filter(Boolean)))
-            .flatMap(k => [`final_arrival_no.eq.${k}`, `mr_no.eq.${k}`, `arrival_no.eq.${k}`, `temporary_arrival_no.eq.${k}`])
-            .join(',');
           const { data: faCandidates } = await supabase
             .from('final_arrival')
             .select('*')
-            .or(faOrClauses);
+            .or(`final_arrival_no.eq.${cleanTargetMr},mr_no.eq.${cleanTargetMr},final_arrival_no.eq.${targetArrForFa},arrival_no.eq.${targetArrForFa}`);
           if (Array.isArray(faCandidates) && faCandidates.length > 0) {
             const normLorry = (v: any) => String(v || '').replace(/[^A-Za-z0-9]/g, '').toUpperCase();
             const expectedLorry = normLorry(inspRecord?.lorry_number || activeMaster.lorry_number);
@@ -993,22 +953,13 @@ export function useSettlementWorkflow({ onClose, onLogEvent }: { onClose?: () =>
     const cleanPo = (s: string) => (s || '').replace(/^#/, '').replace(/[\s\-\/]/g, '').trim().toUpperCase();
     const targetPoNormalized = cleanPo(cleanTargetPo);
 
-    const isSettledOrCurrent = (mrCandidate: string): boolean => {
-      const candidateKeys = new Set(getLinkedArrivalKeys(mrCandidate, finalArrivalIndex));
-      candidateKeys.add(normalizeArrivalToken(mrCandidate));
-      const isAlreadySettled = settledList.some((s: any) => candidateKeys.has(normalizeArrivalToken(s.mr_no)));
-      const currentResolved = resolveOfficialArrivalId(masterData.mr_no, finalArrivalIndex) || masterData.mr_no;
-      const isCurrentMr = Boolean(currentResolved && candidateKeys.has(normalizeArrivalToken(currentResolved)));
-      return !isAlreadySettled || isCurrentMr || (isEdit && isCurrentMr);
-    };
-
-    // Primary Source: payment_master table (resolved to official finalized M.R. No.)
+    // Primary Source: payment_master table (column: mr_no, and po_no)
     const matchedPayments = paymentList.filter((pay: any) => {
       const st = String(pay.status || '').toLowerCase().trim();
       if (st === 'cancelled' || st === 'rejected') return false;
 
-      const rawMrVal = String(pay.mr_no || '').trim();
-      if (!rawMrVal || rawMrVal.toUpperCase() === 'NO' || rawMrVal.toUpperCase() === 'N/A' || rawMrVal === '-') return false;
+      const mrVal = String(pay.mr_no || '').trim();
+      if (!mrVal || mrVal.toUpperCase() === 'NO' || mrVal.toUpperCase() === 'N/A' || mrVal === '-') return false;
 
       if (targetPoNormalized) {
         const payPo = String(pay.po_no || '').trim().replace(/^#/, '').toUpperCase();
@@ -1018,25 +969,28 @@ export function useSettlementWorkflow({ onClose, onLogEvent }: { onClose?: () =>
         if (!isPoMatch) return false;
       }
 
-      const resolvedMrVal = resolveOfficialArrivalId(rawMrVal, finalArrivalIndex) || rawMrVal;
-      return isSettledOrCurrent(resolvedMrVal);
+      const isAlreadySettled = settledList.some(
+        s => String(s.mr_no || '').trim().toUpperCase() === mrVal.toUpperCase()
+      );
+      const isCurrentMr =
+        masterData.mr_no && String(masterData.mr_no).trim().toUpperCase() === mrVal.toUpperCase();
+
+      return !isAlreadySettled || isCurrentMr || (isEdit && isCurrentMr);
     });
 
     const seen = new Set<string>();
     const optionsList: { label: string; value: string; details?: string }[] = [];
 
     matchedPayments.forEach((pay: any) => {
-      const rawMrVal = String(pay.mr_no || '').trim();
-      const mrVal = String(resolveOfficialArrivalId(rawMrVal, finalArrivalIndex) || rawMrVal).trim();
+      const mrVal = String(pay.mr_no || '').trim();
       if (!mrVal) return;
-      const key = normalizeArrivalToken(mrVal);
+      const key = mrVal.toUpperCase();
       if (seen.has(key)) return;
       seen.add(key);
 
-      const matchedInsp = inspections.find((insp: any) => {
-        const iKeys = new Set(getLinkedArrivalKeys(insp, finalArrivalIndex));
-        return iKeys.has(key) || normalizeArrivalToken(insp.mr_no || insp.final_arrival_no || insp.arrival_no) === key;
-      });
+      const matchedInsp = inspections.find(
+        (insp: any) => String(insp.mr_no || insp.final_arrival_no || insp.arrival_no || '').trim().toUpperCase() === key
+      );
       const lorryVal =
         pay.lorry_number ||
         pay.lorry_no ||
@@ -1059,10 +1013,9 @@ export function useSettlementWorkflow({ onClose, onLogEvent }: { onClose?: () =>
 
     // Secondary Fallback: also include inspected arrivals (material_inspection / final_arrival) matching selectedPoNo
     inspections.forEach((insp: any) => {
-      const { officialId } = resolveRecordOfficialArrivalId(insp, finalArrivalIndex);
-      const mrVal = String(officialId || insp.mr_no || insp.final_arrival_no || insp.arrival_no || '').trim();
+      const mrVal = String(insp.mr_no || insp.final_arrival_no || insp.arrival_no || '').trim();
       if (!mrVal || mrVal.toUpperCase() === 'NO' || mrVal.toUpperCase() === 'N/A' || mrVal === '-') return;
-      const key = normalizeArrivalToken(mrVal);
+      const key = mrVal.toUpperCase();
       if (seen.has(key)) return;
 
       const inspPo = String(insp.po_no || insp.mill_po_no || insp.contract_no || '').trim().replace(/^#/, '').toUpperCase();
@@ -1074,7 +1027,13 @@ export function useSettlementWorkflow({ onClose, onLogEvent }: { onClose?: () =>
         if (!isPoMatch) return;
       }
 
-      if (!isSettledOrCurrent(mrVal)) return;
+      const isAlreadySettled = settledList.some(
+        s => String(s.mr_no || '').trim().toUpperCase() === key
+      );
+      const isCurrentMr =
+        masterData.mr_no && String(masterData.mr_no).trim().toUpperCase() === key;
+
+      if (isAlreadySettled && !isCurrentMr && !(isEdit && isCurrentMr)) return;
 
       seen.add(key);
       const lorryVal = insp.lorry_number || insp.lorry_no || insp.vehicle_no || '';
@@ -1208,9 +1167,6 @@ export function useSettlementWorkflow({ onClose, onLogEvent }: { onClose?: () =>
           supabase.from('return_lorry').select('*').then(r => r.data || [], () => [])
         ]);
 
-        const builtFaIndex = buildFinalArrivalIndex(faRes || []);
-        setFinalArrivalIndex(builtFaIndex);
-
         // Map any bound PO numbers from final_arrival, clubbed_pomr, and return_lorry by MR/Arrival number
         const mrToBoundPoMap = new Map<string, string>();
         const registerBoundPo = (mrCandidate: any, poCandidate: any, overwrite: boolean = false) => {
@@ -1245,7 +1201,7 @@ export function useSettlementWorkflow({ onClose, onLogEvent }: { onClose?: () =>
         }
 
         const resolveBoundPoForItem = (item: any): string => {
-          const mrCands = [item.mr_no, item.final_arrival_no, item.arrival_no, ...getLinkedArrivalKeys(item, builtFaIndex)];
+          const mrCands = [item.mr_no, item.final_arrival_no, item.arrival_no];
           for (const c of mrCands) {
             const k = String(c || '').trim().toUpperCase();
             if (k && mrToBoundPoMap.has(k)) {
@@ -1259,7 +1215,7 @@ export function useSettlementWorkflow({ onClose, onLogEvent }: { onClose?: () =>
           if (existingPo && existingUpper !== 'NO' && existingUpper !== 'N/A' && existingUpper !== 'NONE') {
             return existingPo;
           }
-          const candidates = [item.mr_no, item.final_arrival_no, item.arrival_no, item.temporary_arrival_no, item.ref_arrival_no, ...getLinkedArrivalKeys(item, builtFaIndex)];
+          const candidates = [item.mr_no, item.final_arrival_no, item.arrival_no, item.temporary_arrival_no, item.ref_arrival_no];
           for (const cand of candidates) {
             const key = String(cand || '').trim().toUpperCase();
             if (key && mrToBoundPoMap.has(key)) {
@@ -1290,12 +1246,12 @@ export function useSettlementWorkflow({ onClose, onLogEvent }: { onClose?: () =>
 
         if (faRes) {
           for (const fa of faRes) {
-            linkAliases(fa.final_arrival_no, fa.mr_no, fa.arrival_no, fa.temporary_arrival_no, ...getLinkedArrivalKeys(fa, builtFaIndex));
+            linkAliases(fa.final_arrival_no, fa.mr_no, fa.arrival_no, fa.temporary_arrival_no);
           }
         }
         if (matInspRes) {
           for (const mi of matInspRes) {
-            linkAliases(mi.mr_no, mi.final_arrival_no, mi.arrival_no, mi.temporary_arrival_no, ...getLinkedArrivalKeys(mi, builtFaIndex));
+            linkAliases(mi.mr_no, mi.final_arrival_no, mi.arrival_no, mi.temporary_arrival_no);
           }
         }
 
@@ -1303,7 +1259,7 @@ export function useSettlementWorkflow({ onClose, onLogEvent }: { onClose?: () =>
         const seenMrNos = new Set<string>();
 
         const checkAndMarkSeen = (item: any): boolean => {
-          const rawKeys = [item.final_arrival_no, item.mr_no, item.arrival_no, item.temporary_arrival_no, ...getLinkedArrivalKeys(item, builtFaIndex)]
+          const rawKeys = [item.final_arrival_no, item.mr_no, item.arrival_no, item.temporary_arrival_no]
             .map(v => String(v || '').trim().toUpperCase())
             .filter(v => v && v !== 'NO' && v !== 'N/A' && v !== 'NONE');
           if (rawKeys.length === 0) return true;
@@ -1326,19 +1282,13 @@ export function useSettlementWorkflow({ onClose, onLogEvent }: { onClose?: () =>
           return false;
         };
 
-        // Priority 1: material_inspection (Mill Inspection primary, always tagged with finalized M.R. No. if finalized)
+        // Priority 1: material_inspection (Mill Inspection primary)
         if (matInspRes) {
           for (const item of matInspRes) {
-            const { officialId, linkedTempNo, isFinalized } = resolveRecordOfficialArrivalId(item, builtFaIndex);
-            const mrKey = officialId || item.mr_no || item.final_arrival_no || item.arrival_no;
+            const mrKey = item.mr_no || item.final_arrival_no || item.arrival_no;
             if (mrKey && !checkAndMarkSeen(item)) {
               const boundPo = resolveBoundPoForItem(item);
-              combinedInspections.push({
-                ...item,
-                mr_no: isFinalized ? officialId : (item.mr_no || officialId),
-                arrival_no: linkedTempNo || item.arrival_no || '',
-                ...(boundPo ? { po_no: boundPo } : {})
-              });
+              combinedInspections.push(boundPo ? { ...item, po_no: boundPo } : item);
             }
           }
         }
@@ -1346,17 +1296,12 @@ export function useSettlementWorkflow({ onClose, onLogEvent }: { onClose?: () =>
         // Priority 2: final_arrival
         if (faRes) {
           for (const item of faRes) {
-            const { officialId, linkedTempNo } = resolveRecordOfficialArrivalId(item, builtFaIndex);
-            const mrKey = extractFinalArrivalOfficialMr(item) || officialId || item.final_arrival_no || item.mr_no || item.arrival_no;
+            const mrKey = item.final_arrival_no || item.mr_no || item.arrival_no;
             if (mrKey && !checkAndMarkSeen(item)) {
+              if (!item.mr_no) item.mr_no = mrKey;
+              if (!item.final_arrival_no) item.final_arrival_no = mrKey;
               const boundPo = resolveBoundPoForItem(item);
-              combinedInspections.push({
-                ...item,
-                mr_no: mrKey,
-                final_arrival_no: mrKey,
-                arrival_no: linkedTempNo || item.arrival_no || '',
-                ...(boundPo ? { po_no: boundPo } : {})
-              });
+              combinedInspections.push(boundPo ? { ...item, po_no: boundPo } : item);
             }
           }
         }
@@ -1548,12 +1493,12 @@ export function useSettlementWorkflow({ onClose, onLogEvent }: { onClose?: () =>
       if (!tempArrivalNo && supabase) {
         const { data: faRows } = await supabase
           .from('final_arrival')
-          .select('final_arrival_no, mr_no, temporary_arrival_no')
-          .or(`final_arrival_no.ilike.${targetMr},mr_no.ilike.${targetMr}`);
+          .select('final_arrival_no, temporary_arrival_no')
+          .ilike('final_arrival_no', targetMr);
 
         if (faRows && faRows.length > 0) {
           const exactFa =
-            faRows.find((r: any) => cleanCode(r.final_arrival_no) === targetMr || cleanCode(r.mr_no) === targetMr) ||
+            faRows.find((r: any) => cleanCode(r.final_arrival_no) === targetMr) ||
             faRows[0];
           tempArrivalNo = cleanCode(exactFa?.temporary_arrival_no);
         }
@@ -1562,7 +1507,7 @@ export function useSettlementWorkflow({ onClose, onLogEvent }: { onClose?: () =>
       if (!tempArrivalNo) {
         const dbFa = await dbModule.fetchAll('final_arrival').catch(() => []);
         const matchedFa = (dbFa || []).find(
-          (r: any) => cleanCode(r.final_arrival_no) === targetMr || cleanCode(r.mr_no) === targetMr
+          (r: any) => cleanCode(r.final_arrival_no) === targetMr
         );
         if (matchedFa?.temporary_arrival_no) {
           tempArrivalNo = cleanCode(matchedFa.temporary_arrival_no);
@@ -1952,61 +1897,55 @@ export function useSettlementWorkflow({ onClose, onLogEvent }: { onClose?: () =>
     setSuccessMessage('');
     try {
       if (!supabase) return;
-      let activeFaIdx = finalArrivalIndex;
-      if (!activeFaIdx) {
-        const { data: faAll } = await supabase.from('final_arrival').select('*').catch(() => ({ data: [] as any[] }));
-        activeFaIdx = buildFinalArrivalIndex(faAll || []);
-        setFinalArrivalIndex(activeFaIdx);
-      }
+      const cleanTargetMr = String(targetMrNo || '').trim().toUpperCase();
 
-      const rawTarget = String(targetMrNo || '').trim();
-      const officialTargetMr = resolveOfficialArrivalId(rawTarget, activeFaIdx) || rawTarget;
-      const cleanTargetMr = officialTargetMr.toUpperCase();
-      const linkedLookupList = Array.from(
-        new Set([officialTargetMr, rawTarget, ...getLinkedArrivalKeys(rawTarget, activeFaIdx), ...getLinkedArrivalKeys(officialTargetMr, activeFaIdx)].filter(Boolean))
-      );
-      const linkedNormSet = new Set(linkedLookupList.map(k => normalizeArrivalToken(k)));
-
-      // 0. Resolve MR and PO from payment_master by official MR first or linked temp keys
+      // 0. Resolve MR and PO from payment_master strictly by mr_no first
       let payMasterRec: any = paymentList.find(
-        (p: any) => normalizeArrivalToken(p.mr_no) === normalizeArrivalToken(cleanTargetMr)
+        (p: any) => String(p.mr_no || '').trim().toUpperCase() === cleanTargetMr
       ) || null;
       if (!payMasterRec) {
         payMasterRec = paymentList.find((p: any) => {
-          const pMr = normalizeArrivalToken(p.mr_no);
-          const pArr = normalizeArrivalToken(p.arrival_no);
-          return (pMr && linkedNormSet.has(pMr)) || (!pMr && pArr && linkedNormSet.has(pArr));
+          const pMr = String(p.mr_no || '').trim().toUpperCase();
+          const pArr = String(p.arrival_no || '').trim().toUpperCase();
+          return (!pMr || pMr === cleanTargetMr) && pArr === cleanTargetMr;
         }) || null;
       }
-      if (!payMasterRec && linkedLookupList.length > 0) {
+      if (!payMasterRec) {
         try {
-          const pmOr = linkedLookupList.flatMap(v => [`mr_no.eq.${v}`, `arrival_no.eq.${v}`]).join(',');
           const { data: pmExact } = await supabase
             .from('payment_master')
             .select('*')
-            .or(pmOr);
+            .or(`mr_no.eq.${targetMrNo},mr_no.ilike.${targetMrNo}`);
           if (pmExact && pmExact.length > 0) {
-            payMasterRec = pmExact.find((p: any) => normalizeArrivalToken(p.mr_no) === normalizeArrivalToken(cleanTargetMr)) || pmExact[0];
+            payMasterRec = pmExact.find((p: any) => String(p.mr_no || '').trim().toUpperCase() === cleanTargetMr) || pmExact[0];
+          } else {
+            const { data: pmArr } = await supabase
+              .from('payment_master')
+              .select('*')
+              .eq('arrival_no', targetMrNo);
+            if (pmArr && pmArr.length > 0) {
+              payMasterRec = pmArr.find((p: any) => !p.mr_no || String(p.mr_no).trim().toUpperCase() === cleanTargetMr) || null;
+            }
           }
         } catch (e) {}
       }
 
-      // 1. Fetch material_inspection / mill_inspection_master by official MR & linked keys
+      // 1. Fetch material_inspection / mill_inspection_master by exact mr_no FIRST
       let inspMaster: any = null;
       try {
         const matExactRes = await supabase
           .from('material_inspection')
           .select('*')
-          .in('mr_no', linkedLookupList);
+          .eq('mr_no', targetMrNo);
         if (matExactRes?.data && matExactRes.data.length > 0) {
-          inspMaster = matExactRes.data.find((r: any) => normalizeArrivalToken(r.mr_no) === normalizeArrivalToken(cleanTargetMr)) || matExactRes.data[0];
+          inspMaster = matExactRes.data[0];
         } else {
           const matArrRes = await supabase
             .from('material_inspection')
             .select('*')
-            .in('arrival_no', linkedLookupList);
+            .eq('arrival_no', targetMrNo);
           if (matArrRes?.data && matArrRes.data.length > 0) {
-            inspMaster = matArrRes.data.find((r: any) => !r.mr_no || linkedNormSet.has(normalizeArrivalToken(r.mr_no))) || matArrRes.data[0];
+            inspMaster = matArrRes.data.find((r: any) => !r.mr_no || String(r.mr_no).trim().toUpperCase() === cleanTargetMr) || null;
           }
         }
 
@@ -2014,24 +1953,24 @@ export function useSettlementWorkflow({ onClose, onLogEvent }: { onClose?: () =>
           const millExactRes = await supabase
             .from('mill_inspection_master')
             .select('*')
-            .in('mr_no', linkedLookupList);
+            .eq('mr_no', targetMrNo);
           if (millExactRes?.data && millExactRes.data.length > 0) {
-            inspMaster = millExactRes.data.find((r: any) => normalizeArrivalToken(r.mr_no) === normalizeArrivalToken(cleanTargetMr)) || millExactRes.data[0];
+            inspMaster = millExactRes.data[0];
           } else {
             const millArrRes = await supabase
               .from('mill_inspection_master')
               .select('*')
-              .in('arrival_no', linkedLookupList);
+              .eq('arrival_no', targetMrNo);
             if (millArrRes?.data && millArrRes.data.length > 0) {
-              inspMaster = millArrRes.data.find((r: any) => !r.mr_no || linkedNormSet.has(normalizeArrivalToken(r.mr_no))) || millArrRes.data[0];
+              inspMaster = millArrRes.data.find((r: any) => !r.mr_no || String(r.mr_no).trim().toUpperCase() === cleanTargetMr) || null;
             }
           }
         }
         if (!inspMaster && inspections && inspections.length > 0) {
           inspMaster = inspections.find((r: any) => {
-            const k1 = normalizeArrivalToken(r.mr_no);
-            const k2 = normalizeArrivalToken(r.arrival_no || r.final_arrival_no);
-            return linkedNormSet.has(k1) || linkedNormSet.has(k2);
+            const k1 = String(r.mr_no || '').trim().toUpperCase();
+            const k2 = String(r.arrival_no || r.final_arrival_no || '').trim().toUpperCase();
+            return k1 === cleanTargetMr || k2 === cleanTargetMr;
           }) || null;
         }
       } catch (e) {
@@ -2045,7 +1984,7 @@ export function useSettlementWorkflow({ onClose, onLogEvent }: { onClose?: () =>
         const matDetRes = await supabase
           .from('material_inspection_details')
           .select('*')
-          .in('mr_no', linkedLookupList)
+          .eq('mr_no', targetMrNo)
           .order('srl_no', { ascending: true });
         const fetchedDet = matDetRes?.data || [];
         if (fetchedDet.length > 0) {
@@ -2054,7 +1993,7 @@ export function useSettlementWorkflow({ onClose, onLogEvent }: { onClose?: () =>
           const millDetRes = await supabase
             .from('mill_inspection_detail')
             .select('*')
-            .in('mr_no', linkedLookupList)
+            .eq('mr_no', targetMrNo)
             .order('srl_no', { ascending: true });
           if (millDetRes?.data && millDetRes.data.length > 0) {
             inspDetails = millDetRes.data;
@@ -2082,15 +2021,12 @@ export function useSettlementWorkflow({ onClose, onLogEvent }: { onClose?: () =>
         Number(inspMaster?.total_bales || inspMaster?.bales || inspMaster?.quantity || 0)
       );
 
-      // 2. Fetch final_arrival and validate against officialTargetMr / inspMaster / payMasterRec
-      const targetArrNo = String(inspMaster?.arrival_no || officialTargetMr).trim();
-      const faQueryClauses = Array.from(new Set([...linkedLookupList, targetArrNo].filter(Boolean)))
-        .flatMap(k => [`final_arrival_no.eq.${k}`, `mr_no.eq.${k}`, `arrival_no.eq.${k}`, `temporary_arrival_no.eq.${k}`])
-        .join(',');
+      // 2. Fetch final_arrival and validate against targetMrNo / inspMaster / payMasterRec
+      const targetArrNo = String(inspMaster?.arrival_no || targetMrNo).trim();
       const { data: faMasterList } = await supabase
         .from('final_arrival')
         .select('*')
-        .or(faQueryClauses);
+        .or(`final_arrival_no.eq.${targetMrNo},mr_no.eq.${targetMrNo},final_arrival_no.eq.${targetArrNo},arrival_no.eq.${targetArrNo}`);
 
       let faMaster: any = null;
       if (faMasterList && faMasterList.length > 0) {
@@ -2435,15 +2371,13 @@ export function useSettlementWorkflow({ onClose, onLogEvent }: { onClose?: () =>
         payMasterRec?.mr_date
       ) || '';
 
-      // Check if settlement already exists for this MR (or linked temp key). If yes, load for editing!
+      // Check if settlement already exists for this MR. If yes, load for editing!
       if (!forceSync) {
-        const { data: existingMasterList } = await supabase
+        const { data: existingMaster } = await supabase
           .from('mr_settlement_master')
           .select('*')
-          .in('mr_no', linkedLookupList);
-        const existingMaster = (existingMasterList && existingMasterList.length > 0)
-          ? (existingMasterList.find((m: any) => normalizeArrivalToken(m.mr_no) === normalizeArrivalToken(officialTargetMr)) || existingMasterList[0])
-          : null;
+          .eq('mr_no', targetMrNo)
+          .maybeSingle();
 
         if (existingMaster) {
           setIsEdit(true);
@@ -2457,10 +2391,11 @@ export function useSettlementWorkflow({ onClose, onLogEvent }: { onClose?: () =>
             ? inspDeductionAmount
             : ((Number(existingMaster.summary_deduction_amount) > 0) ? existingMaster.summary_deduction_amount : inspDeductionAmount);
 
-          let masterMrNoToUse = resolveOfficialArrivalId(existingMaster.mr_no || officialTargetMr, activeFaIdx) || existingMaster.mr_no || officialTargetMr;
-          if (!isMrIdentifier(masterMrNoToUse) && isMrIdentifier(officialTargetMr)) {
-            masterMrNoToUse = officialTargetMr;
-          } else if (!isMrIdentifier(masterMrNoToUse) && isMrIdentifier(inspMaster?.mr_no)) {
+          const isMrSeriesStr = (s: any) => Boolean(s && String(s).trim().toUpperCase().startsWith('MR'));
+          let masterMrNoToUse = existingMaster.mr_no || targetMrNo;
+          if (!isMrSeriesStr(masterMrNoToUse) && isMrSeriesStr(targetMrNo)) {
+            masterMrNoToUse = targetMrNo;
+          } else if (!isMrSeriesStr(masterMrNoToUse) && isMrSeriesStr(inspMaster?.mr_no)) {
             masterMrNoToUse = inspMaster.mr_no;
           }
 
@@ -2543,7 +2478,7 @@ export function useSettlementWorkflow({ onClose, onLogEvent }: { onClose?: () =>
           const { data: existingDetails } = await supabase
             .from('mr_settlement_detail')
             .select('*')
-            .in('mr_no', linkedLookupList)
+            .eq('mr_no', targetMrNo)
             .order('col_index', { ascending: true });
 
           const fallbackCols = buildAlignedSettlementColumns(
@@ -2671,19 +2606,18 @@ export function useSettlementWorkflow({ onClose, onLogEvent }: { onClose?: () =>
       // 2. Build new settlement prioritizing material_inspection (inspMaster) and payment_master (payMasterRec) over final_arrival (faMaster)
       if (inspMaster || payMasterRec || faMaster) {
         setIsEdit(false);
-        const { officialId: inspOfficial } = inspMaster ? resolveRecordOfficialArrivalId(inspMaster, activeFaIdx) : { officialId: '' };
-        const faOfficial = faMaster ? extractFinalArrivalOfficialMr(faMaster) : '';
-        let resolvedMrNo = officialTargetMr;
-        if (isMrIdentifier(officialTargetMr)) {
-          resolvedMrNo = officialTargetMr;
-        } else if (isMrIdentifier(faOfficial)) {
-          resolvedMrNo = faOfficial;
-        } else if (isMrIdentifier(inspOfficial)) {
-          resolvedMrNo = inspOfficial;
-        } else if (isMrIdentifier(payMasterRec?.mr_no)) {
+        const isMrSeriesStr = (s: any) => Boolean(s && String(s).trim().toUpperCase().startsWith('MR'));
+        let resolvedMrNo = targetMrNo;
+        if (isMrSeriesStr(targetMrNo)) {
+          resolvedMrNo = targetMrNo;
+        } else if (isMrSeriesStr(inspMaster?.mr_no)) {
+          resolvedMrNo = inspMaster.mr_no;
+        } else if (isMrSeriesStr(payMasterRec?.mr_no)) {
           resolvedMrNo = payMasterRec.mr_no;
+        } else if (isMrSeriesStr(faMaster?.mr_no)) {
+          resolvedMrNo = faMaster.mr_no;
         } else {
-          resolvedMrNo = faOfficial || inspOfficial || officialTargetMr || inspMaster?.mr_no || payMasterRec?.mr_no || '';
+          resolvedMrNo = inspMaster?.mr_no || payMasterRec?.mr_no || targetMrNo || faMaster?.mr_no || faMaster?.final_arrival_no || faMaster?.arrival_no || '';
         }
 
         const resolvedPoVal = inspMaster?.po_no || payMasterRec?.po_no || faMaster?.po_no || effectivePoNo || '';
@@ -2796,7 +2730,7 @@ export function useSettlementWorkflow({ onClose, onLogEvent }: { onClose?: () =>
 
       const prefilledMaster: SettlementMaster = {
         ...initialMaster(),
-        mr_no: resolveOfficialArrivalId(inspMaster.mr_no || officialTargetMr, activeFaIdx) || inspMaster.mr_no || officialTargetMr || '',
+        mr_no: inspMaster.mr_no || '',
         sett_date: resolvedInspectionArrivalDate || new Date().toISOString().split('T')[0],
         mr_date: resolvedInspectionArrivalDate,
         po_type: 'MILL_PO',
@@ -3356,8 +3290,7 @@ export function useSettlementWorkflow({ onClose, onLogEvent }: { onClose?: () =>
       return;
     }
 
-    const rawTargetMr = masterData.mr_no ? masterData.mr_no.trim() : '';
-    let targetMrNo = rawTargetMr ? (resolveOfficialArrivalId(rawTargetMr, finalArrivalIndex) || rawTargetMr) : '';
+    let targetMrNo = masterData.mr_no ? masterData.mr_no.trim() : '';
     if (!targetMrNo) {
       if (masterData.lorry_number) {
         const cleanLorry = masterData.lorry_number.trim().toUpperCase().replace(/\s+/g, '');
@@ -3367,8 +3300,6 @@ export function useSettlementWorkflow({ onClose, onLogEvent }: { onClose?: () =>
       } else {
         targetMrNo = `MR-${Date.now().toString().slice(-6)}`;
       }
-      setMasterData(prev => ({ ...prev, mr_no: targetMrNo }));
-    } else if (targetMrNo !== rawTargetMr) {
       setMasterData(prev => ({ ...prev, mr_no: targetMrNo }));
     }
 

@@ -8,13 +8,6 @@ import { comparePoInspection, compareSaudaTempArrival, PoMatchResult } from '../
 import { useLiveAutoRefresh } from '../../hooks/useLiveAutoRefresh';
 import { isInvalidAgency } from '../../services/systemReportEngine';
 import { syncExcessShortDeductionsBatch } from '../../services/excessShortAutoSyncService';
-import {
-  buildFinalArrivalIndex,
-  isArrivalFinalized,
-  mergeArrivalsFinalFirst,
-  normalizeArrivalToken,
-  resolveOfficialArrivalId,
-} from '../../utils/arrivalMrResolver';
 
 interface UsePurchaseOrderDataOptions {
   isTempPo: boolean;
@@ -465,7 +458,6 @@ export function usePurchaseOrderData({
       };
 
       // Build O(1) lookup indices once across all collections
-      const finalArrivalBridge = buildFinalArrivalIndex(finalArrivals || []);
       const finalArrivalsIndex = buildRecordIndex(finalArrivals || []);
       const tempArrivalsIndex = buildRecordIndex(arrivals || [], (ar: any) => [
         ar.po_no,
@@ -479,10 +471,11 @@ export function usePurchaseOrderData({
 
       // Track all temporary arrival identifiers already promoted to final_arrival across ANY P.O.
       // so a temporary arrival that was re-linked/clubbed to another P.O. in final_arrival is never counted on its old P.O.
-      const allPromotedTempTokens = new Set<string>(finalArrivalBridge.allFinalKeysSet);
+      const allPromotedTempTokens = new Set<string>();
       const addPromotedTempToken = (val: any) => {
-        const s = normalizeArrivalToken(val);
-        if (s) allPromotedTempTokens.add(s);
+        const s = String(val || '').trim().toUpperCase();
+        if (!s || s === 'N/A' || s === 'UNDEFINED') return;
+        allPromotedTempTokens.add(s);
       };
       (finalArrivals || []).forEach((f: any) => {
         if (!f) return;
@@ -595,9 +588,8 @@ export function usePurchaseOrderData({
           );
 
         const isPromotedToAnyFinal = (ar: any) => {
-          if (isArrivalFinalized(ar, finalArrivalBridge)) return true;
-          const tempId = normalizeArrivalToken(ar.temporary_arrival_no || ar.amad_no);
-          const mrId = normalizeArrivalToken(ar.mr_no || ar.arrival_no);
+          const tempId = String(ar.temporary_arrival_no || ar.amad_no || '').trim().toUpperCase();
+          const mrId = String(ar.mr_no || ar.arrival_no || '').trim().toUpperCase();
           return (tempId !== '' && allPromotedTempTokens.has(tempId)) || (mrId !== '' && allPromotedTempTokens.has(mrId));
         };
 
@@ -633,23 +625,19 @@ export function usePurchaseOrderData({
             return m ? parseInt(m[1], 10) : 0;
           };
           const canonicalKey = (mr: string): string => {
-            const official = resolveOfficialArrivalId(mr, finalArrivalBridge);
-            const norm = normalizeArrivalToken(official);
-            if (norm) return norm;
             const seq = extractSeq(mr);
             return seq > 0 ? `MR_${seq}` : String(mr || '').trim().toUpperCase();
           };
           const uniqueInspByMr = new Map<string, any>();
           matchingMatReceipts.forEach((insp: any) => {
-            const rawMr = String(insp.mr_no || insp.final_arrival_no || insp.arrival_no || insp.temporary_arrival_no || '').trim();
+            const rawMr = String(insp.mr_no || insp.arrival_no || '').trim();
             if (!rawMr) return;
-            const officialMr = resolveOfficialArrivalId(rawMr, finalArrivalBridge);
-            const mrKey = canonicalKey(officialMr || rawMr);
+            const mrKey = canonicalKey(rawMr);
             const existing = uniqueInspByMr.get(mrKey);
             const hasGrid = Boolean(insp.grid_details || insp.details);
             const existingHasGrid = Boolean(existing?.grid_details || existing?.details);
             if (!existing || (!existingHasGrid && hasGrid)) {
-              uniqueInspByMr.set(mrKey, officialMr ? { ...insp, mr_no: officialMr } : insp);
+              uniqueInspByMr.set(mrKey, insp);
             }
           });
           const sortedInsps = Array.from(uniqueInspByMr.values()).sort((a: any, b: any) => {
@@ -732,12 +720,12 @@ export function usePurchaseOrderData({
 
         const poNoStr = String(p.po_no || p.contract_po_no || '').trim();
         const saudaNoStr = String(p.sauda_no || p.sauda_ref || p.contract_po_no || p.po_no || '').trim();
-        const allMatchedArrivalsSorted = mergeArrivalsFinalFirst(matchingTemp, matchingFinal, finalArrivalBridge).sort((a: any, b: any) => {
-          const dA = normalizeDateYMD(a?.final_arrival_date || a?.date || a?.arrival_date || a?.created_at || '');
-          const dB = normalizeDateYMD(b?.final_arrival_date || b?.date || b?.arrival_date || b?.created_at || '');
+        const allMatchedArrivalsSorted = [...matchingFinal, ...matchingTempArrivals].sort((a: any, b: any) => {
+          const dA = normalizeDateYMD(a?.date || a?.arrival_date || a?.created_at || '');
+          const dB = normalizeDateYMD(b?.date || b?.arrival_date || b?.created_at || '');
           return dB.localeCompare(dA);
         });
-        const matchedArrivalForWt = allMatchedArrivalsSorted[0] || matchingFinal[0] || matchingTemp[0];
+        const matchedArrivalForWt = allMatchedArrivalsSorted[0] || matchingTempArrivals[0] || matchingTemp[0] || matchingFinal[0];
         const saudaDateStr = p.s_date || p.po_date || p.date || p.contract_date || (p.created_at ? p.created_at.slice(0, 10) : '');
         const arrivalDateStr = lastInspMrDate || matchedArrivalForWt?.date || matchedArrivalForWt?.arrival_date || p.last_arrival_date || p.arrival_date || saudaDateStr;
         const normalizedArrivalDate = normalizeDateYMD(arrivalDateStr) || null;
@@ -781,7 +769,7 @@ export function usePurchaseOrderData({
         const poDetails = queryRecordIndex(scpDetailsIndex, poKeys);
         const mismatchFields: string[] = [];
         if (!isCleared) {
-          const activeArrival = matchingFinal[0] || matchingTemp[0] || matchingTempArrivals[0];
+          const activeArrival = matchingTemp[0] || matchingTempArrivals[0];
           if (activeArrival || matchingInsp) {
             const tempMatchRes = compareSaudaTempArrival(p, poDetails, activeArrival || matchingInsp, matchingInsp ? [matchingInsp] : []);
             if (tempMatchRes.hasInspection && tempMatchRes.status === 'mismatch') {

@@ -88,16 +88,7 @@ export const PoStoryTabView: React.FC<PoStoryTabViewProps> = ({
                 <div className="flex items-center justify-between border-b border-[#FBCFCB] pb-1.5">
                   <span className="text-xs font-mono font-black text-[#D94B5A] flex items-center gap-1.5">
                     <Tag className="w-3.5 h-3.5 text-emerald-700" />
-                    <span>
-                      M.R. No: {arr._officialId || arr.mr_no || arr.final_arrival_no || arr.arrival_no || arr.temporary_arrival_no || arr.amad_no || `Arrival #${idx + 1}`}
-                    </span>
-                    {(arr._linkedTempNo || arr.temporary_arrival_no) &&
-                      String(arr._linkedTempNo || arr.temporary_arrival_no).trim().toUpperCase() !==
-                        String(arr._officialId || arr.mr_no || arr.final_arrival_no || '').trim().toUpperCase() && (
-                        <span className="px-1.5 py-0.5 rounded bg-white/80 border border-[#FBCFCB] text-[10px] font-bold text-slate-600">
-                          Temp: {arr._linkedTempNo || arr.temporary_arrival_no}
-                        </span>
-                      )}
+                    <span>M.R. No: {arr.temporary_arrival_no || arr.mr_no || arr.amad_no || `Arrival #${idx + 1}`}</span>
                   </span>
                   <span className="text-[11px] font-medium text-slate-600">
                     Date: <strong>{arr.date || arr.arrival_date || arr.lorry_date || '—'}</strong>
