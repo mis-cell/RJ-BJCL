@@ -28,16 +28,6 @@ import {
   calculateNetPaidAmountAfterDeductions,
   resolvePaymentDeductionsForPoAndMr
 } from '../../utils/paymentCalculations';
-import {
-  FinalArrivalIndex,
-  buildFinalArrivalIndex,
-  extractFinalArrivalOfficialMr,
-  getLinkedArrivalKeys,
-  mergeArrivalsFinalFirst,
-  normalizeArrivalToken,
-  resolveOfficialArrivalId,
-  resolveRecordOfficialArrivalId
-} from '../../utils/arrivalMrResolver';
 
 export function usePaymentData(onSaveSuccess?: () => void) {
   const [loading, setLoading] = useState(false);
@@ -67,7 +57,6 @@ export function usePaymentData(onSaveSuccess?: () => void) {
   const [markaMasterList, setMarkaMasterList] = useState<any[]>([]);
   const [areaMasterList, setAreaMasterList] = useState<any[]>([]);
   const [sattaDiffsList, setSattaDiffsList] = useState<any[]>([]);
-  const [finalArrivalIndex, setFinalArrivalIndex] = useState<FinalArrivalIndex>(() => buildFinalArrivalIndex([]));
 
   // Pre-index paid MR numbers and paid PO numbers in O(N) once per paymentList update
   const { paidMrSet, paidPoSet, arrivalsByPoSuffixMap } = useMemo(() => {
@@ -80,7 +69,10 @@ export function usePaymentData(onSaveSuccess?: () => void) {
       const st = String(p.status || '').toLowerCase().trim();
       if (st === 'cancelled' || st === 'rejected') continue;
 
-      getLinkedArrivalKeys(p, finalArrivalIndex).forEach(k => mrSet.add(k));
+      const pMr = String(p.mr_no || p.arrival_no || '').trim().toUpperCase();
+      if (pMr && pMr !== 'N/A') {
+        mrSet.add(pMr);
+      }
 
       const pPo = String(p.po_no || '').trim().toUpperCase().replace(/^#+/, '').replace(/\(PTF\)/gi, '').trim();
       if (pPo && pPo !== 'N/A') {
@@ -165,8 +157,8 @@ export function usePaymentData(onSaveSuccess?: () => void) {
 
     if (linkedMrs.length > 0) {
       return linkedMrs.some((mr: any) => {
-        const keys = getLinkedArrivalKeys(mr, finalArrivalIndex);
-        return keys.length > 0 && !keys.some(k => paidMrSet.has(k));
+        const mrKey = String(mr.mr_no || mr.final_arrival_no || mr.arrival_no || mr.temporary_arrival_no || '').trim().toUpperCase();
+        return mrKey && !paidMrSet.has(mrKey);
       });
     }
 
@@ -175,7 +167,7 @@ export function usePaymentData(onSaveSuccess?: () => void) {
     }
 
     return true;
-  }, [arrivalsByPoSuffixMap, paidMrSet, paidPoSet, finalArrivalIndex]);
+  }, [arrivalsByPoSuffixMap, paidMrSet, paidPoSet]);
 
   const findMatchingPo = useCallback((targetPoNo: string, poArray: any[]) => {
     if (!targetPoNo || !poArray || poArray.length === 0) return null;
@@ -201,11 +193,11 @@ export function usePaymentData(onSaveSuccess?: () => void) {
 
   const availableArrivals = useMemo(() => {
     return verifiedArrivals.filter(arr => {
-      const keys = getLinkedArrivalKeys(arr, finalArrivalIndex);
-      if (keys.length === 0) return true;
-      return !keys.some(k => paidMrSet.has(k));
+      const mrKey = String(arr.mr_no || arr.final_arrival_no || arr.arrival_no || arr.temporary_arrival_no || '').trim().toUpperCase();
+      if (!mrKey || mrKey === 'N/A') return true;
+      return !paidMrSet.has(mrKey);
     });
-  }, [verifiedArrivals, paidMrSet, finalArrivalIndex]);
+  }, [verifiedArrivals, paidMrSet]);
 
   const eligiblePos = useMemo(() => {
     return purchaseOrders.filter(po => isPoEligibleForPaymentLocal(po));
@@ -312,57 +304,73 @@ export function usePaymentData(onSaveSuccess?: () => void) {
           });
         }
 
-        const faBridge = buildFinalArrivalIndex(faRes || []);
-        setFinalArrivalIndex(faBridge);
-
         const combinedMap = new Map<string, any>();
 
-        // 1. Merge Temp & Final arrivals via Final-first bridge (official M.R. No. always wins)
-        const baseMerged = mergeArrivalsFinalFirst(tmrRes || [], faRes || [], faBridge);
-        baseMerged.forEach((rec: any) => {
-          const officialId = rec._officialId || extractFinalArrivalOfficialMr(rec) || rec.mr_no || rec.temporary_arrival_no;
-          const mapKey = normalizeArrivalToken(officialId);
-          if (!mapKey) return;
-          combinedMap.set(mapKey, {
-            ...rec,
-            mr_no: officialId,
-            arrival_no: rec._isFinalized ? officialId : (rec.arrival_no || officialId),
-            temporary_arrival_no: rec._linkedTempNo || rec.temporary_arrival_no || '',
-            linked_temp_no: rec._linkedTempNo || rec.temporary_arrival_no || '',
-            supplier: rec.supplier || rec.supplier_name || rec.party_name || rec.challan_supplier,
-            broker: rec.broker || rec.broker_name,
-            po_no: rec.po_no || rec.mill_po_no,
-            source_module: rec._isFinalized ? 'final_arrival' : 'temporary_material_received'
-          });
+        (tmrRes || []).forEach((t: any) => {
+          const key = t.temporary_arrival_no || t.amad_no || t.arrival_no || t.mr_no;
+          if (key) {
+            combinedMap.set(key, {
+              ...t,
+              mr_no: key,
+              arrival_no: key,
+              supplier: t.supplier || t.supplier_name || t.party_name,
+              broker: t.broker || t.broker_name,
+              po_no: t.po_no || t.mill_po_no,
+              source_module: 'temporary_material_received'
+            });
+          }
         });
 
-        // 2. Layer Mill Inspections (always resolve through faBridge to official M.R. No.)
-        const layerInspection = (item: any, sourceModule: string) => {
-          const { officialId, linkedTempNo, isFinalized } = resolveRecordOfficialArrivalId(item, faBridge);
-          const mapKey = normalizeArrivalToken(officialId);
-          if (!mapKey) return;
-          const existing = combinedMap.get(mapKey) || {};
-          const resolvedTemp = existing.linked_temp_no || existing.temporary_arrival_no || linkedTempNo || '';
-          combinedMap.set(mapKey, {
-            ...existing,
-            ...item,
-            mr_no: officialId,
-            final_arrival_no: existing.final_arrival_no || item.final_arrival_no || (isFinalized ? officialId : ''),
-            arrival_no: isFinalized ? officialId : (item.arrival_no || existing.arrival_no || officialId),
-            temporary_arrival_no: resolvedTemp,
-            linked_temp_no: resolvedTemp,
-            _officialId: officialId,
-            _linkedTempNo: resolvedTemp,
-            _isFinalized: Boolean(isFinalized || existing._isFinalized),
-            supplier: item.supplier_name || item.supplier || existing.supplier,
-            broker: item.broker_name || item.broker || existing.broker,
-            po_no: item.po_no || item.mill_po_no || existing.po_no,
-            source_module: sourceModule
-          });
-        };
+        (faRes || []).forEach((item: any) => {
+          const key = item.mr_no || item.final_arrival_no || item.arrival_no || item.temporary_arrival_no;
+          if (key) {
+            const existing = combinedMap.get(key) || {};
+            combinedMap.set(key, {
+              ...existing,
+              ...item,
+              mr_no: key,
+              arrival_no: key,
+              supplier: item.supplier || item.supplier_name || item.party_name || existing.supplier,
+              broker: item.broker || item.broker_name || existing.broker,
+              po_no: item.po_no || item.mill_po_no || existing.po_no,
+              source_module: 'final_arrival'
+            });
+          }
+        });
 
-        (mimRes || []).forEach((item: any) => layerInspection(item, 'mill_inspection_master'));
-        (miRes || []).forEach((item: any) => layerInspection(item, 'material_inspection'));
+        (mimRes || []).forEach((item: any) => {
+          const key = item.mr_no || item.arrival_no;
+          if (key) {
+            const existing = combinedMap.get(key) || {};
+            combinedMap.set(key, {
+              ...existing,
+              ...item,
+              mr_no: key,
+              arrival_no: key,
+              supplier: item.supplier_name || item.supplier || existing.supplier,
+              broker: item.broker_name || item.broker || existing.broker,
+              po_no: item.po_no || item.mill_po_no || existing.po_no,
+              source_module: 'mill_inspection_master'
+            });
+          }
+        });
+
+        (miRes || []).forEach((item: any) => {
+          const key = item.mr_no || item.arrival_no || item.final_arrival_no;
+          if (key) {
+            const existing = combinedMap.get(key) || {};
+            combinedMap.set(key, {
+              ...existing,
+              ...item,
+              mr_no: key,
+              arrival_no: key,
+              supplier: item.supplier_name || item.supplier || existing.supplier,
+              broker: item.broker_name || item.broker || existing.broker,
+              po_no: item.po_no || item.mill_po_no || existing.po_no,
+              source_module: 'material_inspection'
+            });
+          }
+        });
 
         arrList = Array.from(combinedMap.values());
       }
@@ -714,56 +722,53 @@ export function usePaymentData(onSaveSuccess?: () => void) {
 
       setDetailCols(cols);
 
-      // Automatically find matching M.R from linked arrivals (prioritizing official M.R. No.)
+      // Automatically find matching M.R from linked arrivals
       const linkedMrs = getLinkedMrsForPo(poNo, verifiedArrivals);
       const matchingArrival = linkedMrs.find(a => {
-        const { isPaid } = isMrAlreadyProcessed(a, paymentList, isEdit ? masterData.voucher_no : undefined, poNo, finalArrivalIndex);
+        const { isPaid } = isMrAlreadyProcessed(a, paymentList, isEdit ? masterData.voucher_no : undefined, poNo);
         return !isPaid;
       }) || linkedMrs[0];
 
       if (matchingArrival && !selectedMrNo) {
-        handleMrSelection(matchingArrival._officialId || matchingArrival.mr_no || matchingArrival.final_arrival_no || matchingArrival.arrival_no || matchingArrival.temporary_arrival_no, po);
+        handleMrSelection(matchingArrival.mr_no || matchingArrival.final_arrival_no || matchingArrival.arrival_no || matchingArrival.temporary_arrival_no, po);
       } else if (selectedMrNo) {
-        const isCurrentPaid = isMrAlreadyProcessed(selectedMrNo, paymentList, isEdit ? masterData.voucher_no : undefined, poNo, finalArrivalIndex).isPaid;
-        const selectedKeys = new Set(getLinkedArrivalKeys(selectedMrNo, finalArrivalIndex));
-        const isCurrentLinked = linkedMrs.some(a => getLinkedArrivalKeys(a, finalArrivalIndex).some(k => selectedKeys.has(k)));
+        const isCurrentPaid = isMrAlreadyProcessed(selectedMrNo, paymentList, isEdit ? masterData.voucher_no : undefined, poNo).isPaid;
+        const isCurrentLinked = linkedMrs.some(a => {
+          const arrMr = String(a.mr_no || a.final_arrival_no || a.arrival_no || a.temporary_arrival_no || '').trim().toUpperCase();
+          const target = String(selectedMrNo).trim().toUpperCase();
+          return arrMr === target || arrMr.replace(/^MR0*/, '') === target.replace(/^MR0*/, '');
+        });
         if (isCurrentPaid || !isCurrentLinked) {
           if (matchingArrival) {
-            handleMrSelection(matchingArrival._officialId || matchingArrival.mr_no || matchingArrival.final_arrival_no || matchingArrival.arrival_no || matchingArrival.temporary_arrival_no, po);
+            handleMrSelection(matchingArrival.mr_no || matchingArrival.final_arrival_no || matchingArrival.arrival_no || matchingArrival.temporary_arrival_no, po);
           } else {
             setSelectedMrNo('');
             setMasterData(prev => ({ ...prev, mr_no: '', arrival_no: '' }));
           }
         }
       } else if (matchingArrival) {
-        handleMrSelection(matchingArrival._officialId || matchingArrival.mr_no || matchingArrival.final_arrival_no || matchingArrival.arrival_no || matchingArrival.temporary_arrival_no, po);
+        handleMrSelection(matchingArrival.mr_no || matchingArrival.final_arrival_no || matchingArrival.arrival_no || matchingArrival.temporary_arrival_no, po);
       }
     }
   };
 
   const handleMrSelection = async (mrNo: string, overridePo?: any) => {
-    const resolvedInputMr = resolveOfficialArrivalId(mrNo, finalArrivalIndex) || mrNo;
-    setSelectedMrNo(resolvedInputMr);
+    setSelectedMrNo(mrNo);
     if (!mrNo) return;
 
-    const checkPaid = isMrAlreadyProcessed(resolvedInputMr, paymentList, isEdit ? masterData.voucher_no : undefined, selectedPoNo, finalArrivalIndex);
+    const checkPaid = isMrAlreadyProcessed(mrNo, paymentList, isEdit ? masterData.voucher_no : undefined, selectedPoNo);
     if (checkPaid.isPaid && checkPaid.paidPayment) {
       const p = checkPaid.paidPayment;
-      setErrorMessage(`Payment has already been processed for M.R. ${resolvedInputMr} against P.O. ${p.po_no || selectedPoNo || 'N/A'} (Voucher No: ${p.voucher_no}). This M.R. cannot be selected again.`);
+      setErrorMessage(`Payment has already been processed for M.R. ${mrNo} against P.O. ${p.po_no || selectedPoNo || 'N/A'} (Voucher No: ${p.voucher_no}). This M.R. cannot be selected again.`);
       setSelectedMrNo('');
       window.scrollTo({ top: 0, behavior: 'smooth' });
       return;
     }
 
-    const inputLinkedKeys = new Set(getLinkedArrivalKeys(resolvedInputMr, finalArrivalIndex));
-    getLinkedArrivalKeys(mrNo, finalArrivalIndex).forEach(k => inputLinkedKeys.add(k));
-
     let arrival = verifiedArrivals.find(a => {
-      const aKeys = getLinkedArrivalKeys(a, finalArrivalIndex);
-      if (aKeys.some(k => inputLinkedKeys.has(k))) return true;
       const arrMr = String(a.mr_no || a.final_arrival_no || a.arrival_no || a.temporary_arrival_no || a.amad_no || '').trim().toUpperCase();
-      const target = String(resolvedInputMr).trim().toUpperCase();
-      return Boolean(arrMr && target && arrMr.replace(/^(MR|AR)0*/, '') === target.replace(/^(MR|AR)0*/, ''));
+      const target = String(mrNo).trim().toUpperCase();
+      return arrMr === target || arrMr.replace(/^MR0*/, '') === target.replace(/^MR0*/, '');
     });
 
     // Fallback if not found in verifiedArrivals
@@ -840,18 +845,14 @@ export function usePaymentData(onSaveSuccess?: () => void) {
       
       if (supabase) {
         try {
-          const targetMr = arrival._officialId || arrival.mr_no || arrival.final_arrival_no || arrival.arrival_no || resolvedInputMr;
-          const cleanMr = targetMr.replace(/^(MR|AR)[-_ ]?/i, '');
+          const targetMr = arrival.mr_no || arrival.final_arrival_no || arrival.arrival_no || mrNo;
+          const cleanMr = targetMr.replace(/^MR[-_ ]?/i, '');
           const candidateKeys = Array.from(new Set([
             targetMr,
-            resolvedInputMr,
             mrNo,
             arrival.mr_no,
             arrival.final_arrival_no,
             arrival.arrival_no,
-            arrival.temporary_arrival_no,
-            arrival.linked_temp_no,
-            ...getLinkedArrivalKeys(arrival, finalArrivalIndex),
             cleanMr,
             `MR${cleanMr}`,
             `MR-${cleanMr}`,
@@ -1004,15 +1005,9 @@ export function usePaymentData(onSaveSuccess?: () => void) {
           )
         : 0;
 
-      const resolvedSaveMr =
-        resolveOfficialArrivalId(arrival.mr_no || arrival.final_arrival_no || resolvedInputMr, finalArrivalIndex) ||
-        arrival.mr_no ||
-        arrival.final_arrival_no ||
-        resolvedInputMr;
-
       setMasterData(prev => ({
         ...prev,
-        mr_no: resolvedSaveMr,
+        mr_no: arrival.mr_no || arrival.final_arrival_no || mrNo,
         po_no: poNo || prev.po_no,
         po_date: po?.po_date || po?.s_date || arrival.po_date || arrival.date || prev.po_date,
         supplier: arrival.supplier || po?.supplier || prev.supplier,
@@ -1020,7 +1015,7 @@ export function usePaymentData(onSaveSuccess?: () => void) {
         broker: arrival.broker || po?.broker || prev.broker,
         po_type: po?.po_type || 'Standard',
         lorry_number: arrival.lorry_number || arrival.vehicle_no || prev.lorry_number,
-        arrival_no: resolvedSaveMr || arrival.final_arrival_no || prev.arrival_no,
+        arrival_no: arrival.final_arrival_no || arrival.mr_no || prev.arrival_no,
         arrival_date: arrival.date || deductions.arrivalDate || prev.arrival_date,
         total_amount: grossVal > 0 ? grossVal : Math.round(prev.total_amount || 0),
         payable_amt: grossVal > 0 ? grossVal : Math.round(prev.payable_amt || 0),
@@ -1053,12 +1048,11 @@ export function usePaymentData(onSaveSuccess?: () => void) {
       return;
     }
 
-    const rawCheckMr = String(masterData.mr_no || selectedMrNo || masterData.arrival_no || '').trim();
-    const checkMr = String(resolveOfficialArrivalId(rawCheckMr, finalArrivalIndex) || rawCheckMr).trim().toUpperCase();
+    const checkMr = String(masterData.mr_no || selectedMrNo || masterData.arrival_no || '').trim().toUpperCase();
     const checkPo = String(masterData.po_no || selectedPoNo || '').trim().toUpperCase();
 
     if (checkMr && checkMr !== 'N/A') {
-      const localConflict = isMrAlreadyProcessed(checkMr, paymentList, isEdit ? masterData.voucher_no : undefined, checkPo, finalArrivalIndex);
+      const localConflict = isMrAlreadyProcessed(checkMr, paymentList, isEdit ? masterData.voucher_no : undefined, checkPo);
       if (localConflict.isPaid && localConflict.paidPayment) {
         const p = localConflict.paidPayment;
         setErrorMessage(`Payment has already been processed for M.R. ${checkMr} against P.O. ${p.po_no || checkPo || 'N/A'} (Voucher No: ${p.voucher_no}). This M.R. cannot be selected again.`);
@@ -1141,11 +1135,10 @@ export function usePaymentData(onSaveSuccess?: () => void) {
         ? 'Paid'
         : (parsedPaid > 0 ? 'Partially Paid' : 'Pending');
 
-      const canonicalSaveMr = (checkMr && checkMr !== 'N/A') ? checkMr : (masterData.mr_no || null);
       const initialPayload: Record<string, any> = {
         voucher_no: masterData.voucher_no,
         payment_date: masterData.payment_date || new Date().toISOString().split('T')[0],
-        mr_no: canonicalSaveMr,
+        mr_no: masterData.mr_no || null,
         po_no: masterData.po_no || null,
         po_date: masterData.po_date || null,
         sett_date: masterData.sett_date || null,
@@ -1156,7 +1149,7 @@ export function usePaymentData(onSaveSuccess?: () => void) {
         party_name: masterData.party_name || masterData.supplier || 'N/A',
         chn_supplier: masterData.chn_supplier || null,
         lorry_number: masterData.lorry_number || null,
-        arrival_no: canonicalSaveMr || masterData.arrival_no || null,
+        arrival_no: masterData.arrival_no || null,
         arrival_date: masterData.arrival_date || null,
         arival_apmc_fees: Number(masterData.arival_apmc_fees) || 0,
         payable_amt: payableVal,

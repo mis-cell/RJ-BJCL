@@ -30,13 +30,6 @@ import {
 } from '../components/mismatch/mismatchTypes';
 import { MaterialMismatchView } from '../components/mismatch/MaterialMismatchView';
 import { SattaMismatchView } from '../components/mismatch/SattaMismatchView';
-import {
-  buildFinalArrivalIndex,
-  isArrivalFinalized,
-  resolveRecordOfficialArrivalId,
-  extractFinalArrivalOfficialMr,
-  extractFinalArrivalLinkedTemp
-} from '../utils/arrivalMrResolver';
 
 export type { MaterialMismatchItem, SattaMismatchItem, SattaGroupedItem };
 
@@ -133,11 +126,10 @@ export default function MismatchCase({ onClose, variant = 'satta' }: { onClose?:
     setLoading(true);
     try {
       // Direct fresh queries from database (no browser cache dependency)
-      const [scpRows, scpDetailRows, amadRows, faRows, matInspRows, millInspRows, dbMismatches, purchaseMasterRows, purchaseDetailRows, sattaBaseRows, sattaDiffRows, gradeRows, dbSattaMismatches, saudaMasterRows, saudaQualityRows, sattaMasterRows, sattaQualityRows, smsSaudaDbRows] = await Promise.all([
+      const [scpRows, scpDetailRows, amadRows, matInspRows, millInspRows, dbMismatches, purchaseMasterRows, purchaseDetailRows, sattaBaseRows, sattaDiffRows, gradeRows, dbSattaMismatches, saudaMasterRows, saudaQualityRows, sattaMasterRows, sattaQualityRows, smsSaudaDbRows] = await Promise.all([
         supabase ? supabase.from('sauda_check_point').select('*').then(res => res.data || []) : dbModule.fetchAll('sauda_check_point').catch(() => []),
         supabase ? supabase.from('sauda_check_point_details').select('*').then(res => res.data || []) : dbModule.fetchAll('sauda_check_point_details').catch(() => []),
         dbModule.fetchAll('temporary_material_received').catch(() => []),
-        dbModule.fetchAll('final_arrival').catch(() => []),
         dbModule.fetchAll('material_inspection').catch(() => []),
         dbModule.fetchAll('mill_inspection_master').catch(() => []),
         supabase ? supabase.from('material_mismatch').select('*').then(res => res.data || []) : dbModule.fetchAll('material_mismatch').catch(() => []),
@@ -154,15 +146,7 @@ export default function MismatchCase({ onClose, variant = 'satta' }: { onClose?:
         supabase ? supabase.from('sms_sauda').select('*').then(res => res.data || []) : Promise.resolve([]),
       ]);
 
-      const faIndex = buildFinalArrivalIndex(faRows || []);
-      const inspMasterRows = [...(matInspRows || []), ...(millInspRows || [])].map((insp: any) => {
-        const { officialId, linkedTempNo, isFinalized } = resolveRecordOfficialArrivalId(insp, faIndex);
-        return {
-          ...insp,
-          mr_no: isFinalized ? officialId : (insp.mr_no || officialId),
-          arrival_no: linkedTempNo || insp.arrival_no || ''
-        };
-      });
+      const inspMasterRows = [...(matInspRows || []), ...(millInspRows || [])];
 
       const combinedSmsSaudas = [...smsSaudaDbRows];
 
@@ -184,10 +168,7 @@ export default function MismatchCase({ onClose, variant = 'satta' }: { onClose?:
           const mPo = String(i.mill_po_no || '').trim().toUpperCase();
           return (iPo && iPo === poNo) || (mPo && mPo === poNo);
         });
-        const matchingFa = (faRows || []).filter((f: any) => String(f.po_no || f.contract_no || '').trim().toUpperCase() === poNo);
-        const matchingUnfinalizedAmads = (amadRows || []).filter((a: any) =>
-          String(a.po_no || '').trim().toUpperCase() === poNo && !isArrivalFinalized(a, faIndex)
-        );
+        const matchingAmads = amadRows.filter((a: any) => String(a.po_no || '').trim().toUpperCase() === poNo);
         const poDetails = allDetailRecords.filter((d: any) => {
           const dPo = String(d.po_no || d.sauda_no || '').trim().toUpperCase();
           if (dPo && dPo === poNo) return true;
@@ -196,21 +177,12 @@ export default function MismatchCase({ onClose, variant = 'satta' }: { onClose?:
           return false;
         });
 
-        const latestInsp = matchingInspections[0] || matchingFa[0] || matchingUnfinalizedAmads[0] || null;
+        const latestInsp = matchingAmads[0] || matchingInspections[0] || null;
         if (!latestInsp) return;
 
-        // Final Arrival / Mill Inspection data always takes precedence over Temp Arrival once finalized
-        const mergedInspRaw = {
-          ...(matchingUnfinalizedAmads[0] || {}),
-          ...(matchingFa[0] || {}),
-          ...(matchingInspections[0] || {}),
-        };
-        const { officialId, linkedTempNo, isFinalized } = resolveRecordOfficialArrivalId(mergedInspRaw, faIndex);
-        const officialFaMr = matchingFa[0] ? extractFinalArrivalOfficialMr(matchingFa[0]) : '';
         const enrichedInsp = {
-          ...mergedInspRaw,
-          mr_no: (isFinalized ? officialId : '') || officialFaMr || mergedInspRaw.mr_no || officialId,
-          arrival_no: linkedTempNo || (matchingFa[0] ? extractFinalArrivalLinkedTemp(matchingFa[0]) : '') || mergedInspRaw.arrival_no || '',
+          ...(matchingInspections[0] || {}),
+          ...(matchingAmads[0] || {}),
         };
 
         const allLorryReceipts = [...matchingInspections];

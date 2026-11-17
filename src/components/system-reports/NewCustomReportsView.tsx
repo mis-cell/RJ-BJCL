@@ -20,16 +20,6 @@ import { exportToCSV } from '../../utils/exportHelpers';
 import { ReportFilterCriteria } from '../../services/systemReportEngine';
 import { calculateWeightTolerance } from '../../lib/weightTolerance';
 import { ExcessShortSettlementModal } from '../ExcessShortSettlementModal';
-import {
-  buildFinalArrivalIndex,
-  resolveOfficialArrivalId,
-  resolveRecordOfficialArrivalId,
-  getLinkedArrivalKeys,
-  normalizeArrivalToken,
-  isMrIdentifier,
-  extractFinalArrivalOfficialMr,
-  extractFinalArrivalLinkedTemp
-} from '../../utils/arrivalMrResolver';
 
 export type NewReportTab =
   | 'outstanding_po'
@@ -133,13 +123,28 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
             .trim()
             .toUpperCase();
 
-        const faIndex = buildFinalArrivalIndex(rawFa);
-
         const cleanLorryKey = (s: any) =>
           String(s || '')
             .trim()
             .toUpperCase()
             .replace(/[^A-Z0-9]/g, '');
+
+        const extractCoreDigits = (s: any) => {
+          const raw = String(s || '').trim().toUpperCase();
+          const withoutPrefix = raw
+            .replace(/^(MR|AR|AMAD|TEMP|FA|BJCL)[-\/\s]*/i, '')
+            .replace(/^20\d{2}-20\d{2}\//, '');
+          return withoutPrefix.replace(/[^0-9]/g, '').replace(/^0+/, '');
+        };
+
+        const toMillInspectionMrNo = (rawVal: any): string => {
+          const s = String(rawVal || '').trim();
+          if (!s) return '';
+          if (/^AR[-\/\s0-9]/i.test(s)) {
+            return s.replace(/^AR/i, 'MR');
+          }
+          return s;
+        };
 
         // =========================================================================
         // 1. Process Outstanding P.O List (P.Os NOT Received in Temporary Arrival)
@@ -238,11 +243,10 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
           }
         });
 
-        // Build detail weight sum per resolved official MR from mill_inspection_detail / material_inspection_details
+        // Build detail weight sum per MR from mill_inspection_detail
         const inspDetailWtByMr = new Map<string, number>();
         rawMillInspDetails.forEach((d: any) => {
-          const resolvedDetMr = resolveOfficialArrivalId(d.mr_no || d.arrival_no, faIndex) || d.mr_no || d.arrival_no;
-          const mrKey = normalizeArrivalToken(resolvedDetMr);
+          const mrKey = String(d.mr_no || '').trim().toUpperCase();
           if (!mrKey) return;
           const wtRaw = Number(d.receipt_gross_wt || d.challan_gross_wt || d.weight_mt || 0);
           if (wtRaw > 0) {
@@ -251,18 +255,17 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
           }
         });
 
-        // Deduplicate Mill Inspections strictly by resolved official MR No
+        // Deduplicate Mill Inspections by MR No
         const uniqueInspMap = new Map<string, any>();
         rawMatInsp.forEach((insp: any) => {
-          const { officialId, isFinalized } = resolveRecordOfficialArrivalId(insp, faIndex);
-          const mrFormatted = String(officialId || insp.mr_no || insp.arrival_no || '').trim();
-          if (!mrFormatted) return;
-          const mapKey = normalizeArrivalToken(mrFormatted);
+          const rawMr = String(insp.mr_no || insp.arrival_no || '').trim();
+          if (!rawMr) return;
+          const mrFormatted = toMillInspectionMrNo(rawMr);
+          const core = extractCoreDigits(mrFormatted);
+          const mapKey = core ? `CORE_${core}` : mrFormatted.toUpperCase();
           const existing = uniqueInspMap.get(mapKey);
-          const existingIsOfficial = existing ? isMrIdentifier(existing.resolvedMrNo || existing.mr_no) : false;
-          const newIsOfficial = isFinalized || isMrIdentifier(mrFormatted);
-          if (!existing || (!existingIsOfficial && newIsOfficial) || (existingIsOfficial === newIsOfficial && !existing.grid_details && insp.grid_details)) {
-            uniqueInspMap.set(mapKey, { ...existing, ...insp, resolvedMrNo: mrFormatted, mr_no: mrFormatted });
+          if (!existing || String(insp.mr_no || '').toUpperCase().startsWith('MR')) {
+            uniqueInspMap.set(mapKey, { ...existing, ...insp, resolvedMrNo: mrFormatted });
           }
         });
 
@@ -271,25 +274,30 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
         uniqueInspMap.forEach((insp: any) => {
           const mrNo = String(insp.resolvedMrNo || insp.mr_no || '').trim();
           if (!mrNo) return;
-          const mrLinkedKeys = new Set(getLinkedArrivalKeys(insp, faIndex));
-          mrLinkedKeys.add(normalizeArrivalToken(mrNo));
+          const mrDigits = extractCoreDigits(mrNo);
 
-          // Match Final Arrival & Temporary Arrival via linked keys (never digit-only)
+          // Match Final Arrival & Temporary Arrival for supplementary fields (PO No, Weight, Rate)
           const matchedFa = rawFa.find((f: any) => {
-            const fKeys = [f.final_arrival_no, f.mr_no, f.arrival_no, f.temporary_arrival_no].map(normalizeArrivalToken).filter(Boolean);
-            return fKeys.some(k => mrLinkedKeys.has(k));
+            if (String(f.mr_no || '').trim().toUpperCase() === mrNo.toUpperCase()) return true;
+            if (insp.arrival_no && String(f.final_arrival_no || f.arrival_no || f.temporary_arrival_no || '').trim().toUpperCase() === String(insp.arrival_no).trim().toUpperCase()) return true;
+            if (mrDigits && extractCoreDigits(f.mr_no || f.final_arrival_no || f.arrival_no) === mrDigits) return true;
+            return false;
           });
 
           const matchedTmr = rawTempArrivals.find((t: any) => {
-            const tKeys = [t.temporary_arrival_no, t.amad_no, t.arrival_no, t.mr_no].map(normalizeArrivalToken).filter(Boolean);
-            return tKeys.some(k => mrLinkedKeys.has(k));
+            const tNo = String(t.temporary_arrival_no || t.amad_no || t.arrival_no || '').trim();
+            if (insp.arrival_no && tNo.toUpperCase() === String(insp.arrival_no).trim().toUpperCase()) return true;
+            if (mrDigits && extractCoreDigits(tNo || t.mr_no) === mrDigits) return true;
+            return false;
           });
 
           // Check mr_settlement_master early so we can also resolve PO number if linked there
           const matchedSett = rawSettlements.find((s: any) => {
-            const sNorm = normalizeArrivalToken(s.mr_no || s.arrival_no);
-            const sResolved = normalizeArrivalToken(resolveOfficialArrivalId(s.mr_no || s.arrival_no, faIndex));
-            return Boolean((sNorm && mrLinkedKeys.has(sNorm)) || (sResolved && mrLinkedKeys.has(sResolved)));
+            const sMr = String(s.mr_no || s.arrival_no || '').trim().toUpperCase();
+            if (!sMr) return false;
+            if (sMr === mrNo.toUpperCase()) return true;
+            if (mrDigits && extractCoreDigits(sMr) === mrDigits) return true;
+            return false;
           });
 
           const candidatePoValues = [
@@ -339,9 +347,9 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
           // 1. Check Mismatch Status against this MR or PO
           const matchedMatMm = rawMatMismatches.filter((m: any) => {
             const mPo = cleanPoKey(m.po_no);
-            const mInsp = normalizeArrivalToken(resolveOfficialArrivalId(m.inspection_no || m.mr_no || m.arrival_no, faIndex) || m.inspection_no || m.mr_no || m.arrival_no);
+            const mInsp = String(m.inspection_no || m.mr_no || m.arrival_no || '').trim().toUpperCase();
             if (poKey && mPo && (mPo === poKey || (poSuffix.length >= 3 && mPo.endsWith(poSuffix)))) return true;
-            if (mInsp && mrLinkedKeys.has(mInsp)) return true;
+            if (mInsp && (mInsp === mrNo.toUpperCase() || (mrDigits && extractCoreDigits(mInsp) === mrDigits))) return true;
             return false;
           });
 
@@ -399,9 +407,12 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
           const matchedPayment = rawPayments.find((p: any) => {
             const pStatus = String(p.status || '').toLowerCase().trim();
             if (pStatus === 'cancelled' || pStatus === 'rejected') return false;
-            const pMr = normalizeArrivalToken(p.mr_no || p.arrival_no);
-            const pResolved = normalizeArrivalToken(resolveOfficialArrivalId(p.mr_no || p.arrival_no, faIndex));
-            return Boolean((pMr && mrLinkedKeys.has(pMr)) || (pResolved && mrLinkedKeys.has(pResolved)));
+            const pMr = String(p.mr_no || p.arrival_no || '').trim().toUpperCase();
+            if (!pMr) return false;
+            if (pMr === mrNo.toUpperCase()) return true;
+            if (insp.arrival_no && pMr === String(insp.arrival_no).trim().toUpperCase()) return true;
+            if (mrDigits && extractCoreDigits(pMr) === mrDigits) return true;
+            return false;
           });
 
           const paidFromPayment = matchedPayment
@@ -505,13 +516,9 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
         // =========================================================================
         const apmcRecords: any[] = [];
         rawSettlements.forEach((s: any) => {
-          const mrNo = String(resolveOfficialArrivalId(s.mr_no, faIndex) || s.mr_no || '').trim();
+          const mrNo = toMillInspectionMrNo(s.mr_no);
           if (!mrNo) return;
-          const sKeys = new Set(getLinkedArrivalKeys(s, faIndex));
-          const fa = rawFa.find((f: any) => {
-            const fKeys = [f.mr_no, f.final_arrival_no, f.arrival_no, f.temporary_arrival_no].map(normalizeArrivalToken).filter(Boolean);
-            return fKeys.some(k => sKeys.has(k));
-          }) || {};
+          const fa = rawFa.find((f: any) => f.mr_no === s.mr_no || f.final_arrival_no === s.mr_no) || {};
 
           const matVal = Number(s.val_material_value || s.summary_material_value) || 0;
           const challanApmc = Number(s.arival_apmc_fees) || Number(fa.arival_apmc_fees) || Number(fa.apmc_fees) || 0;
@@ -633,20 +640,13 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
           mrNoStr?: string,
           ...fallbackRecords: any[]
         ): number => {
-          const targetOfficial = resolveOfficialArrivalId(mrNoStr || miRecord?.mr_no || miRecord?.arrival_no, faIndex) || mrNoStr || miRecord?.mr_no || miRecord?.arrival_no;
-          const targetLinked = new Set<string>([
-            ...getLinkedArrivalKeys(miRecord || targetOfficial, faIndex),
-            ...getLinkedArrivalKeys(targetOfficial, faIndex),
-            normalizeArrivalToken(targetOfficial),
-            normalizeArrivalToken(mrNoStr)
-          ].filter(Boolean));
-
+          const coreDig = extractCoreDigits(mrNoStr || miRecord?.mr_no || miRecord?.arrival_no);
           const insp =
             miRecord ||
             rawMatInsp.find((m: any) => {
-              const mNorm = normalizeArrivalToken(m.mr_no);
-              const mRes = normalizeArrivalToken(resolveRecordOfficialArrivalId(m, faIndex).officialId);
-              return Boolean((mNorm && targetLinked.has(mNorm)) || (mRes && targetLinked.has(mRes)));
+              if (mrNoStr && String(m.mr_no || '').trim().toUpperCase() === mrNoStr.toUpperCase()) return true;
+              if (coreDig && extractCoreDigits(m.mr_no || m.arrival_no) === coreDig) return true;
+              return false;
             });
 
           if (insp) {
@@ -667,12 +667,10 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
                 if (Array.isArray(parsed)) gridItems = parsed;
               } catch (_) {}
             }
-            if (gridItems.length === 0 && targetLinked.size > 0) {
-              gridItems = rawMillInspDetails.filter((d: any) => {
-                const dNorm = normalizeArrivalToken(d.mr_no || d.arrival_no);
-                const dRes = normalizeArrivalToken(resolveOfficialArrivalId(d.mr_no || d.arrival_no, faIndex));
-                return Boolean((dNorm && targetLinked.has(dNorm)) || (dRes && targetLinked.has(dRes)));
-              });
+            if (gridItems.length === 0 && coreDig) {
+              gridItems = rawMillInspDetails.filter(
+                (d: any) => extractCoreDigits(d.mr_no) === coreDig
+              );
             }
 
             let sumGridFinalQtl = 0;
@@ -680,11 +678,7 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
               const seenSrl = new Set<string>();
               gridItems.forEach((it: any, idx: number) => {
                 if (!it || typeof it !== 'object') return;
-                if (it.mr_no && targetLinked.size > 0) {
-                  const itNorm = normalizeArrivalToken(it.mr_no);
-                  const itRes = normalizeArrivalToken(resolveOfficialArrivalId(it.mr_no, faIndex));
-                  if (!targetLinked.has(itNorm) && !targetLinked.has(itRes)) return;
-                }
+                if (coreDig && it.mr_no && extractCoreDigits(it.mr_no) !== coreDig) return;
                 const itemFinalQtl = toQtlFromRawWt(it.final_receipt_wt ?? it.reduced_weight ?? it.netto_pnto ?? 0);
                 if (itemFinalQtl <= 0) return;
                 const srl =
@@ -740,50 +734,42 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
           sett?: any;
         }) => {
           const { tmr, fa, mi, sett } = params;
+          const isMrSeries = (v: any) => Boolean(v && String(v).trim().toUpperCase().startsWith('MR'));
 
-          const faOfficial = fa ? extractFinalArrivalOfficialMr(fa) : '';
-          const miOfficial = mi ? resolveRecordOfficialArrivalId(mi, faIndex).officialId : '';
-          const settOfficial = sett ? resolveOfficialArrivalId(sett.mr_no, faIndex) : '';
-          const tmrOfficial = tmr ? resolveRecordOfficialArrivalId(tmr, faIndex).officialId : '';
-
+          const rawMrCandidates = [mi?.mr_no, sett?.mr_no, fa?.mr_no, tmr?.mr_no];
+          const mrSeriesMatch = rawMrCandidates.find(isMrSeries);
           const tempArrivalNo = String(
-            (fa ? extractFinalArrivalLinkedTemp(fa) : '') ||
             tmr?.temporary_arrival_no ||
             tmr?.amad_no ||
             tmr?.arrival_no ||
             fa?.temporary_arrival_no ||
             fa?.arrival_no ||
+            fa?.final_arrival_no ||
             mi?.arrival_no ||
             sett?.arrival_no ||
             ''
           ).trim();
 
-          const rawMrCandidates = [faOfficial, miOfficial, settOfficial, tmrOfficial, mi?.mr_no, sett?.mr_no, fa?.mr_no, fa?.final_arrival_no, tmr?.mr_no];
-          const mrSeriesMatch = rawMrCandidates.find(isMrIdentifier);
-          let resolvedMrNo = String(mrSeriesMatch || faOfficial || miOfficial || settOfficial || tmrOfficial || tempArrivalNo || '').trim();
+          let resolvedMrNo = String(mrSeriesMatch || mi?.mr_no || sett?.mr_no || fa?.mr_no || tempArrivalNo || '').trim();
           if (!resolvedMrNo) return;
 
-          const candidateLinkedKeys = new Set<string>([
-            ...getLinkedArrivalKeys(resolvedMrNo, faIndex),
-            ...(tempArrivalNo ? getLinkedArrivalKeys(tempArrivalNo, faIndex) : []),
-            normalizeArrivalToken(resolvedMrNo)
-          ].filter(Boolean));
-
+          // Match against Mill Inspection / Settlement by core digits if not already MR series
+          const coreDigits = extractCoreDigits(resolvedMrNo);
           let resolvedMi = mi;
-          if (!resolvedMi) {
-            resolvedMi = rawMatInsp.find((m: any) => {
-              const mNorm = normalizeArrivalToken(m.mr_no);
-              const mRes = normalizeArrivalToken(resolveRecordOfficialArrivalId(m, faIndex).officialId);
-              return Boolean((mNorm && candidateLinkedKeys.has(mNorm)) || (mRes && candidateLinkedKeys.has(mRes)));
-            });
+          if (coreDigits) {
+            const matchedInsp = rawMatInsp.find((m: any) => isMrSeries(m.mr_no) && extractCoreDigits(m.mr_no) === coreDigits);
+            const matchedSett = rawSettlements.find((s: any) => isMrSeries(s.mr_no) && extractCoreDigits(s.mr_no) === coreDigits);
+            if (!resolvedMi && matchedInsp) resolvedMi = matchedInsp;
+            if (!isMrSeries(resolvedMrNo)) {
+              if (matchedInsp?.mr_no) resolvedMrNo = matchedInsp.mr_no;
+              else if (matchedSett?.mr_no) resolvedMrNo = matchedSett.mr_no;
+            }
           }
 
-          if (!isMrIdentifier(resolvedMrNo) && resolvedMi) {
-            const miResId = resolveRecordOfficialArrivalId(resolvedMi, faIndex).officialId;
-            if (isMrIdentifier(miResId)) resolvedMrNo = miResId;
-          }
+          // Convert any remaining AR prefix to Mill Inspection Number (MR prefix)
+          resolvedMrNo = toMillInspectionMrNo(resolvedMrNo);
 
-          const dedupKey = normalizeArrivalToken(resolveOfficialArrivalId(resolvedMrNo, faIndex) || resolvedMrNo);
+          const dedupKey = coreDigits ? `CORE_${coreDigits}` : resolvedMrNo.toUpperCase();
           if (seenDeliveryKeys.has(dedupKey)) return;
 
           const rawPoNo = String(
@@ -893,28 +879,30 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
 
         rawTempArrivals.forEach((tmr: any) => {
           const tempNo = String(tmr.temporary_arrival_no || tmr.amad_no || tmr.arrival_no || '').trim();
-          const tmrLinked = new Set(getLinkedArrivalKeys(tmr, faIndex));
-          if (tempNo) tmrLinked.add(normalizeArrivalToken(tempNo));
+          const tmrDigits = extractCoreDigits(tempNo || tmr.mr_no);
           const tmrPo = cleanPoKey(tmr.po_no);
           const tmrLorry = cleanLorryKey(tmr.lorry_number || tmr.lorry_no || tmr.vehicle_no);
 
           const matchedFa = rawFa.find((f: any) => {
-            const fKeys = [f.temporary_arrival_no, f.arrival_no, f.final_arrival_no, f.mr_no].map(normalizeArrivalToken).filter(Boolean);
-            if (fKeys.some(k => tmrLinked.has(k))) return true;
+            const fTemp = String(f.temporary_arrival_no || f.arrival_no || f.final_arrival_no || '').trim();
+            if (tempNo && fTemp.toUpperCase() === tempNo.toUpperCase()) return true;
+            if (tmrDigits && extractCoreDigits(f.mr_no || fTemp) === tmrDigits) return true;
             if (tmrPo && tmrLorry.length >= 4 && cleanPoKey(f.po_no) === tmrPo && cleanLorryKey(f.lorry_number || f.lorry_no) === tmrLorry) return true;
             return false;
           });
 
           const matchedMi = rawMatInsp.find((m: any) => {
-            const mKeys = [m.mr_no, m.arrival_no, m.ref_arrival_no, m.final_arrival_no].map(normalizeArrivalToken).filter(Boolean);
-            if (mKeys.some(k => tmrLinked.has(k))) return true;
+            const mArr = String(m.arrival_no || m.ref_arrival_no || '').trim();
+            if (tempNo && mArr.toUpperCase() === tempNo.toUpperCase()) return true;
+            if (tmrDigits && extractCoreDigits(m.mr_no || mArr) === tmrDigits) return true;
             if (tmrPo && tmrLorry.length >= 4 && cleanPoKey(m.po_no) === tmrPo && cleanLorryKey(m.lorry_number || m.lorry_no) === tmrLorry) return true;
             return false;
           });
 
           const matchedSett = rawSettlements.find((s: any) => {
-            const sKeys = [s.mr_no, s.arrival_no].map(normalizeArrivalToken).filter(Boolean);
-            if (sKeys.some(k => tmrLinked.has(k))) return true;
+            const sArr = String(s.arrival_no || '').trim();
+            if (tempNo && sArr.toUpperCase() === tempNo.toUpperCase()) return true;
+            if (tmrDigits && extractCoreDigits(s.mr_no || sArr) === tmrDigits) return true;
             if (tmrPo && tmrLorry.length >= 4 && cleanPoKey(s.po_no) === tmrPo && cleanLorryKey(s.lorry_number) === tmrLorry) return true;
             return false;
           });
@@ -923,15 +911,9 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
         });
 
         rawFa.forEach((fa: any) => {
-          const faKeys = new Set(getLinkedArrivalKeys(fa, faIndex));
-          const matchedMi = rawMatInsp.find((m: any) => {
-            const mKeys = [m.mr_no, m.arrival_no, m.final_arrival_no].map(normalizeArrivalToken).filter(Boolean);
-            return mKeys.some(k => faKeys.has(k));
-          });
-          const matchedSett = rawSettlements.find((s: any) => {
-            const sKeys = [s.mr_no, s.arrival_no].map(normalizeArrivalToken).filter(Boolean);
-            return sKeys.some(k => faKeys.has(k));
-          });
+          const faDigits = extractCoreDigits(fa.mr_no || fa.final_arrival_no || fa.arrival_no);
+          const matchedMi = rawMatInsp.find((m: any) => faDigits && extractCoreDigits(m.mr_no || m.arrival_no) === faDigits);
+          const matchedSett = rawSettlements.find((s: any) => faDigits && extractCoreDigits(s.mr_no || s.arrival_no) === faDigits);
           registerDeliveryClaimCandidate({ fa, mi: matchedMi, sett: matchedSett });
         });
 
@@ -993,6 +975,11 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
         const extractMrSeq = (mr: any): number => {
           const m = String(mr || '').trim().match(/(\d+)$/);
           return m ? parseInt(m[1], 10) : 0;
+        };
+
+        const canonicalMrKey = (mr: any): string => {
+          const seq = extractMrSeq(mr);
+          return seq > 0 ? `MR_${seq}` : String(mr || '').trim().toUpperCase();
         };
 
         // Index sauda_check_point and purchase_master by PO key
@@ -1070,17 +1057,14 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
 
           const uniqueByMr = new Map<string, any>();
           matchedInsps.forEach((insp: any) => {
-            const { officialId, isFinalized } = resolveRecordOfficialArrivalId(insp, faIndex);
-            const rawMr = String(officialId || insp.mr_no || insp.arrival_no || '').trim();
+            const rawMr = String(insp.mr_no || insp.arrival_no || '').trim();
             if (!rawMr || rawMr.toUpperCase() === 'NO' || rawMr.toUpperCase() === 'N/A' || rawMr === '-') return;
-            const mKey = normalizeArrivalToken(rawMr);
+            const mKey = canonicalMrKey(rawMr);
             const existing = uniqueByMr.get(mKey);
             const hasGrid = Boolean(insp.grid_details || insp.details);
             const existingHasGrid = Boolean(existing?.grid_details || existing?.details);
-            const existingIsOfficial = existing ? isMrIdentifier(existing.mr_no) : false;
-            const newIsOfficial = isFinalized || isMrIdentifier(rawMr);
-            if (!existing || (!existingIsOfficial && newIsOfficial) || (existingIsOfficial === newIsOfficial && !existingHasGrid && hasGrid)) {
-              uniqueByMr.set(mKey, { ...insp, mr_no: rawMr });
+            if (!existing || (!existingHasGrid && hasGrid)) {
+              uniqueByMr.set(mKey, insp);
             }
           });
 
@@ -1117,16 +1101,8 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
             const isMulti = sortedInsps.length > 1;
             sortedInsps.forEach((insp: any, idx: number) => {
               const isLast = idx === sortedInsps.length - 1;
-              const mrNoStr = String(resolveRecordOfficialArrivalId(insp, faIndex).officialId || insp.mr_no || insp.arrival_no || '').trim();
-              const mrLinkedKeys = new Set(getLinkedArrivalKeys(insp, faIndex));
-              mrLinkedKeys.add(normalizeArrivalToken(mrNoStr));
-              const matchesThisMr = (val: any): boolean => {
-                const n = normalizeArrivalToken(val);
-                if (!n) return false;
-                if (mrLinkedKeys.has(n)) return true;
-                const res = normalizeArrivalToken(resolveOfficialArrivalId(val, faIndex));
-                return Boolean(res && mrLinkedKeys.has(res));
-              };
+              const mrNoStr = toMillInspectionMrNo(insp.mr_no || insp.arrival_no || '');
+              const mKey = canonicalMrKey(mrNoStr);
               const mrDateStr = normalizeDateYmd(insp.arrival_date || insp.mr_date || insp.inspection_date || insp.date || insp.created_at || '');
 
               let mrGrossMt = toMtFromRawWt(insp.challan_gross_wt ?? insp.receipt_gross_wt ?? insp.gross_weight);
@@ -1153,8 +1129,8 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
               const matchingDetails = embeddedGrid.length > 0
                 ? embeddedGrid
                 : rawMillInspDetails.filter((d: any) => {
-                    const dMr = String(d.mr_no || d.arrival_no || '').trim();
-                    return Boolean(dMr && matchesThisMr(dMr));
+                    const dMr = String(d.mr_no || '').trim();
+                    return dMr && canonicalMrKey(dMr) === mKey;
                   });
 
               if (Array.isArray(matchingDetails) && matchingDetails.length > 0) {
@@ -1168,7 +1144,7 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
                 matchingDetails.forEach((d: any, itIdx: number) => {
                   if (!d || typeof d !== 'object') return;
                   const itMr = String(d.mr_no || '').trim();
-                  if (itMr && !matchesThisMr(itMr)) return;
+                  if (itMr && canonicalMrKey(itMr) !== mKey) return;
                   const gRaw = Number(d.challan_gross_wt ?? d.receipt_gross_wt ?? d.gross_weight_batch ?? d.gross_weight ?? 0);
                   const nRaw = Number(d.final_receipt_wt ?? d.reduced_weight ?? d.netto_pnto ?? 0);
                   if (gRaw <= 0 && nRaw <= 0) return;

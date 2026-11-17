@@ -1,10 +1,5 @@
 import React from 'react';
 import { X, Truck } from 'lucide-react';
-import {
-  buildFinalArrivalIndex,
-  getLinkedArrivalKeys,
-  mergeArrivalsFinalFirst,
-} from '../../utils/arrivalMrResolver';
 
 interface PoConsignmentModalProps {
   po: any;
@@ -27,25 +22,11 @@ export const PoConsignmentModal: React.FC<PoConsignmentModalProps> = ({
   const exactMatch = (po1: any, po2: any) => String(po1 || '').trim().toUpperCase() === String(po2 || '').trim().toUpperCase();
   const linkedTemps = allTempArrivals.filter((a: any) => exactMatch(a.po_no, targetPo));
   const linkedFinals = allFinalArrivals.filter((f: any) => exactMatch(f.po_no, targetPo));
-  const faIndex = buildFinalArrivalIndex(allFinalArrivals);
-  const consolidatedArrivals = mergeArrivalsFinalFirst(linkedTemps, linkedFinals, faIndex);
-  const unfinalizedTemps = consolidatedArrivals.filter((a) => !a._isFinalized);
   const linkedInsps = allInspections.filter((i: any) => exactMatch(i.po_no, targetPo));
-
-  const findLinkedInspection = (arrRow: any) => {
-    const arrKeys = new Set(getLinkedArrivalKeys(arrRow, faIndex));
-    return allInspections.find((i: any) => {
-      const iKeys = getLinkedArrivalKeys(i, faIndex);
-      return iKeys.some((k) => arrKeys.has(k));
-    }) || linkedInsps.find((i: any) => {
-      const iKeys = getLinkedArrivalKeys(i, faIndex);
-      return iKeys.some((k) => arrKeys.has(k));
-    });
-  };
 
   const contractMt = Number(po.total_contract_mt) || 0;
   const totalFinalMt = linkedFinals.reduce((sum: number, f: any) => sum + (Number(f.weight_qtl || f.weight || 0) / 10), 0);
-  const totalPendingTempMt = unfinalizedTemps.reduce((sum: number, t: any) => sum + (Number(t.weight_qtl || t.weight || 0) / 10), 0);
+  const totalTempMt = linkedTemps.reduce((sum: number, t: any) => sum + (Number(t.weight_qtl || t.weight || 0) / 10), 0);
 
   return (
     <div className="fixed inset-0 z-[1100] bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-4">
@@ -83,8 +64,8 @@ export const PoConsignmentModal: React.FC<PoConsignmentModalProps> = ({
             <span className="font-bold text-emerald-700 text-sm">{totalFinalMt.toFixed(3)} MT</span>
           </div>
           <div>
-            <span className="text-slate-500 block">Pending Gate Inward (Unfinalized)</span>
-            <span className="font-bold text-blue-700 text-sm">{totalPendingTempMt.toFixed(3)} MT</span>
+            <span className="text-slate-500 block">Gate Inward Weight</span>
+            <span className="font-bold text-blue-700 text-sm">{totalTempMt.toFixed(3)} MT</span>
           </div>
         </div>
 
@@ -96,7 +77,7 @@ export const PoConsignmentModal: React.FC<PoConsignmentModalProps> = ({
               <thead className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200">
                 <tr>
                   <th className="p-2">Stage</th>
-                  <th className="p-2">M.R. / Arrival No</th>
+                  <th className="p-2">Arrival/MR No</th>
                   <th className="p-2">Lorry No</th>
                   <th className="p-2">Date</th>
                   <th className="p-2 text-right">Net Wt (MT)</th>
@@ -104,28 +85,20 @@ export const PoConsignmentModal: React.FC<PoConsignmentModalProps> = ({
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {consolidatedArrivals.map((row: any, idx: number) => {
-                  const officialNo = row._officialId || row.mr_no || row.final_arrival_no || row.arrival_no || row.temporary_arrival_no || 'N/A';
-                  const linkedTemp = row._linkedTempNo || row.temporary_arrival_no || '';
-                  const insp = findLinkedInspection(row);
-                  const wt = (Number(row.weight_qtl || row.weight || row.netto_mt || 0) / 10).toFixed(3);
+                {linkedTemps.map((t: any, idx: number) => {
+                  const mrNo = t.temporary_arrival_no || t.amad_no || 'N/A';
+                  const insp = linkedInsps.find((i: any) => i.temporary_arrival_no === mrNo || i.po_no === targetPo);
+                  const wt = (Number(t.weight_qtl || t.weight || t.netto_mt || 0) / 10).toFixed(3);
                   return (
-                    <tr key={`consign_${officialNo}_${idx}`} className={row._isFinalized ? "hover:bg-slate-50 bg-emerald-50/30" : "hover:bg-slate-50"}>
-                      <td className={`p-2 font-semibold ${row._isFinalized ? 'text-emerald-700' : 'text-blue-700'}`}>
-                        {row._isFinalized ? 'Final MR Inward' : 'Gate Arrival'}
-                      </td>
-                      <td className="p-2 font-mono font-bold">
-                        <span>{officialNo}</span>
-                        {row._isFinalized && linkedTemp && linkedTemp.toUpperCase() !== officialNo.toUpperCase() && (
-                          <span className="ml-1.5 text-[10px] font-normal text-slate-500">(Temp: {linkedTemp})</span>
-                        )}
-                      </td>
-                      <td className="p-2 font-mono">{row.lorry_number || 'N/A'}</td>
-                      <td className="p-2">{row.final_arrival_date || row.arrival_date || row.date || 'N/A'}</td>
-                      <td className={`p-2 text-right font-mono font-bold ${row._isFinalized ? 'text-emerald-800' : ''}`}>{wt}</td>
+                    <tr key={`temp_${idx}`} className="hover:bg-slate-50">
+                      <td className="p-2 font-semibold text-blue-700">Gate Arrival</td>
+                      <td className="p-2 font-mono">{mrNo}</td>
+                      <td className="p-2 font-mono">{t.lorry_number || 'N/A'}</td>
+                      <td className="p-2">{t.arrival_date || t.date || 'N/A'}</td>
+                      <td className="p-2 text-right font-mono font-bold">{wt}</td>
                       <td className="p-2">
                         {insp ? (
-                          <span className="text-emerald-700 font-bold">Completed</span>
+                          <span className="text-emerald-700 font-bold">Passed</span>
                         ) : (
                           <span className="text-amber-600 font-medium">Pending Inspection</span>
                         )}
@@ -133,7 +106,22 @@ export const PoConsignmentModal: React.FC<PoConsignmentModalProps> = ({
                     </tr>
                   );
                 })}
-                {consolidatedArrivals.length === 0 && (
+                {linkedFinals.map((f: any, idx: number) => {
+                  const wt = (Number(f.weight_qtl || f.weight || 0) / 10).toFixed(3);
+                  return (
+                    <tr key={`final_${idx}`} className="hover:bg-slate-50 bg-emerald-50/30">
+                      <td className="p-2 font-semibold text-emerald-700">Final MR Inward</td>
+                      <td className="p-2 font-mono font-bold">{f.arrival_no || f.mr_no || 'N/A'}</td>
+                      <td className="p-2 font-mono">{f.lorry_number || 'N/A'}</td>
+                      <td className="p-2">{f.arrival_date || f.date || 'N/A'}</td>
+                      <td className="p-2 text-right font-mono font-bold text-emerald-800">{wt}</td>
+                      <td className="p-2">
+                        <span className="text-emerald-700 font-bold">Completed</span>
+                      </td>
+                    </tr>
+                  );
+                })}
+                {linkedTemps.length === 0 && linkedFinals.length === 0 && (
                   <tr>
                     <td colSpan={6} className="p-4 text-center text-slate-400 italic">
                       No lorry inward consignments registered for this Purchase Order yet.

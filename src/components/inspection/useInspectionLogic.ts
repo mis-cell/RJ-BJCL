@@ -29,15 +29,6 @@ import {
   saveInspectionRecordToDb,
   deleteInspectionRecordFromDb,
 } from "./inspectionSaveService";
-import {
-  buildFinalArrivalIndex,
-  extractFinalArrivalOfficialMr,
-  getLinkedArrivalKeys,
-  isArrivalFinalized,
-  isMrIdentifier,
-  normalizeArrivalToken,
-  resolveOfficialArrivalId,
-} from "../../utils/arrivalMrResolver";
 
 export function useInspectionLogic() {
   const [records, setRecords] = useState<InspectionMasterRecord[]>([]);
@@ -434,37 +425,31 @@ export function useInspectionLogic() {
               inspectionList = [...directMi.data];
             }
           }
+          if (mimRes?.data && Array.isArray(mimRes.data)) {
+            const existingKeys = new Set(inspectionList.map(r => (r.mr_no || r.arrival_no || "").trim().toUpperCase()).filter(Boolean));
+            mimRes.data.forEach((r: any) => {
+              const k = (r.mr_no || r.arrival_no || "").trim().toUpperCase();
+              if (k && !existingKeys.has(k)) {
+                inspectionList.push(r);
+                existingKeys.add(k);
+              }
+            });
+          }
           if (faRes.data && Array.isArray(faRes.data)) {
             faList = [...faRes.data];
           }
-          const faBridge = buildFinalArrivalIndex(faList);
           if (tmrRes?.data && Array.isArray(tmrRes.data)) {
+            const existingFaNos = new Set(faList.map(f => (f.final_arrival_no || f.temporary_arrival_no || f.arrival_no || '').trim().toUpperCase()).filter(Boolean));
             tmrRes.data.forEach((t: any) => {
-              if (isArrivalFinalized(t, faBridge)) return;
-              const tNo = normalizeArrivalToken(t.temporary_arrival_no || t.arrival_no || t.amad_no);
-              if (tNo && !faBridge.allFinalKeysSet.has(tNo)) {
+              const tNo = (t.temporary_arrival_no || t.arrival_no || '').trim().toUpperCase();
+              if (tNo && !existingFaNos.has(tNo)) {
                 faList.push({
                   ...t,
                   final_arrival_no: t.temporary_arrival_no || t.arrival_no,
                   arrival_no: t.temporary_arrival_no || t.arrival_no,
                   arrival_date: t.date || t.temporary_arrival_date
                 });
-                faBridge.allFinalKeysSet.add(tNo);
-              }
-            });
-          }
-          if (mimRes?.data && Array.isArray(mimRes.data)) {
-            const existingKeys = new Set(
-              inspectionList
-                .map(r => normalizeArrivalToken(resolveOfficialArrivalId(r.mr_no || r.arrival_no || "", faBridge)))
-                .filter(Boolean)
-            );
-            mimRes.data.forEach((r: any) => {
-              const resolved = resolveOfficialArrivalId(r.mr_no || r.arrival_no || "", faBridge);
-              const k = normalizeArrivalToken(resolved);
-              if (k && !existingKeys.has(k)) {
-                inspectionList.push(isMrIdentifier(resolved) ? { ...r, mr_no: resolved } : r);
-                existingKeys.add(k);
+                existingFaNos.add(tNo);
               }
             });
           }
@@ -486,8 +471,8 @@ export function useInspectionLogic() {
 
           if (dedData && Array.isArray(dedData)) {
             dedData.forEach((d: any) => {
-              const k1 = normalizeArrivalToken(resolveOfficialArrivalId(d.mr_no || "", faBridge));
-              const k2 = normalizeArrivalToken(resolveOfficialArrivalId(d.arrival_no || "", faBridge));
+              const k1 = (d.mr_no || "").trim().toUpperCase();
+              const k2 = (d.arrival_no || "").trim().toUpperCase();
               const row: DeductionRow = {
                 id: d.id ? String(d.id) : String(Math.random()),
                 deduction_type: d.deduction_type || "",
@@ -514,30 +499,16 @@ export function useInspectionLogic() {
       }
 
       setFinalArrivalList(faList);
-      const finalBridge = buildFinalArrivalIndex(faList);
 
       const map = new Map<string, InspectionMasterRecord>();
       const secondaryMap = new Map<string, InspectionMasterRecord>();
-      inspectionList.forEach(rawRec => {
-        const resolvedMr = resolveOfficialArrivalId(rawRec.mr_no || rawRec.arrival_no || "", finalBridge);
-        const rec: any = isMrIdentifier(resolvedMr)
-          ? {
-              ...rawRec,
-              mr_no: resolvedMr,
-              arrival_no: (!rawRec.arrival_no || normalizeArrivalToken(rawRec.arrival_no) === normalizeArrivalToken(finalBridge.mrToRecord.get(normalizeArrivalToken(resolvedMr))?.temporary_arrival_no))
-                ? resolvedMr
-                : rawRec.arrival_no,
-              temporary_arrival_no: rawRec.temporary_arrival_no || finalBridge.mrToRecord.get(normalizeArrivalToken(resolvedMr))?.temporary_arrival_no || (normalizeArrivalToken(rawRec.mr_no) !== normalizeArrivalToken(resolvedMr) ? rawRec.mr_no : undefined),
-            }
-          : { ...rawRec };
-
-        const k = normalizeArrivalToken(rec.mr_no || rec.arrival_no || "");
-        if (k && !map.has(k)) {
-          map.set(k, rec);
-        }
-        getLinkedArrivalKeys(rec, finalBridge).forEach(alias => {
-          if (!secondaryMap.has(alias)) secondaryMap.set(alias, rec);
-        });
+      inspectionList.forEach(rec => {
+        const k = (rec.mr_no || rec.arrival_no || "").trim().toUpperCase();
+        if (k) map.set(k, rec);
+        const mrK = (rec.mr_no || "").trim().toUpperCase();
+        const arrK = (rec.arrival_no || "").trim().toUpperCase();
+        if (mrK) secondaryMap.set(mrK, rec);
+        if (arrK) secondaryMap.set(arrK, rec);
       });
 
       const isBlankPo = (val: any) => {
@@ -546,24 +517,15 @@ export function useInspectionLogic() {
       };
 
       faList.forEach(fa => {
-        const officialFaMr = extractFinalArrivalOfficialMr(fa);
-        const faKeys = getLinkedArrivalKeys(fa, finalBridge);
-        let existing: InspectionMasterRecord | undefined;
-        for (const fk of faKeys) {
-          existing = map.get(fk) || secondaryMap.get(fk);
-          if (existing) break;
-        }
+        const mrKey = (fa.mr_no || "").trim().toUpperCase();
+        const arrKey = (fa.final_arrival_no || fa.arrival_no || "").trim().toUpperCase();
+        const tempKey = (fa.temporary_arrival_no || fa.amad_no || "").trim().toUpperCase();
+        const existing =
+          (mrKey && (map.get(mrKey) || secondaryMap.get(mrKey))) ||
+          (arrKey && (map.get(arrKey) || secondaryMap.get(arrKey))) ||
+          (tempKey && (map.get(tempKey) || secondaryMap.get(tempKey)));
 
         if (existing) {
-          if (officialFaMr && isMrIdentifier(officialFaMr)) {
-            existing.mr_no = officialFaMr;
-            if (!existing.arrival_no || normalizeArrivalToken(existing.arrival_no) === normalizeArrivalToken(fa.temporary_arrival_no)) {
-              existing.arrival_no = officialFaMr;
-            }
-            if (fa.temporary_arrival_no && !(existing as any).temporary_arrival_no) {
-              (existing as any).temporary_arrival_no = fa.temporary_arrival_no;
-            }
-          }
           if (isBlankPo(existing.po_no) && !isBlankPo(fa.po_no)) existing.po_no = fa.po_no;
           if (!existing.po_date && (fa.po_date || fa.date)) existing.po_date = fa.po_date || fa.date;
           if (!existing.supplier_name && (fa.supplier || fa.challan_supplier)) existing.supplier_name = fa.supplier || fa.challan_supplier;
@@ -1073,12 +1035,7 @@ export function useInspectionLogic() {
 
   const populateFromFinalArrival = async (fa: any) => {
     try {
-      const bridge = buildFinalArrivalIndex(finalArrivalList);
-      const officialFromFa = extractFinalArrivalOfficialMr(fa);
-      const arrNo = resolveOfficialArrivalId(
-        officialFromFa || fa.mr_no || fa.final_arrival_no || fa.arrival_no || fa.temporary_arrival_no || "",
-        bridge
-      );
+      const arrNo = fa.final_arrival_no || fa.arrival_no || fa.temporary_arrival_no || fa.mr_no || "";
       const isLoose = (fa.unit_name || fa.unit_code || fa.unit || "").toString().trim().toUpperCase().includes("LOOSE");
       const resolvedUnit = isLoose ? "LOOSE" : (fa.unit_name || fa.unit || "BALES");
       const resolvedArea = fa.arrival_area_name || fa.area || fa.arrival_area || "";
@@ -2202,16 +2159,11 @@ export function useInspectionLogic() {
     document.body.removeChild(link);
   };
 
-  const inspectionBridge = useMemo(() => buildFinalArrivalIndex(finalArrivalList), [finalArrivalList]);
-
   const filteredRecords = records.filter(r => {
     const query = searchQuery.toLowerCase();
-    const linkedKeysLower = getLinkedArrivalKeys(r, inspectionBridge).map(k => k.toLowerCase());
     const matchesQuery =
       (r.mr_no || "").toLowerCase().includes(query) ||
       (r.arrival_no || "").toLowerCase().includes(query) ||
-      ((r as any).temporary_arrival_no || "").toLowerCase().includes(query) ||
-      linkedKeysLower.some(k => k.includes(query)) ||
       (r.po_no || "").toLowerCase().includes(query) ||
       (r.supplier_name || "").toLowerCase().includes(query) ||
       (r.broker_name || "").toLowerCase().includes(query) ||
@@ -2272,16 +2224,9 @@ export function useInspectionLogic() {
   const totalDeductions = activeDataset.reduce((acc, r) => acc + (Number(r.deduction_amount) || 0), 0);
 
   const pendingArrivalList = useMemo(() => {
-    const inspectedKeySet = new Set<string>();
-    records.forEach((r) => {
-      getLinkedArrivalKeys(r, inspectionBridge).forEach((k) => inspectedKeySet.add(k));
-    });
-
     return finalArrivalList.filter(fa => {
-      const faKeys = getLinkedArrivalKeys(fa, inspectionBridge);
-      if (faKeys.some(k => inspectedKeySet.has(k))) return false;
-
       const normalize = (s: any) => String(s || "").trim().toLowerCase().replace(/^#/, '');
+
       const faNo = normalize(fa.final_arrival_no || fa.arrival_no);
       const faMrNo = normalize(fa.mr_no);
       const faId = normalize(fa.final_arrival_id);
@@ -2309,7 +2254,7 @@ export function useInspectionLogic() {
 
       return !isAlreadyInspected;
     });
-  }, [finalArrivalList, records, inspectionBridge]);
+  }, [finalArrivalList, records]);
 
   return {
     records,
