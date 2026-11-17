@@ -204,7 +204,7 @@ const TABLE_UNIQUE_KEYS: Record<string, string[]> = {
   sauda_check_point: ['po_id', 'po_no'],
   purchase_master: ['po_id', 'po_no'],
   po_archive: ['po_id', 'po_no'],
-  temporary_material_received: ['amad_id'],
+  temporary_material_received: ['amad_id', 'temporary_arrival_no'],
   issue_master: ['amad_id', 'amad_no'],
   final_arrival: ['final_arrival_id', 'final_arrival_no', 'mr_no'],
   mr_archive: ['final_arrival_id', 'final_arrival_no', 'mr_no'],
@@ -297,6 +297,515 @@ async function ensureDatabaseIntegrity() {
   } catch (_) {}
 
   await ensureAgencyMasterOneTimeImport().catch(() => {});
+  await ensureDuplicateClubbingCleanupOnce().catch(() => {});
+}
+
+export async function cleanupDuplicateClubbingAndStubRows(): Promise<{
+  success: boolean;
+  deleted: Record<string, number>;
+}> {
+  const deleted: Record<string, number> = {
+    mill_inspection_master: 0,
+    material_inspection: 0,
+    inspection_master: 0,
+    final_arrival: 0,
+    temporary_material_received: 0,
+    clubbed_pomr: 0,
+  };
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const tableExists = async (tbl: string): Promise<boolean> => {
+      const r = await client.query(
+        `SELECT to_regclass($1) IS NOT NULL AS exists_flag`,
+        [`public.${tbl}`]
+      );
+      return Boolean(r.rows?.[0]?.exists_flag);
+    };
+
+    const getCols = async (tbl: string): Promise<Set<string>> => {
+      const r = await client.query(
+        `SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = $1`,
+        [tbl]
+      );
+      return new Set<string>((r.rows || []).map((x: any) => String(x.column_name)));
+    };
+
+    const runSavepoint = async <T = any>(sp: string, fn: () => Promise<T>): Promise<T | null> => {
+      await client.query(`SAVEPOINT "${sp}"`);
+      try {
+        const res = await fn();
+        await client.query(`RELEASE SAVEPOINT "${sp}"`);
+        return res;
+      } catch (e: any) {
+        await client.query(`ROLLBACK TO SAVEPOINT "${sp}"`).catch(() => {});
+        await client.query(`RELEASE SAVEPOINT "${sp}"`).catch(() => {});
+        console.warn(`[DB Deduplication step ${sp} notice]:`, e?.message || e);
+        return null;
+      }
+    };
+
+    // 1. Clean Mill Inspection tables (mill_inspection_master, material_inspection, inspection_master)
+    for (const inspTable of ['mill_inspection_master', 'material_inspection', 'inspection_master']) {
+      if (!(await tableExists(inspTable))) continue;
+      const cols = await getCols(inspTable);
+
+      const makeInspStubCond = (p: string): string => {
+        const identityParts = ['supplier_name', 'supplier', 'lorry_number']
+          .filter((c) => cols.has(c))
+          .map((c) => `NULLIF(TRIM(${p}"${c}"), '')`);
+        const nullChecks = ['date', 'mr_date', 'arrival_date', 'actual_moisture', 'claim_moisture', 'grid_details', 'details']
+          .filter((c) => cols.has(c))
+          .map((c) => `${p}"${c}" IS NULL`);
+
+        if (identityParts.length === 0 || nullChecks.length === 0) {
+          return 'FALSE';
+        }
+        return `
+          COALESCE(${identityParts.join(', ')}) IS NULL
+          AND ${nullChecks.join(' AND ')}
+        `;
+      };
+
+      // Propagate po_no / po_date / mill_po_no / status from stub rows onto real inspection rows before removing stubs
+      if (cols.has('mr_no') && cols.has('po_no')) {
+        const setParts: string[] = [
+          `"po_no" = CASE
+            WHEN COALESCE(NULLIF(TRIM(r."po_no"), ''), '') IN ('', 'NO', 'N/A', 'NONE')
+              AND COALESCE(NULLIF(TRIM(s."po_no"), ''), '') NOT IN ('', 'NO', 'N/A', 'NONE')
+            THEN s."po_no" ELSE r."po_no" END`
+        ];
+        if (cols.has('po_date')) {
+          setParts.push(`"po_date" = COALESCE(r."po_date", s."po_date")`);
+        }
+        if (cols.has('mill_po_no')) {
+          setParts.push(`"mill_po_no" = COALESCE(NULLIF(TRIM(r."mill_po_no"), ''), NULLIF(TRIM(s."mill_po_no"), ''))`);
+        }
+        if (cols.has('mill_po_date')) {
+          setParts.push(`"mill_po_date" = COALESCE(r."mill_po_date", s."mill_po_date")`);
+        }
+        if (cols.has('status')) {
+          setParts.push(`"status" = CASE WHEN LOWER(COALESCE(s."status", '')) = 'settled' THEN 'settled' ELSE r."status" END`);
+        }
+
+        const mrMatchClauses = [
+          `(NULLIF(TRIM(s."mr_no"), '') IS NOT NULL AND (
+            TRIM(UPPER(COALESCE(r."mr_no", ''))) = TRIM(UPPER(s."mr_no"))
+            ${cols.has('arrival_no') ? `OR TRIM(UPPER(COALESCE(r."arrival_no", ''))) = TRIM(UPPER(s."mr_no"))` : ''}
+          ))`
+        ];
+        if (cols.has('arrival_no')) {
+          mrMatchClauses.push(
+            `(NULLIF(TRIM(s."arrival_no"), '') IS NOT NULL AND (
+              TRIM(UPPER(COALESCE(r."mr_no", ''))) = TRIM(UPPER(s."arrival_no"))
+              OR TRIM(UPPER(COALESCE(r."arrival_no", ''))) = TRIM(UPPER(s."arrival_no"))
+            ))`
+          );
+        }
+
+        await runSavepoint(`prop_${inspTable}`, () =>
+          client.query(`
+            UPDATE "${inspTable}" r
+            SET ${setParts.join(', ')}
+            FROM "${inspTable}" s
+            WHERE (${makeInspStubCond('s.')})
+              AND NOT (${makeInspStubCond('r.')})
+              AND (${mrMatchClauses.join(' OR ')})
+          `)
+        );
+      }
+
+      // Delete stub rows inserted by accidental update->insert fallback
+      const delStubRes = await runSavepoint(`delstub_${inspTable}`, () =>
+        client.query(`
+          DELETE FROM "${inspTable}"
+          WHERE ${makeInspStubCond('')}
+        `)
+      );
+      deleted[inspTable] += delStubRes?.rowCount || 0;
+
+      // Deduplicate any duplicate rows sharing the same TRIM(UPPER(mr_no))
+      if (cols.has('mr_no')) {
+        const orderScoreParts: string[] = [];
+        if (cols.has('supplier_name') || cols.has('supplier')) {
+          const sExpr = ['supplier_name', 'supplier'].filter((c) => cols.has(c)).map((c) => `NULLIF(TRIM("${c}"), '')`).join(', ');
+          orderScoreParts.push(`(CASE WHEN COALESCE(${sExpr}) IS NOT NULL THEN 4 ELSE 0 END)`);
+        }
+        if (cols.has('grid_details') || cols.has('details')) {
+          const gExpr = ['grid_details', 'details'].filter((c) => cols.has(c)).map((c) => `"${c}" IS NOT NULL`).join(' OR ');
+          orderScoreParts.push(`(CASE WHEN ${gExpr} THEN 4 ELSE 0 END)`);
+        }
+        if (cols.has('po_no')) {
+          orderScoreParts.push(`(CASE WHEN NULLIF(TRIM("po_no"), '') IS NOT NULL THEN 2 ELSE 0 END)`);
+        }
+        const orderByCols: string[] = [];
+        if (orderScoreParts.length > 0) orderByCols.push(`${orderScoreParts.join(' + ')} DESC`);
+        if (cols.has('updated_at')) orderByCols.push(`"updated_at" DESC NULLS LAST`);
+        if (cols.has('created_at')) orderByCols.push(`"created_at" DESC NULLS LAST`);
+        orderByCols.push(`ctid DESC`);
+
+        const dedupRes = await runSavepoint(`dedup_${inspTable}`, () =>
+          client.query(`
+            WITH ranked AS (
+              SELECT
+                ctid,
+                ROW_NUMBER() OVER (
+                  PARTITION BY TRIM(UPPER("mr_no"))
+                  ORDER BY ${orderByCols.join(', ')}
+                ) AS rn
+              FROM "${inspTable}"
+              WHERE NULLIF(TRIM("mr_no"), '') IS NOT NULL
+            )
+            DELETE FROM "${inspTable}" t
+            USING ranked r
+            WHERE t.ctid = r.ctid AND r.rn > 1
+          `)
+        );
+        deleted[inspTable] += dedupRes?.rowCount || 0;
+      }
+    }
+
+    // 2. Clean Final Arrival (`final_arrival`)
+    if (await tableExists('final_arrival')) {
+      const faCols = await getCols('final_arrival');
+      const makeFaStubCond = (p: string): string => {
+        const identityParts = ['supplier', 'supplier_name', 'challan_supplier', 'lorry_number', 'lorry_no']
+          .filter((c) => faCols.has(c))
+          .map((c) => `NULLIF(TRIM(${p}"${c}"), '')`);
+        const checks: string[] = [];
+        if (identityParts.length > 0) {
+          checks.push(`COALESCE(${identityParts.join(', ')}) IS NULL`);
+        }
+        if (faCols.has('grid_details')) {
+          checks.push(`${p}"grid_details" IS NULL`);
+        }
+        for (const numCol of ['total_packets', 'weight_qtl', 'electronic_net_weight', 'supplier_net_weight']) {
+          if (faCols.has(numCol)) {
+            checks.push(`COALESCE(${p}"${numCol}", 0) = 0`);
+          }
+        }
+        return checks.length >= 2 ? checks.join(' AND ') : 'FALSE';
+      };
+
+      // Propagate po_no / po_date / status from stub rows onto real final_arrival rows
+      if (faCols.has('po_no')) {
+        await runSavepoint('prop_final_arrival_stubs', () =>
+          client.query(`
+            UPDATE "final_arrival" r
+            SET
+              "po_no" = CASE
+                WHEN COALESCE(NULLIF(TRIM(r."po_no"), ''), '') IN ('', 'NO', 'N/A', 'NONE')
+                  AND COALESCE(NULLIF(TRIM(s."po_no"), ''), '') NOT IN ('', 'NO', 'N/A', 'NONE')
+                THEN s."po_no" ELSE r."po_no" END,
+              "po_date" = COALESCE(r."po_date", s."po_date"),
+              "status" = CASE
+                WHEN LOWER(COALESCE(s."status", '')) = 'settled' THEN 'settled'
+                ELSE r."status" END
+            FROM "final_arrival" s
+            WHERE (${makeFaStubCond('s.')})
+              AND NOT (${makeFaStubCond('r.')})
+              AND (
+                (
+                  NULLIF(TRIM(COALESCE(r."final_arrival_no", r."mr_no", '')), '') IS NOT NULL
+                  AND NULLIF(TRIM(COALESCE(s."final_arrival_no", s."mr_no", s."arrival_no", '')), '') IS NOT NULL
+                  AND TRIM(UPPER(COALESCE(NULLIF(TRIM(r."final_arrival_no"), ''), NULLIF(TRIM(r."mr_no"), ''), ''))) =
+                      TRIM(UPPER(COALESCE(NULLIF(TRIM(s."final_arrival_no"), ''), NULLIF(TRIM(s."mr_no"), ''), NULLIF(TRIM(s."arrival_no"), ''), '')))
+                )
+                OR (
+                  NULLIF(TRIM(s."temporary_arrival_no"), '') IS NOT NULL
+                  AND TRIM(UPPER(COALESCE(r."temporary_arrival_no", ''))) = TRIM(UPPER(s."temporary_arrival_no"))
+                )
+              )
+          `)
+        );
+      }
+
+      const delFaStubRes = await runSavepoint('delstub_final_arrival', () =>
+        client.query(`
+          DELETE FROM "final_arrival"
+          WHERE ${makeFaStubCond('')}
+        `)
+      );
+      deleted.final_arrival += delFaStubRes?.rowCount || 0;
+
+      // Merge po_no/temporary_arrival_no/mr_no from duplicates into canonical final_arrival row before deleting duplicates
+      if (faCols.has('final_arrival_id') && faCols.has('final_arrival_no')) {
+        await runSavepoint('merge_dups_final_arrival', () =>
+          client.query(`
+            WITH ranked AS (
+              SELECT
+                "final_arrival_id",
+                TRIM(UPPER("final_arrival_no")) AS norm_fa,
+                "po_no",
+                "po_date",
+                "temporary_arrival_no",
+                "mr_no",
+                "status",
+                ROW_NUMBER() OVER (
+                  PARTITION BY TRIM(UPPER("final_arrival_no"))
+                  ORDER BY
+                    (CASE WHEN COALESCE(NULLIF(TRIM("supplier"), ''), NULLIF(TRIM("lorry_number"), ''), NULLIF(TRIM("lorry_no"), '')) IS NOT NULL THEN 4 ELSE 0 END)
+                    + (CASE WHEN "grid_details" IS NOT NULL THEN 4 ELSE 0 END)
+                    + (CASE WHEN COALESCE("weight_qtl", 0) > 0 THEN 2 ELSE 0 END)
+                    + (CASE WHEN NULLIF(TRIM("po_no"), '') IS NOT NULL THEN 1 ELSE 0 END) DESC,
+                    "created_at" DESC NULLS LAST,
+                    "final_arrival_id" DESC
+                ) AS rn
+              FROM "final_arrival"
+              WHERE NULLIF(TRIM("final_arrival_no"), '') IS NOT NULL
+            ),
+            winners AS (
+              SELECT * FROM ranked WHERE rn = 1
+            ),
+            donor_info AS (
+              SELECT
+                norm_fa,
+                MAX(NULLIF(TRIM("po_no"), '')) AS best_po_no,
+                MAX("po_date") AS best_po_date,
+                MAX(NULLIF(TRIM("temporary_arrival_no"), '')) AS best_temp_no,
+                MAX(NULLIF(TRIM("mr_no"), '')) AS best_mr_no
+              FROM ranked
+              GROUP BY norm_fa
+            )
+            UPDATE "final_arrival" f
+            SET
+              "po_no" = CASE WHEN COALESCE(NULLIF(TRIM(f."po_no"), ''), '') IN ('', 'NO', 'N/A', 'NONE') THEN COALESCE(d.best_po_no, f."po_no") ELSE f."po_no" END,
+              "po_date" = COALESCE(f."po_date", d.best_po_date),
+              "temporary_arrival_no" = COALESCE(NULLIF(TRIM(f."temporary_arrival_no"), ''), d.best_temp_no),
+              "mr_no" = COALESCE(NULLIF(TRIM(f."mr_no"), ''), d.best_mr_no)
+            FROM winners w
+            JOIN donor_info d ON d.norm_fa = w.norm_fa
+            WHERE f."final_arrival_id" = w."final_arrival_id"
+          `)
+        );
+
+        const delFaDupRes = await runSavepoint('dedup_final_arrival', () =>
+          client.query(`
+            WITH ranked AS (
+              SELECT
+                "final_arrival_id",
+                ROW_NUMBER() OVER (
+                  PARTITION BY TRIM(UPPER("final_arrival_no"))
+                  ORDER BY
+                    (CASE WHEN COALESCE(NULLIF(TRIM("supplier"), ''), NULLIF(TRIM("lorry_number"), ''), NULLIF(TRIM("lorry_no"), '')) IS NOT NULL THEN 4 ELSE 0 END)
+                    + (CASE WHEN "grid_details" IS NOT NULL THEN 4 ELSE 0 END)
+                    + (CASE WHEN COALESCE("weight_qtl", 0) > 0 THEN 2 ELSE 0 END)
+                    + (CASE WHEN NULLIF(TRIM("po_no"), '') IS NOT NULL THEN 1 ELSE 0 END) DESC,
+                    "created_at" DESC NULLS LAST,
+                    "final_arrival_id" DESC
+                ) AS rn
+              FROM "final_arrival"
+              WHERE NULLIF(TRIM("final_arrival_no"), '') IS NOT NULL
+            )
+            DELETE FROM "final_arrival" f
+            USING ranked r
+            WHERE f."final_arrival_id" = r."final_arrival_id" AND r.rn > 1
+          `)
+        );
+        deleted.final_arrival += delFaDupRes?.rowCount || 0;
+      }
+    }
+
+    // 3. Clean Temporary Arrival (`temporary_material_received`)
+    if (await tableExists('temporary_material_received')) {
+      const tempCols = await getCols('temporary_material_received');
+      const makeTempStubCond = (p: string): string => {
+        const identityParts = ['supplier', 'challan_supplier', 'lorry_number']
+          .filter((c) => tempCols.has(c))
+          .map((c) => `NULLIF(TRIM(${p}"${c}"), '')`);
+        const checks: string[] = [];
+        if (identityParts.length > 0) {
+          checks.push(`COALESCE(${identityParts.join(', ')}) IS NULL`);
+        }
+        if (tempCols.has('grid_details')) {
+          checks.push(`${p}"grid_details" IS NULL`);
+        }
+        for (const numCol of ['total_packets', 'weight_qtl', 'challan_material_weight', 'electronic_net_weight', 'supplier_net_weight']) {
+          if (tempCols.has(numCol)) {
+            checks.push(`COALESCE(${p}"${numCol}", 0) = 0`);
+          }
+        }
+        return checks.length >= 2 ? checks.join(' AND ') : 'FALSE';
+      };
+
+      // Propagate po_no / status from stub rows onto real temporary_material_received rows directly or via final_arrival link
+      if (tempCols.has('po_no') && tempCols.has('temporary_arrival_no')) {
+        await runSavepoint('prop_temp_arrival_stubs', () =>
+          client.query(`
+            UPDATE "temporary_material_received" r
+            SET
+              "po_no" = CASE
+                WHEN COALESCE(NULLIF(TRIM(r."po_no"), ''), '') IN ('', 'NO', 'N/A', 'NONE')
+                  AND COALESCE(NULLIF(TRIM(s."po_no"), ''), '') NOT IN ('', 'NO', 'N/A', 'NONE')
+                THEN s."po_no" ELSE r."po_no" END,
+              "status" = CASE
+                WHEN LOWER(COALESCE(s."status", '')) = 'settled' THEN 'settled'
+                ELSE r."status" END
+            FROM "temporary_material_received" s
+            LEFT JOIN "final_arrival" fa
+              ON TRIM(UPPER(COALESCE(fa."final_arrival_no", ''))) = TRIM(UPPER(COALESCE(s."temporary_arrival_no", '')))
+              AND NULLIF(TRIM(s."temporary_arrival_no"), '') IS NOT NULL
+            WHERE (${makeTempStubCond('s.')})
+              AND NOT (${makeTempStubCond('r.')})
+              AND (
+                (NULLIF(TRIM(s."temporary_arrival_no"), '') IS NOT NULL AND TRIM(UPPER(COALESCE(r."temporary_arrival_no", ''))) = TRIM(UPPER(s."temporary_arrival_no")))
+                OR (fa."temporary_arrival_no" IS NOT NULL AND TRIM(UPPER(COALESCE(r."temporary_arrival_no", ''))) = TRIM(UPPER(fa."temporary_arrival_no")))
+              )
+          `)
+        );
+      }
+
+      const delTempStubRes = await runSavepoint('delstub_temp_arrival', () =>
+        client.query(`
+          DELETE FROM "temporary_material_received"
+          WHERE ${makeTempStubCond('')}
+        `)
+      );
+      deleted.temporary_material_received += delTempStubRes?.rowCount || 0;
+
+      // Merge & deduplicate rows sharing same non-empty temporary_arrival_no
+      if (tempCols.has('amad_id') && tempCols.has('temporary_arrival_no')) {
+        await runSavepoint('merge_dups_temp_arrival', () =>
+          client.query(`
+            WITH ranked AS (
+              SELECT
+                "amad_id",
+                TRIM(UPPER("temporary_arrival_no")) AS norm_ta,
+                "po_no",
+                ROW_NUMBER() OVER (
+                  PARTITION BY TRIM(UPPER("temporary_arrival_no"))
+                  ORDER BY
+                    (CASE WHEN COALESCE(NULLIF(TRIM("supplier"), ''), NULLIF(TRIM("lorry_number"), '')) IS NOT NULL THEN 4 ELSE 0 END)
+                    + (CASE WHEN "grid_details" IS NOT NULL THEN 4 ELSE 0 END)
+                    + (CASE WHEN COALESCE("weight_qtl", 0) > 0 THEN 2 ELSE 0 END)
+                    + (CASE WHEN NULLIF(TRIM("po_no"), '') IS NOT NULL THEN 1 ELSE 0 END) DESC,
+                    "created_at" DESC NULLS LAST,
+                    "amad_id" DESC
+                ) AS rn
+              FROM "temporary_material_received"
+              WHERE NULLIF(TRIM("temporary_arrival_no"), '') IS NOT NULL
+            ),
+            winners AS (SELECT * FROM ranked WHERE rn = 1),
+            donors AS (
+              SELECT norm_ta, MAX(NULLIF(TRIM("po_no"), '')) AS best_po_no
+              FROM ranked GROUP BY norm_ta
+            )
+            UPDATE "temporary_material_received" t
+            SET "po_no" = CASE WHEN COALESCE(NULLIF(TRIM(t."po_no"), ''), '') IN ('', 'NO', 'N/A', 'NONE') THEN COALESCE(d.best_po_no, t."po_no") ELSE t."po_no" END
+            FROM winners w
+            JOIN donors d ON d.norm_ta = w.norm_ta
+            WHERE t."amad_id" = w."amad_id"
+          `)
+        );
+
+        const delTempDupRes = await runSavepoint('dedup_temp_arrival', () =>
+          client.query(`
+            WITH ranked AS (
+              SELECT
+                "amad_id",
+                ROW_NUMBER() OVER (
+                  PARTITION BY TRIM(UPPER("temporary_arrival_no"))
+                  ORDER BY
+                    (CASE WHEN COALESCE(NULLIF(TRIM("supplier"), ''), NULLIF(TRIM("lorry_number"), '')) IS NOT NULL THEN 4 ELSE 0 END)
+                    + (CASE WHEN "grid_details" IS NOT NULL THEN 4 ELSE 0 END)
+                    + (CASE WHEN COALESCE("weight_qtl", 0) > 0 THEN 2 ELSE 0 END)
+                    + (CASE WHEN NULLIF(TRIM("po_no"), '') IS NOT NULL THEN 1 ELSE 0 END) DESC,
+                    "created_at" DESC NULLS LAST,
+                    "amad_id" DESC
+                ) AS rn
+              FROM "temporary_material_received"
+              WHERE NULLIF(TRIM("temporary_arrival_no"), '') IS NOT NULL
+            )
+            DELETE FROM "temporary_material_received" t
+            USING ranked r
+            WHERE t."amad_id" = r."amad_id" AND r.rn > 1
+          `)
+        );
+        deleted.temporary_material_received += delTempDupRes?.rowCount || 0;
+      }
+    }
+
+    // 4. Clean duplicate active entries in `clubbed_pomr` per Final MR No
+    if (await tableExists('clubbed_pomr')) {
+      const clubCols = await getCols('clubbed_pomr');
+      if (clubCols.has('id')) {
+        const delClubDupRes = await runSavepoint('dedup_clubbed_pomr', () =>
+          client.query(`
+            WITH ranked AS (
+              SELECT
+                "id",
+                ROW_NUMBER() OVER (
+                  PARTITION BY TRIM(UPPER(COALESCE(NULLIF(TRIM("final_arrival_no"), ''), TRIM("mr_no"))))
+                  ORDER BY COALESCE("clubbed_at", "created_at") DESC NULLS LAST, "created_at" DESC NULLS LAST, "id" DESC
+                ) AS rn
+              FROM "clubbed_pomr"
+              WHERE UPPER(COALESCE("status", 'ACTIVE')) <> 'DELETED'
+                AND NULLIF(TRIM(COALESCE(NULLIF(TRIM("final_arrival_no"), ''), "mr_no")), '') IS NOT NULL
+            )
+            DELETE FROM "clubbed_pomr" c
+            USING ranked r
+            WHERE c."id" = r."id" AND r.rn > 1
+          `)
+        );
+        deleted.clubbed_pomr += delClubDupRes?.rowCount || 0;
+      }
+    }
+
+    await client.query('COMMIT');
+    const totalDeleted = Object.values(deleted).reduce((s, n) => s + n, 0);
+    if (totalDeleted > 0) {
+      console.log(`[DB Deduplication] Removed inserted stub/duplicate rows:`, deleted);
+    }
+    return { success: true, deleted };
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.warn('[DB Deduplication Notice]:', (err as any)?.message || err);
+    return { success: false, deleted };
+  } finally {
+    client.release();
+  }
+}
+
+let dedupCleanupPromise: Promise<void> | null = null;
+async function ensureDuplicateClubbingCleanupOnce(): Promise<void> {
+  if (dedupCleanupPromise) return dedupCleanupPromise;
+  dedupCleanupPromise = (async () => {
+    const client = await pool.connect();
+    let shouldRun = false;
+    try {
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS "app_one_time_migrations" (
+          "migration_key" TEXT PRIMARY KEY,
+          "applied_at" TIMESTAMPTZ DEFAULT NOW(),
+          "details" TEXT
+        )
+      `);
+      const chk = await client.query(
+        `SELECT 1 FROM "app_one_time_migrations" WHERE "migration_key" = $1 LIMIT 1`,
+        ['dedup_clubbed_temp_final_mill_v1']
+      );
+      shouldRun = (chk.rowCount || 0) === 0;
+    } finally {
+      client.release();
+    }
+
+    if (shouldRun) {
+      const res = await cleanupDuplicateClubbingAndStubRows();
+      if (res.success) {
+        await pool.query(
+          `INSERT INTO "app_one_time_migrations" ("migration_key", "details")
+           VALUES ($1, $2)
+           ON CONFLICT ("migration_key") DO NOTHING`,
+          ['dedup_clubbed_temp_final_mill_v1', JSON.stringify(res.deleted)]
+        ).catch(() => {});
+      }
+    }
+  })().finally(() => {
+    dedupCleanupPromise = null;
+  });
+  return dedupCleanupPromise;
 }
 
 let agencyImportPromise: Promise<void> | null = null;

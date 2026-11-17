@@ -1,5 +1,5 @@
 import React from 'react';
-import { History, Download, X, Search, Printer, Trash2 } from 'lucide-react';
+import { History, Download, X, Search, Printer, Trash2, Edit } from 'lucide-react';
 import { PaginationControls } from '../PaginationControls';
 import { ClubbingRecord } from '../../types/clubPomr.types';
 
@@ -14,6 +14,7 @@ interface ClubbingHistoryModalProps {
   historyPageSize: number;
   setHistoryPageSize: (val: number) => void;
   setPrintingClub: (item: ClubbingRecord) => void;
+  onEditClubbingRecord: (record: ClubbingRecord) => void;
   handleDeleteClubbingRecord: (record: ClubbingRecord) => void;
   deletingClubId: string | null;
 }
@@ -29,6 +30,7 @@ export const ClubbingHistoryModal: React.FC<ClubbingHistoryModalProps> = ({
   historyPageSize,
   setHistoryPageSize,
   setPrintingClub,
+  onEditClubbingRecord,
   handleDeleteClubbingRecord,
   deletingClubId
 }) => {
@@ -175,6 +177,13 @@ export const ClubbingHistoryModal: React.FC<ClubbingHistoryModalProps> = ({
                         </td>
                         <td className="p-3 text-center">
                           <div className="flex items-center justify-center gap-1.5">
+                            <button
+                              onClick={() => onEditClubbingRecord(item)}
+                              className="p-1.5 text-amber-700 hover:bg-amber-50 rounded border border-amber-200 transition cursor-pointer"
+                              title="Edit / Re-Merge P.O & MR (Update Only)"
+                            >
+                              <Edit className="h-3.5 w-3.5" />
+                            </button>
                             <button
                               onClick={() => setPrintingClub(item)}
                               className="p-1.5 text-indigo-700 hover:bg-indigo-50 rounded border border-indigo-200 transition cursor-pointer"

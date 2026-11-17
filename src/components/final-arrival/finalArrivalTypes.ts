@@ -6,6 +6,8 @@ export interface FinalArrivalRecord {
   final_arrival_id: string;
   financial_year: string;
   final_arrival_no: string;
+  temporary_arrival_no?: string | null;
+  arrival_no?: string | null;
   mr_no: string | null;
   po_no: string | null;
   po_date: string | null;

@@ -16,6 +16,7 @@ interface ManualClubbingBindModalProps {
   loading: boolean;
   clubbingRemarks: string;
   setClubbingRemarks: (val: string) => void;
+  isEditMode?: boolean;
 }
 
 export const ManualClubbingBindModal: React.FC<ManualClubbingBindModalProps> = ({
@@ -31,7 +32,8 @@ export const ManualClubbingBindModal: React.FC<ManualClubbingBindModalProps> = (
   handleConfirmBinding,
   loading,
   clubbingRemarks,
-  setClubbingRemarks
+  setClubbingRemarks,
+  isEditMode = false
 }) => {
   if (!selectedArrivalForBind) return null;
 
@@ -45,11 +47,16 @@ export const ManualClubbingBindModal: React.FC<ManualClubbingBindModalProps> = (
           <div className="flex items-center gap-2.5">
             <Link className="h-5 w-5 text-indigo-400" />
             <div>
-              <h3 className="text-sm font-black uppercase tracking-wider">
-                Select Open P.O / Sauda Contract for Binding
+              <h3 className="text-sm font-black uppercase tracking-wider flex items-center gap-2">
+                <span>{isEditMode ? 'Edit / Merge Bound MR & P.O. Number (Update Only)' : 'Merge MR & Open P.O / Sauda Contract (Update Only)'}</span>
+                {isEditMode && (
+                  <span className="px-2 py-0.5 text-[9px] font-black bg-amber-400 text-amber-950 rounded uppercase">
+                    Edit Mode
+                  </span>
+                )}
               </h3>
               <p className="text-[9.5px] text-indigo-200 font-mono uppercase tracking-tight mt-0.5">
-                Multi-Lorry Sauda Contracts Remain Open Until All Lorries Are Tagged • Updates Final Arrival, Temporary Arrival & Mill Inspection
+                Updates Existing P.O Reference on Final Arrival, Temporary Arrival & Mill Inspection (Never Inserts Duplicate Rows)
               </p>
             </div>
           </div>
@@ -289,7 +296,11 @@ export const ManualClubbingBindModal: React.FC<ManualClubbingBindModalProps> = (
               )}
             >
               <CheckCircle2 className="h-4 w-4" />
-              <span>Confirm & Bind (Update Final Arrival, Temp Arrival & Mill Inspection)</span>
+              <span>
+                {isEditMode
+                  ? 'Update Merged P.O & MR (Update Only)'
+                  : 'Merge & Update (Final Arrival, Temp Arrival & Mill Inspection)'}
+              </span>
             </button>
           </div>
         </div>

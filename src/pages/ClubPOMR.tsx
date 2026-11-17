@@ -16,7 +16,8 @@ import {
   History,
   Truck,
   Package,
-  Calendar
+  Calendar,
+  Edit
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { PaginationControls } from '../components/PaginationControls';
@@ -93,12 +94,16 @@ export default function ClubPOMR({ onClose }: { onClose?: () => void }) {
   const [selectedSupplier, setSelectedSupplier] = useState<string>('ALL');
   const [searchQuery, setSearchQuery] = useState('');
 
-  // Unbound Lists
+  // Unbound & Tagged Lists
   const [unboundFinalArrivals, setUnboundFinalArrivals] = useState<any[]>([]);
+  const [taggedFinalArrivals, setTaggedFinalArrivals] = useState<any[]>([]);
   const [unboundPOs, setUnboundPOs] = useState<any[]>([]);
+  const [allPoCatalog, setAllPoCatalog] = useState<any[]>([]);
+  const [viewMode, setViewMode] = useState<'untagged' | 'tagged'>('untagged');
 
-  // Selection for Detail views and Binding Modal
+  // Selection for Detail views and Binding/Merge Modal
   const [selectedArrivalForBind, setSelectedArrivalForBind] = useState<any | null>(null);
+  const [editingClubRecord, setEditingClubRecord] = useState<ClubbingRecord | null>(null);
   const [chosenPoForBind, setChosenPoForBind] = useState<any | null>(null);
   const [selectedDetailMr, setSelectedDetailMr] = useState<any | null>(null);
   const [showAllPOsInModal, setShowAllPOsInModal] = useState(false);
@@ -222,55 +227,90 @@ export default function ClubPOMR({ onClose }: { onClose?: () => void }) {
       });
     });
 
-    // 1. Untagged Final Arrivals: records in final_arrival where po_no is blank/empty/NO/N/A
-    const filteredFinalArrivals = (allFinalArrivals || [])
-      .filter((fa: any) => {
-        const poNoStr = normalize(fa.po_no);
-        const isPoBlank = !poNoStr || poNoStr === 'NO' || poNoStr === 'N/A' || poNoStr === 'NONE';
-        if (!isPoBlank) return false;
+    const enrichFinalArrival = (fa: any) => {
+      const tempKey = normalize(fa.temporary_arrival_no || fa.arrival_no || fa.amad_no || fa.mr_no);
+      const linkedTemp = tempKey ? tempByNo.get(tempKey) : null;
+      return {
+        ...fa,
+        temporary_arrival_no:
+          fa.temporary_arrival_no ||
+          fa.arrival_no ||
+          linkedTemp?.temporary_arrival_no ||
+          linkedTemp?.amad_no ||
+          fa.final_arrival_no ||
+          fa.mr_no,
+        supplier: fa.supplier || fa.challan_supplier || linkedTemp?.supplier || 'N/A',
+        broker: fa.broker || linkedTemp?.broker || 'N/A',
+        area:
+          fa.area ||
+          fa.arrival_area_name ||
+          fa.arrival_area ||
+          linkedTemp?.arrival_area_name ||
+          linkedTemp?.arrival_area ||
+          'N/A',
+        lorry_number:
+          fa.lorry_number ||
+          fa.lorry_no ||
+          fa.vehicle_no ||
+          linkedTemp?.lorry_number ||
+          'N/A',
+        challan_rr_no:
+          fa.challan_rr_no ||
+          fa.challan_no ||
+          linkedTemp?.challan_rr_no ||
+          linkedTemp?.challan_railway_receipt_no ||
+          'N/A'
+      };
+    };
 
-        // Also check if linked temporary_arrival already has a valid PO or keep it untagged if final_arrival has no PO
-        const matchesSupplier =
-          isAll ||
-          normalize(fa.supplier) === normalize(supplierName) ||
-          normalize(fa.challan_supplier) === normalize(supplierName);
-        return matchesSupplier;
-      })
-      .map((fa: any) => {
-        const tempKey = normalize(fa.temporary_arrival_no || fa.arrival_no || fa.amad_no || fa.mr_no);
-        const linkedTemp = tempKey ? tempByNo.get(tempKey) : null;
-        return {
-          ...fa,
-          temporary_arrival_no:
-            fa.temporary_arrival_no ||
-            fa.arrival_no ||
-            linkedTemp?.temporary_arrival_no ||
-            linkedTemp?.amad_no ||
-            fa.final_arrival_no ||
-            fa.mr_no,
-          supplier: fa.supplier || fa.challan_supplier || linkedTemp?.supplier || 'N/A',
-          broker: fa.broker || linkedTemp?.broker || 'N/A',
-          area:
-            fa.area ||
-            fa.arrival_area_name ||
-            fa.arrival_area ||
-            linkedTemp?.arrival_area_name ||
-            linkedTemp?.arrival_area ||
-            'N/A',
-          lorry_number:
-            fa.lorry_number ||
-            fa.lorry_no ||
-            fa.vehicle_no ||
-            linkedTemp?.lorry_number ||
-            'N/A',
-          challan_rr_no:
-            fa.challan_rr_no ||
-            fa.challan_no ||
-            linkedTemp?.challan_rr_no ||
-            linkedTemp?.challan_railway_receipt_no ||
-            'N/A'
-        };
+    const dedupeByFaNo = (rows: any[]) => {
+      const seen = new Set<string>();
+      return rows.filter((r: any) => {
+        const key = normalize(r.final_arrival_no || r.mr_no || r.final_arrival_id || '');
+        if (!key) return true;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
       });
+    };
+
+    // 1. Untagged Final Arrivals: records in final_arrival where po_no is blank/empty/NO/N/A
+    const filteredFinalArrivals = dedupeByFaNo(
+      (allFinalArrivals || [])
+        .filter((fa: any) => {
+          const hasCore = Boolean(fa.supplier || fa.challan_supplier || fa.lorry_no || fa.lorry_number || fa.grid_details || Number(fa.weight_qtl || 0) > 0 || Number(fa.total_packets || 0) > 0);
+          if (!hasCore) return false;
+          const poNoStr = normalize(fa.po_no);
+          const isPoBlank = !poNoStr || poNoStr === 'NO' || poNoStr === 'N/A' || poNoStr === 'NONE';
+          if (!isPoBlank) return false;
+
+          const matchesSupplier =
+            isAll ||
+            normalize(fa.supplier) === normalize(supplierName) ||
+            normalize(fa.challan_supplier) === normalize(supplierName);
+          return matchesSupplier;
+        })
+        .map(enrichFinalArrival)
+    );
+
+    // 1b. Already Tagged / Merged Final Arrivals (for Edit / Re-Merge Mode)
+    const filteredTaggedArrivals = dedupeByFaNo(
+      (allFinalArrivals || [])
+        .filter((fa: any) => {
+          const hasCore = Boolean(fa.supplier || fa.challan_supplier || fa.lorry_no || fa.lorry_number || fa.grid_details || Number(fa.weight_qtl || 0) > 0 || Number(fa.total_packets || 0) > 0);
+          if (!hasCore) return false;
+          const poNoStr = normalize(fa.po_no);
+          const isPoBlank = !poNoStr || poNoStr === 'NO' || poNoStr === 'N/A' || poNoStr === 'NONE';
+          if (isPoBlank) return false;
+
+          const matchesSupplier =
+            isAll ||
+            normalize(fa.supplier) === normalize(supplierName) ||
+            normalize(fa.challan_supplier) === normalize(supplierName);
+          return matchesSupplier;
+        })
+        .map(enrichFinalArrival)
+    );
 
     // 2. Build fast lookup indices for Final Arrivals & Temp Arrivals by PO keys (same logic as Sauda Check Point)
     const buildPoRecordIndex = (records: any[], getCands: (r: any) => any[]) => {
@@ -494,12 +534,41 @@ export default function ClubPOMR({ onClose }: { onClose?: () => void }) {
       }
     };
 
+    // Also store a catalog of ALL POs so Edit/Merge Mode can pre-select & re-merge even completed POs
+    const allPoCatalogMap = new Map<string, any>();
+    [...(allSaudaCheck || []), ...(allPos || [])].forEach((po: any) => {
+      const poNo = po.po_no || po.ptf_no || po.po_ptf_no || po.sauda_no || po.contract_po_no || po.contract_no;
+      if (!poNo) return;
+      const normPo = normalize(poNo);
+      if (allPoCatalogMap.has(normPo)) return;
+      const poKeys = getPoMatchKeys([po.po_no, po.contract_po_no, po.ptf_no, po.sauda_no, po.po_contract, po.contract_no]);
+      const matchedSaudas = queryPoIndex(saudaByKeyIndex, poKeys);
+      const matchedSauda = matchedSaudas[0] || null;
+      const contractLorries = Math.max(1, parseInt(po.total_lorries || po.total_no_of_lorries || po.no_of_lorries || po.lorries || matchedSauda?.no_of_lorries || matchedSauda?.total_lorries || 1, 10) || 1);
+      const matchingFinal = queryPoIndex(finalByPoIndex, poKeys);
+      const totalContractMt = Number(po.total_contract_mt || po.quantity_mt || po.total_qty_mt || po.quantity || matchedSauda?.total_wt_in_ton || (po.qty_qtl ? Number(po.qty_qtl) / 10 : 0) || 0);
+      allPoCatalogMap.set(normPo, {
+        ...po,
+        po_no: poNo,
+        po_date: po.po_date || po.date || po.s_date || matchedSauda?.date || '',
+        broker: po.broker || po.broker_name || matchedSauda?.broker || 'N/A',
+        area: po.area || po.arrival_area_name || po.arrival_yard || po.area_name || po.dispatch_place || matchedSauda?.area || 'N/A',
+        supplier: po.supplier || matchedSauda?.supplier || 'N/A',
+        total_contract_mt: totalContractMt,
+        contract_lorries: contractLorries,
+        received_lorries: matchingFinal.length,
+        received_lorries_count: matchingFinal.length,
+      });
+    });
+
     // Prioritize Sauda Check Point records, then Final P.O (purchase_master)
     (allSaudaCheck || []).forEach(processPo);
     (allPos || []).forEach(processPo);
 
     setUnboundFinalArrivals(filteredFinalArrivals);
+    setTaggedFinalArrivals(filteredTaggedArrivals);
     setUnboundPOs(Array.from(combinedPOsMap.values()));
+    setAllPoCatalog(Array.from(allPoCatalogMap.values()));
   };
 
   useLiveAutoRefresh(loadInitialData, [selectedSupplier], {
@@ -517,7 +586,56 @@ export default function ClubPOMR({ onClose }: { onClose?: () => void }) {
     loadInitialData();
   }, [selectedSupplier]);
 
-  // Execute Voucher Binding (Updates Final Arrival, Temporary Arrival based on Final Arrival, Mill Inspection, and saves to clubbed_pomr)
+  const openEditMergeModal = (mrRow: any, explicitClubRecord?: ClubbingRecord | null) => {
+    const faKey = normalize(mrRow?.final_arrival_no || mrRow?.mr_no);
+    const matchingHistory =
+      explicitClubRecord ||
+      clubbingHistory.find(
+        (c) => normalize(c.finalArrivalNo || c.mrNo) === faKey
+      ) ||
+      null;
+
+    const currentPoKey = normalize(mrRow?.po_no || matchingHistory?.poNo);
+    const matchedExistingPo = currentPoKey
+      ? unboundPOs.find((p) => normalize(p.po_no) === currentPoKey) ||
+        allPoCatalog.find((p) => normalize(p.po_no) === currentPoKey) ||
+        null
+      : null;
+
+    setSelectedArrivalForBind(mrRow);
+    setEditingClubRecord(matchingHistory);
+    setChosenPoForBind(matchedExistingPo);
+    setClubbingRemarks(matchingHistory?.remarks || '');
+    setShowAllPOsInModal(false);
+    setModalPoSearch('');
+  };
+
+  const handleEditFromHistory = (record: ClubbingRecord) => {
+    const recFaKey = normalize(record.finalArrivalNo || record.mrNo);
+    const existingRow =
+      taggedFinalArrivals.find((r) => normalize(r.final_arrival_no || r.mr_no) === recFaKey) ||
+      unboundFinalArrivals.find((r) => normalize(r.final_arrival_no || r.mr_no) === recFaKey) ||
+      {
+        final_arrival_no: record.finalArrivalNo || record.mrNo,
+        mr_no: record.mrNo || record.finalArrivalNo,
+        temporary_arrival_no: record.tempArrivalNo,
+        arrival_date: record.arrivalDate,
+        date: record.arrivalDate,
+        po_no: record.poNo,
+        po_date: record.poDate,
+        supplier: record.supplier,
+        broker: record.broker,
+        area: record.area,
+        lorry_number: record.lorryNumber,
+        challan_rr_no: record.challanNo,
+        total_packets: record.packets,
+        weight_qtl: Number(record.totalReceivedWeight || 0) * 10,
+      };
+    setShowHistoryModal(false);
+    openEditMergeModal(existingRow, record);
+  };
+
+  // Execute Voucher Merge & Update (ONLY updates existing rows — NEVER inserts duplicate rows into Arrival or Mill Inspection tables)
   const handleConfirmBinding = async () => {
     if (!selectedArrivalForBind || !chosenPoForBind) return;
 
@@ -542,16 +660,19 @@ export default function ClubPOMR({ onClose }: { onClose?: () => void }) {
         throw new Error('Missing Final Arrival MR No or P.O No for binding.');
       }
 
-      // 1. Lookup exact Final Arrival record from `final_arrival` to get its `temporary_arrival_no`
+      // 1. Lookup exact Final Arrival record from `final_arrival` (update-only lookup, never insert)
       let exactFaRecord: any = selectedArrivalForBind;
       if (supabase) {
         const { data: faRows } = await supabase
           .from('final_arrival')
           .select('*')
           .or(`final_arrival_no.eq.${faNo},mr_no.eq.${faNo}`)
-          .limit(1);
+          .limit(5);
         if (faRows && faRows.length > 0) {
-          exactFaRecord = { ...selectedArrivalForBind, ...faRows[0] };
+          const canonicalFa =
+            faRows.find((r: any) => Boolean(r.supplier || r.lorry_no || r.lorry_number || r.grid_details || Number(r.weight_qtl || 0) > 0)) ||
+            faRows[0];
+          exactFaRecord = { ...selectedArrivalForBind, ...canonicalFa };
         }
       }
 
@@ -572,9 +693,13 @@ export default function ClubPOMR({ onClose }: { onClose?: () => void }) {
           : 0;
 
       const contractLorries = Number(chosenPoForBind.contract_lorries || chosenPoForBind.total_lorries || 1);
-      const newReceivedLorriesCount = Number(chosenPoForBind.received_lorries || 0) + 1;
+      const existingReceivedCount = Number(chosenPoForBind.received_lorries || 0);
+      const isAlreadyCountedOnSamePo =
+        normalize(exactFaRecord.po_no) === normalize(poNo);
+      const newReceivedLorriesCount = isAlreadyCountedOnSamePo
+        ? Math.max(1, existingReceivedCount)
+        : existingReceivedCount + 1;
 
-      const clubId = `CLUB-${Date.now().toString().slice(-6)}`;
       const clubbedIso = new Date().toISOString();
       const clubbedDate = clubbedIso.split('T')[0];
 
@@ -608,71 +733,67 @@ export default function ClubPOMR({ onClose }: { onClose?: () => void }) {
       if (poDate) poUpdatePayload.po_date = poDate;
 
       // =========================================================================
-      // STEP A: UPDATE FINAL ARRIVAL (`final_arrival`)
+      // STEP A: UPDATE FINAL ARRIVAL (`final_arrival`) — MATCHED ROWS ONLY (ZERO INSERTS)
       // =========================================================================
-      if (exactFaRecord.final_arrival_id) {
-        await dbModule
-          .update('final_arrival', 'final_arrival_id', exactFaRecord.final_arrival_id, {
-            ...poUpdatePayload,
-            contract_no: poNo
-          })
-          .catch(() => {});
-      }
-      await dbModule
-        .update('final_arrival', 'final_arrival_no', faNo, {
-          ...poUpdatePayload,
-          contract_no: poNo
-        })
-        .catch(() => {});
-      await dbModule
-        .update('final_arrival', 'mr_no', faNo, {
-          ...poUpdatePayload,
-          contract_no: poNo
-        })
-        .catch(() => {});
-
       if (supabase) {
-        await supabase
+        const faMatchIds = new Set<string>();
+        if (exactFaRecord.final_arrival_id) {
+          faMatchIds.add(String(exactFaRecord.final_arrival_id));
+        }
+        const { data: matchedFaRows } = await supabase
           .from('final_arrival')
-          .update(poUpdatePayload)
-          .or(`final_arrival_no.eq.${faNo},mr_no.eq.${faNo}`);
-      }
+          .select('final_arrival_id')
+          .or(`final_arrival_no.eq.${faNo},mr_no.eq.${faNo}`)
+          .catch(() => ({ data: [] as any[] }));
+        (matchedFaRows || []).forEach((r: any) => {
+          if (r?.final_arrival_id) faMatchIds.add(String(r.final_arrival_id));
+        });
 
-      // =========================================================================
-      // STEP B: BASED ON FINAL ARRIVAL (`temporary_arrival_no`), UPDATE TEMPORARY ARRIVAL (`temporary_material_received`)
-      // =========================================================================
-      const tempLookupKeys = Array.from(
-        new Set([tempArrivalNo, faNo, exactFaRecord.arrival_no, exactFaRecord.amad_no].map(v => String(v || '').trim()).filter(Boolean))
-      );
-
-      for (const tKey of tempLookupKeys) {
-        await dbModule
-          .update('temporary_material_received', 'temporary_arrival_no', tKey, poUpdatePayload)
-          .catch(() => {});
-        await dbModule
-          .update('temporary_material_received', 'amad_no', tKey, poUpdatePayload)
-          .catch(() => {});
-        await dbModule
-          .update('temporary_material_received', 'mr_no', tKey, poUpdatePayload)
-          .catch(() => {});
-        await dbModule
-          .update('temporary_material_received', 'arrival_no', tKey, poUpdatePayload)
-          .catch(() => {});
-
-        if (supabase) {
+        for (const faId of faMatchIds) {
           await supabase
-            .from('temporary_material_received')
-            .update(poUpdatePayload)
-            .eq('temporary_arrival_no', tKey);
-          await supabase
-            .from('temporary_material_received')
-            .update(poUpdatePayload)
-            .eq('amad_no', tKey);
+            .from('final_arrival')
+            .update({ ...poUpdatePayload, contract_no: poNo })
+            .eq('final_arrival_id', faId);
         }
       }
 
       // =========================================================================
-      // STEP C: UPDATE MILL INSPECTION (`material_inspection`, `mill_inspection_master`, `inspection_master`, `inspection_checklist`)
+      // STEP B: UPDATE TEMPORARY ARRIVAL (`temporary_material_received`) — MATCHED ROWS ONLY (ZERO INSERTS)
+      // =========================================================================
+      const tempLookupKeys = Array.from(
+        new Set(
+          [
+            tempArrivalNo,
+            exactFaRecord.temporary_arrival_no,
+            exactFaRecord.arrival_no,
+            exactFaRecord.amad_no,
+            faNo
+          ]
+            .map((v) => String(v || '').trim())
+            .filter(Boolean)
+        )
+      );
+
+      if (supabase && tempLookupKeys.length > 0) {
+        const { data: matchedTempRows } = await supabase
+          .from('temporary_material_received')
+          .select('amad_id, temporary_arrival_no')
+          .in('temporary_arrival_no', tempLookupKeys)
+          .catch(() => ({ data: [] as any[] }));
+
+        const tempAmadIds = Array.from(
+          new Set((matchedTempRows || []).map((t: any) => t?.amad_id).filter(Boolean))
+        );
+        for (const amadId of tempAmadIds) {
+          await supabase
+            .from('temporary_material_received')
+            .update({ po_no: poNo })
+            .eq('amad_id', amadId);
+        }
+      }
+
+      // =========================================================================
+      // STEP C: UPDATE MILL INSPECTION (`material_inspection`, `mill_inspection_master`, `inspection_master`, `inspection_checklist`) — MATCHED ROWS ONLY (ZERO INSERTS)
       // =========================================================================
       const inspectionPayloadWithMillPo: Record<string, any> = {
         ...poUpdatePayload,
@@ -680,69 +801,77 @@ export default function ClubPOMR({ onClose }: { onClose?: () => void }) {
         ...(poDate ? { mill_po_date: poDate } : {})
       };
 
-      for (const mrKey of tempLookupKeys) {
-        // 1. material_inspection
-        await dbModule.update('material_inspection', 'mr_no', mrKey, inspectionPayloadWithMillPo).catch(() => {});
-        await dbModule.update('material_inspection', 'arrival_no', mrKey, inspectionPayloadWithMillPo).catch(() => {});
-        await dbModule.update('material_inspection', 'temporary_arrival_no', mrKey, inspectionPayloadWithMillPo).catch(() => {});
+      const inspLookupKeys = Array.from(
+        new Set(
+          [
+            faNo,
+            exactFaRecord.mr_no,
+            tempArrivalNo,
+            exactFaRecord.temporary_arrival_no,
+            exactFaRecord.arrival_no
+          ]
+            .map((v) => String(v || '').trim())
+            .filter(Boolean)
+        )
+      );
 
-        // 2. mill_inspection_master
-        await dbModule.update('mill_inspection_master', 'mr_no', mrKey, poUpdatePayload).catch(() => {});
-        await dbModule.update('mill_inspection_master', 'arrival_no', mrKey, poUpdatePayload).catch(() => {});
+      if (supabase && inspLookupKeys.length > 0) {
+        const inspectionTables = [
+          { name: 'material_inspection', payload: inspectionPayloadWithMillPo },
+          { name: 'mill_inspection_master', payload: poUpdatePayload },
+          { name: 'inspection_master', payload: inspectionPayloadWithMillPo },
+          { name: 'inspection_checklist', payload: inspectionPayloadWithMillPo }
+        ];
 
-        // 3. inspection_master
-        await dbModule.update('inspection_master', 'mr_no', mrKey, inspectionPayloadWithMillPo).catch(() => {});
-        await dbModule.update('inspection_master', 'arrival_no', mrKey, inspectionPayloadWithMillPo).catch(() => {});
-
-        // 4. inspection_checklist
-        await dbModule.update('inspection_checklist', 'mr_no', mrKey, inspectionPayloadWithMillPo).catch(() => {});
-        await dbModule.update('inspection_checklist', 'arrival_no', mrKey, inspectionPayloadWithMillPo).catch(() => {});
-
-        if (supabase) {
-          await supabase.from('material_inspection').update(poUpdatePayload).or(`mr_no.eq.${mrKey},arrival_no.eq.${mrKey}`);
-          await supabase.from('mill_inspection_master').update(poUpdatePayload).or(`mr_no.eq.${mrKey},arrival_no.eq.${mrKey}`);
-          await supabase.from('inspection_master').update(poUpdatePayload).or(`mr_no.eq.${mrKey},arrival_no.eq.${mrKey}`);
-          await supabase.from('inspection_checklist').update(poUpdatePayload).or(`mr_no.eq.${mrKey},arrival_no.eq.${mrKey}`);
+        for (const tbl of inspectionTables) {
+          try {
+            const [byMr, byArr] = await Promise.all([
+              supabase.from(tbl.name).select('mr_no').in('mr_no', inspLookupKeys).then((r: any) => r.data || [], () => []),
+              supabase.from(tbl.name).select('mr_no').in('arrival_no', inspLookupKeys).then((r: any) => r.data || [], () => [])
+            ]);
+            const matchedMrNos = Array.from(
+              new Set([...byMr, ...byArr].map((r: any) => r?.mr_no).filter(Boolean))
+            );
+            for (const matchedMr of matchedMrNos) {
+              await supabase.from(tbl.name).update(tbl.payload).eq('mr_no', matchedMr);
+            }
+          } catch (_) {}
         }
       }
 
       // =========================================================================
-      // STEP D: SAVE MANUAL CLUBBING RECORD TO SUPABASE (`clubbed_pomr`)
+      // STEP D: MERGE / UPDATE `clubbed_pomr` (Update existing row in place if already clubbed; insert only for new entry)
       // =========================================================================
       const arrivalDateStr = String(
         exactFaRecord.date || exactFaRecord.final_arrival_date || exactFaRecord.mr_date || ''
       );
 
-      const newClubRecord: ClubbingRecord = {
-        id: clubId,
-        clubbedAt: clubbedDate,
-        mrNo: faNo,
-        finalArrivalNo: faNo,
-        tempArrivalNo,
-        arrivalDate: arrivalDateStr,
-        poNo,
-        poDate,
-        supplier: supplierName,
-        broker: brokerName,
-        area: areaName,
-        lorryNumber: lorryNo,
-        challanNo,
-        packets: packetsCount,
-        poNos: [poNo],
-        amadNos: [faNo],
-        totalPoLorries: contractLorries,
-        receivedLorriesCount: newReceivedLorriesCount,
-        totalPoWeight: poWeightMt,
-        totalReceivedWeight: faWeightMt,
-        variancePct: variance,
-        recordedBy: currentUserName,
-        remarks:
-          clubbingRemarks ||
-          `Manually clubbed MR ${faNo} (Temp Arrival: ${tempArrivalNo}) with P.O ${poNo} (Lorry ${newReceivedLorriesCount}/${contractLorries})`
-      };
+      const mergedRemarks =
+        clubbingRemarks ||
+        `Merged MR ${faNo} (Temp Arrival: ${tempArrivalNo}) with P.O ${poNo} (Lorry ${newReceivedLorriesCount}/${contractLorries})`;
 
-      await dbModule.insert('clubbed_pomr', {
-        club_id: clubId,
+      const existingClubCandidates = supabase
+        ? await supabase
+            .from('clubbed_pomr')
+            .select('id, club_id, po_no, clubbed_po_nos, po_nos, status')
+            .or(`final_arrival_no.eq.${faNo},mr_no.eq.${faNo},primary_mr_no.eq.${faNo}`)
+            .then((r: any) => r.data || [], () => [])
+        : [];
+
+      const activeExistingClub =
+        existingClubCandidates.find(
+          (r: any) => String(r.status || 'ACTIVE').toUpperCase() !== 'DELETED'
+        ) || null;
+
+      const targetClubId =
+        editingClubRecord?.id ||
+        activeExistingClub?.club_id ||
+        activeExistingClub?.id ||
+        `CLUB-${Date.now().toString().slice(-6)}`;
+
+      const isUpdatingExistingClub = Boolean(editingClubRecord || activeExistingClub);
+
+      const clubWritePayload = {
         primary_po_no: poNo,
         po_no: poNo,
         ptf_no: chosenPoForBind.ptf_no || poNo,
@@ -772,9 +901,22 @@ export default function ClubPOMR({ onClose }: { onClose?: () => void }) {
         recorded_by: currentUserName,
         clubbed_by: currentUserName,
         clubbed_at: clubbedIso,
-        remarks: newClubRecord.remarks,
+        remarks: mergedRemarks,
         status: 'ACTIVE'
-      });
+      };
+
+      if (isUpdatingExistingClub && supabase) {
+        if (activeExistingClub?.id) {
+          await supabase.from('clubbed_pomr').update(clubWritePayload).eq('id', activeExistingClub.id);
+        } else {
+          await supabase.from('clubbed_pomr').update(clubWritePayload).eq('club_id', targetClubId);
+        }
+      } else {
+        await dbModule.insert('clubbed_pomr', {
+          club_id: targetClubId,
+          ...clubWritePayload
+        });
+      }
 
       // Invalidate caches and notify all modules
       notifyDataChanged('final_arrival');
@@ -784,23 +926,23 @@ export default function ClubPOMR({ onClose }: { onClose?: () => void }) {
       notifyDataChanged('clubbed_pomr');
 
       setSuccessToast(
-        `Bound MR #${faNo} (Temp Arrival #${tempArrivalNo}) with P.O #${poNo} [Lorry ${newReceivedLorriesCount}/${contractLorries}]! Updated Final Arrival, Temporary Arrival & Mill Inspection.`
+        `${isUpdatingExistingClub ? 'Updated Merge:' : 'Merged:'} MR #${faNo} (Temp Arrival #${tempArrivalNo}) with P.O #${poNo} [Lorry ${newReceivedLorriesCount}/${contractLorries}] — Updated Final Arrival, Temporary Arrival & Mill Inspection.`
       );
 
       // Reset modal state
       setSelectedArrivalForBind(null);
+      setEditingClubRecord(null);
       setChosenPoForBind(null);
       setClubbingRemarks('');
       setShowAllPOsInModal(false);
       setModalPoSearch('');
 
-      // Reload data so multi-lorry P.O remains visible if newReceivedLorriesCount < contractLorries
       await loadInitialData();
 
       setTimeout(() => setSuccessToast(null), 5000);
     } catch (err: any) {
-      console.error('Error executing voucher binding:', err);
-      alert(`Failed to execute binding: ${err.message || err}`);
+      console.error('Error executing voucher merge/update:', err);
+      alert(`Failed to update/merge MR & P.O: ${err.message || err}`);
     } finally {
       setLoading(false);
     }
@@ -833,9 +975,19 @@ export default function ClubPOMR({ onClose }: { onClose?: () => void }) {
         selectedArrivalForBind.arrival_yard
     );
 
+    const isEditContext = Boolean(editingClubRecord || (selectedArrivalForBind.po_no && normalize(selectedArrivalForBind.po_no) !== 'NO' && normalize(selectedArrivalForBind.po_no) !== 'N/A'));
+    const sourcePoPool = showAllPOsInModal && isEditContext ? allPoCatalog : unboundPOs;
+    const poolWithCurrentPo = [...sourcePoPool];
+    if (chosenPoForBind && !poolWithCurrentPo.some((p) => normalize(p.po_no) === normalize(chosenPoForBind.po_no))) {
+      poolWithCurrentPo.unshift(chosenPoForBind);
+    }
+
     const baseList = showAllPOsInModal
-      ? unboundPOs
-      : unboundPOs.filter(po => {
+      ? poolWithCurrentPo
+      : poolWithCurrentPo.filter(po => {
+          if (chosenPoForBind && normalize(po.po_no) === normalize(chosenPoForBind.po_no)) {
+            return true;
+          }
           const poBroker = normalize(po.broker || po.broker_name);
           const poArea = normalize(
             po.area || po.arrival_area_name || po.arrival_yard || po.area_name
@@ -860,13 +1012,15 @@ export default function ClubPOMR({ onClose }: { onClose?: () => void }) {
     );
   };
 
-  // Filtered UI Search for Untagged Final Arrivals
-  const filteredArrivals = unboundFinalArrivals.filter(fa => {
+  // Filtered UI Search for Active View (Untagged vs Merged/Tagged Edit List)
+  const activeArrivalList = viewMode === 'tagged' ? taggedFinalArrivals : unboundFinalArrivals;
+  const filteredArrivals = activeArrivalList.filter(fa => {
     if (!searchQuery) return true;
     const q = searchQuery.toLowerCase();
     return (
       String(fa.final_arrival_no || fa.mr_no || '').toLowerCase().includes(q) ||
       String(fa.temporary_arrival_no || '').toLowerCase().includes(q) ||
+      String(fa.po_no || '').toLowerCase().includes(q) ||
       String(fa.supplier || '').toLowerCase().includes(q) ||
       String(fa.broker || '').toLowerCase().includes(q) ||
       String(fa.area || fa.arrival_area_name || '').toLowerCase().includes(q) ||
@@ -981,26 +1135,53 @@ export default function ClubPOMR({ onClose }: { onClose?: () => void }) {
           </div>
         )}
 
-        {/* Untagged Final Arrivals Workspace - SINGLE MR PER ROW */}
+        {/* Arrivals Workspace - SINGLE MR PER ROW (Untagged New Merge + Merged Edit Mode) */}
         <div className="bg-white border border-slate-200 p-4 rounded-xl shadow-sm space-y-3">
           <div className="border-b border-slate-100 pb-2.5 flex flex-wrap justify-between items-center gap-2">
             <div className="flex items-center gap-2">
               <FileText className="h-4 w-4 text-indigo-600" />
               <div>
                 <h3 className="text-xs font-black uppercase tracking-wider text-slate-900">
-                  Untagged Final Arrivals (Single MR View)
+                  {viewMode === 'untagged'
+                    ? 'Untagged Final Arrivals (Merge MR with P.O)'
+                    : 'Merged / Tagged Arrivals (Edit Mode — Update Only)'}
                 </h3>
                 <p className="text-[9.5px] font-semibold text-slate-400 uppercase">
-                  Each lorry arrival (MR) is listed row-by-row • Bind with Open Multi-Lorry P.O / Sauda Contracts ({unboundPOs.length} Open P.Os Available)
+                  {viewMode === 'untagged'
+                    ? `Merge Arrival (MR) with Open P.O Contracts (${unboundPOs.length} Open P.Os) • Updates Existing Rows Only`
+                    : `Open any existing merged MR in Edit Mode to update P.O Number without inserting duplicate rows`}
                 </p>
               </div>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="inline-flex rounded-lg border border-slate-200 bg-slate-100 p-0.5">
+                <button
+                  type="button"
+                  onClick={() => setViewMode('untagged')}
+                  className={cn(
+                    'px-2.5 py-1 text-[10px] font-black uppercase rounded-md transition cursor-pointer',
+                    viewMode === 'untagged'
+                      ? 'bg-indigo-700 text-white shadow-2xs'
+                      : 'text-slate-600 hover:text-slate-900'
+                  )}
+                >
+                  Untagged ({unboundFinalArrivals.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setViewMode('tagged')}
+                  className={cn(
+                    'px-2.5 py-1 text-[10px] font-black uppercase rounded-md transition cursor-pointer',
+                    viewMode === 'tagged'
+                      ? 'bg-amber-600 text-white shadow-2xs'
+                      : 'text-slate-600 hover:text-slate-900'
+                  )}
+                >
+                  Edit Merged ({taggedFinalArrivals.length})
+                </button>
+              </div>
               <span className="text-[10px] font-black text-emerald-700 bg-emerald-50 px-2.5 py-0.5 rounded-full border border-emerald-200">
                 {unboundPOs.length} Open P.Os
-              </span>
-              <span className="text-[10px] font-black text-indigo-700 bg-indigo-50 px-2.5 py-0.5 rounded-full border border-indigo-100">
-                {filteredArrivals.length} Untagged MRs
               </span>
             </div>
           </div>
@@ -1110,17 +1291,23 @@ export default function ClubPOMR({ onClose }: { onClose?: () => void }) {
                         Details
                       </button>
 
+                      {mr.po_no && normalize(mr.po_no) !== 'NO' && normalize(mr.po_no) !== 'N/A' && (
+                        <span className="text-[9.5px] font-mono font-black text-amber-900 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded">
+                          P.O: {mr.po_no}
+                        </span>
+                      )}
                       <button
-                        onClick={() => {
-                          setSelectedArrivalForBind(mr);
-                          setChosenPoForBind(null);
-                          setShowAllPOsInModal(false);
-                          setModalPoSearch('');
-                        }}
-                        className="px-4 py-1.5 bg-indigo-700 hover:bg-indigo-800 text-white font-black text-[10px] uppercase tracking-wider rounded-lg shadow-xs hover:shadow transition flex items-center gap-1.5 cursor-pointer"
+                        onClick={() => openEditMergeModal(mr)}
+                        className={cn(
+                          'px-4 py-1.5 text-white font-black text-[10px] uppercase tracking-wider rounded-lg shadow-xs hover:shadow transition flex items-center gap-1.5 cursor-pointer',
+                          viewMode === 'tagged'
+                            ? 'bg-amber-600 hover:bg-amber-700'
+                            : 'bg-indigo-700 hover:bg-indigo-800'
+                        )}
                       >
-                        <span>Bind P.O / PTF</span>
-                        <ArrowRight className="h-3.5 w-3.5" />
+                        {viewMode === 'tagged' ? <Edit className="h-3.5 w-3.5" /> : null}
+                        <span>{viewMode === 'tagged' ? 'Edit / Re-Merge P.O' : 'Merge P.O / PTF'}</span>
+                        {viewMode !== 'tagged' && <ArrowRight className="h-3.5 w-3.5" />}
                       </button>
                     </div>
                   </div>
@@ -1131,7 +1318,7 @@ export default function ClubPOMR({ onClose }: { onClose?: () => void }) {
         </div>
       </div>
 
-            <ClubbingHistoryModal
+      <ClubbingHistoryModal
         isOpen={showHistoryModal}
         onClose={() => setShowHistoryModal(false)}
         filteredHistory={filteredHistory}
@@ -1142,6 +1329,7 @@ export default function ClubPOMR({ onClose }: { onClose?: () => void }) {
         historyPageSize={historyPageSize}
         setHistoryPageSize={setHistoryPageSize}
         setPrintingClub={setPrintingClub}
+        onEditClubbingRecord={handleEditFromHistory}
         handleDeleteClubbingRecord={handleDeleteClubbingRecord}
         deletingClubId={deletingClubId}
       />
@@ -1150,6 +1338,7 @@ export default function ClubPOMR({ onClose }: { onClose?: () => void }) {
         selectedArrivalForBind={selectedArrivalForBind}
         onClose={() => {
           setSelectedArrivalForBind(null);
+          setEditingClubRecord(null);
           setChosenPoForBind(null);
         }}
         chosenPoForBind={chosenPoForBind}
@@ -1163,6 +1352,12 @@ export default function ClubPOMR({ onClose }: { onClose?: () => void }) {
         loading={loading}
         clubbingRemarks={clubbingRemarks}
         setClubbingRemarks={setClubbingRemarks}
+        isEditMode={Boolean(
+          editingClubRecord ||
+            (selectedArrivalForBind?.po_no &&
+              normalize(selectedArrivalForBind.po_no) !== 'NO' &&
+              normalize(selectedArrivalForBind.po_no) !== 'N/A')
+        )}
       />
 
       {/* Detail Modal for Selected Final Arrival */}
@@ -1249,12 +1444,15 @@ export default function ClubPOMR({ onClose }: { onClose?: () => void }) {
             <div className="bg-slate-50 p-3 px-5 border-t border-slate-100 flex justify-end gap-2">
               <button
                 onClick={() => {
-                  setSelectedArrivalForBind(selectedDetailMr);
+                  const target = selectedDetailMr;
                   setSelectedDetailMr(null);
+                  openEditMergeModal(target);
                 }}
                 className="px-4 py-2 bg-indigo-700 hover:bg-indigo-800 text-white font-black uppercase text-[10px] tracking-wider rounded-lg transition cursor-pointer"
               >
-                Bind This Arrival
+                {selectedDetailMr?.po_no && normalize(selectedDetailMr.po_no) !== 'NO' && normalize(selectedDetailMr.po_no) !== 'N/A'
+                  ? 'Edit / Re-Merge This Arrival'
+                  : 'Merge This Arrival'}
               </button>
               <button
                 onClick={() => setSelectedDetailMr(null)}

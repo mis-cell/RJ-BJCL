@@ -22,6 +22,7 @@ import {
   restorePostgresBackup,
   recoverMissingDataFromAllSources,
   getBackupDirectory,
+  cleanupDuplicateClubbingAndStubRows,
 } from "./src/lib/serverPostgresDb.ts";
 
 // Pure Local PostgreSQL database instance (No Supabase connection or dependency)
@@ -639,6 +640,15 @@ async function startServer() {
   app.post(["/api/admin/recover-missing-data", "/Jute-Purchase-Automation/api/admin/recover-missing-data"], async (_req, res) => {
     try {
       const result = await recoverMissingDataFromAllSources();
+      return res.json(result);
+    } catch (err: any) {
+      return res.status(500).json({ success: false, message: err.message });
+    }
+  });
+
+  app.post(["/api/admin/cleanup-duplicates", "/Jute-Purchase-Automation/api/admin/cleanup-duplicates"], async (_req, res) => {
+    try {
+      const result = await cleanupDuplicateClubbingAndStubRows();
       return res.json(result);
     } catch (err: any) {
       return res.status(500).json({ success: false, message: err.message });

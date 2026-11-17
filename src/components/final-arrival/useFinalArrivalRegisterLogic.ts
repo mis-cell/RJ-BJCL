@@ -736,6 +736,7 @@ export function useFinalArrivalRegisterLogic({ isArchiveView = false }: UseFinal
     const q = searchQuery.toLowerCase().trim();
     const isVoid = r.status === 'cancelled';
     const matchSearch = !q || (
+      (r.temporary_arrival_no || '').toLowerCase().includes(q) ||
       (r.final_arrival_no || '').toLowerCase().includes(q) ||
       (r.mr_no || '').toLowerCase().includes(q) ||
       (r.po_no || '').toLowerCase().includes(q) ||
@@ -773,8 +774,8 @@ export function useFinalArrivalRegisterLogic({ isArchiveView = false }: UseFinal
       const timeB = new Date(b.date || 0).getTime() || 0;
       if (timeA !== timeB) return (timeA - timeB) * dir;
     } else if (sortField === 'arrival') {
-      const arrA = String(a.final_arrival_no || a.mr_no || a.final_arrival_id || '').replace(/^#+/, '').trim().toUpperCase();
-      const arrB = String(b.final_arrival_no || b.mr_no || b.final_arrival_id || '').replace(/^#+/, '').trim().toUpperCase();
+      const arrA = String(a.temporary_arrival_no || (a as any).arrival_no || a.final_arrival_no || a.final_arrival_id || '').replace(/^#+/, '').trim().toUpperCase();
+      const arrB = String(b.temporary_arrival_no || (b as any).arrival_no || b.final_arrival_no || b.final_arrival_id || '').replace(/^#+/, '').trim().toUpperCase();
       const numA = parseInt(arrA.replace(/[^0-9]/g, ''), 10);
       const numB = parseInt(arrB.replace(/[^0-9]/g, ''), 10);
       if (!isNaN(numA) && !isNaN(numB) && numA !== numB) {
@@ -783,8 +784,8 @@ export function useFinalArrivalRegisterLogic({ isArchiveView = false }: UseFinal
       const cmp = arrA.localeCompare(arrB, undefined, { numeric: true });
       if (cmp !== 0) return cmp * dir;
     } else if (sortField === 'mr_no') {
-      const mrA = String(a.mr_no || '').replace(/^#+/, '').trim().toUpperCase();
-      const mrB = String(b.mr_no || '').replace(/^#+/, '').trim().toUpperCase();
+      const mrA = String(a.final_arrival_no || a.mr_no || '').replace(/^#+/, '').trim().toUpperCase();
+      const mrB = String(b.final_arrival_no || b.mr_no || '').replace(/^#+/, '').trim().toUpperCase();
       const numA = parseInt(mrA.replace(/[^0-9]/g, ''), 10);
       const numB = parseInt(mrB.replace(/[^0-9]/g, ''), 10);
       if (!isNaN(numA) && !isNaN(numB) && numA !== numB) {

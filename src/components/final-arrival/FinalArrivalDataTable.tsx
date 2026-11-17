@@ -157,19 +157,21 @@ export function FinalArrivalDataTable({
                       {formattedDate}
                     </td>
 
-                    {/* Final Arrival No */}
+                    {/* Arrival (from final_arrival.temporary_arrival_no) */}
                     <td className="text-center font-black px-2 border-r border-gray-200 whitespace-nowrap">
                       <div className="flex flex-col items-center justify-center py-0.5">
-                        <span className={cn(isSelected ? "text-indigo-950" : "text-gray-900")}>{String(r.final_arrival_no || '').replace(/^#+/, '')}</span>
+                        <span className={cn(isSelected ? "text-indigo-950" : "text-gray-900")}>
+                          {String(r.temporary_arrival_no || (r as any).arrival_no || '--').replace(/^#+/, '').trim() || '--'}
+                        </span>
                         {isPending && (
                           <span className="text-[8.5px] px-1 bg-amber-500 text-white font-extrabold uppercase rounded-sm mt-0.5 tracking-wide leading-none ">Pending</span>
                         )}
                       </div>
                     </td>
 
-                    {/* M.R. No. */}
+                    {/* M.R. No. (from final_arrival.final_arrival_no) */}
                     <td className={cn("text-center font-black font-mono px-2 border-r border-gray-200 whitespace-nowrap", isSelected ? "text-indigo-950" : isPending ? "text-amber-700" : "text-emerald-800")}>
-                      {!isPending && r.mr_no ? String(r.mr_no).replace(/^#+/, '').trim() : '--'}
+                      {String(r.final_arrival_no || (!isPending && r.mr_no ? r.mr_no : '') || '--').replace(/^#+/, '').trim() || '--'}
                     </td>
 
                     {/* PO No */}
