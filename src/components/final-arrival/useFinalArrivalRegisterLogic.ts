@@ -32,10 +32,10 @@ export function useFinalArrivalRegisterLogic({ isArchiveView = false }: UseFinal
   // Pagination (100 rows per page)
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(100);
-  const [sortField, setSortField] = useState<'date' | 'arrival'>('date');
+  const [sortField, setSortField] = useState<'date' | 'arrival' | 'mr_no'>('date');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
 
-  const handleSort = (field: 'date' | 'arrival') => {
+  const handleSort = (field: 'date' | 'arrival' | 'mr_no') => {
     if (sortField === field) {
       setSortDirection(prev => (prev === 'asc' ? 'desc' : 'asc'));
     } else {
@@ -109,9 +109,11 @@ export function useFinalArrivalRegisterLogic({ isArchiveView = false }: UseFinal
     if (records.length === 0) setLoading(true);
     try {
       const targetTable = isArchiveView ? 'm.r_archive' : 'final_arrival';
-      const [mainRes, tempRes] = await Promise.all([
+      const [mainRes, tempRes, millInspRes, matInspRes] = await Promise.all([
         supabase.from(targetTable).select('*').order('created_at', { ascending: false }),
-        supabase.from('temporary_material_received').select('temporary_arrival_no,amad_no,arrival_no,mr_no,unit_name,unit,total_packets,packets,grid_details,weight_reduced,electronic_net_weight,supplier_net_weight,challan_material_weight,weight_qtl')
+        supabase.from('temporary_material_received').select('temporary_arrival_no,amad_no,arrival_no,mr_no,unit_name,unit,total_packets,packets,grid_details,weight_reduced,electronic_net_weight,supplier_net_weight,challan_material_weight,weight_qtl'),
+        supabase.from('mill_inspection_master').select('mr_no,arrival_no').then((r: any) => r, () => ({ data: [] })),
+        supabase.from('material_inspection').select('mr_no,arrival_no,final_arrival_no').then((r: any) => r, () => ({ data: [] }))
       ]);
       let { data, error } = mainRes;
 
@@ -137,6 +139,18 @@ export function useFinalArrivalRegisterLogic({ isArchiveView = false }: UseFinal
         });
       });
 
+      const inspMrByArrival = new Map<string, string>();
+      [...(millInspRes?.data || []), ...(matInspRes?.data || [])].forEach((ins: any) => {
+        const mrVal = String(ins?.mr_no || '').trim();
+        if (!mrVal) return;
+        [ins.arrival_no, ins.final_arrival_no, ins.mr_no].forEach(k => {
+          const clean = String(k || '').trim().toUpperCase();
+          if (clean && !inspMrByArrival.has(clean)) {
+            inspMrByArrival.set(clean, mrVal);
+          }
+        });
+      });
+
       let loadedRecords = (data || []) as FinalArrivalRecord[];
       if (!isArchiveView) {
         loadedRecords = loadedRecords.filter(r => !(r as any).archived_at);
@@ -146,6 +160,17 @@ export function useFinalArrivalRegisterLogic({ isArchiveView = false }: UseFinal
         const keys = [(r as any).temporary_arrival_no, r.final_arrival_no, (r as any).arrival_no, r.mr_no]
           .map(k => String(k || '').trim().toUpperCase())
           .filter(Boolean);
+
+        let resolvedMrNo = r.mr_no && r.mr_no.trim().toUpperCase() !== 'DIRECT REGISTER' ? r.mr_no.trim() : '';
+        if (!resolvedMrNo) {
+          for (const k of keys) {
+            if (inspMrByArrival.has(k)) {
+              resolvedMrNo = inspMrByArrival.get(k)!;
+              break;
+            }
+          }
+        }
+
         let matchedTemp: any = null;
         for (const k of keys) {
           if (tempMap.has(k)) {
@@ -153,13 +178,16 @@ export function useFinalArrivalRegisterLogic({ isArchiveView = false }: UseFinal
             break;
           }
         }
-        if (!matchedTemp) return r;
+        if (!matchedTemp) {
+          return resolvedMrNo && resolvedMrNo !== r.mr_no ? { ...r, mr_no: resolvedMrNo } : r;
+        }
         const tempPackets = getRcptQty(matchedTemp) || Number(matchedTemp.total_packets || matchedTemp.packets || 0);
         const curPackets = getRcptQty(r);
         const tempUnit = String(matchedTemp.unit_name || matchedTemp.unit || '').trim().toUpperCase();
         const curUnit = String(r.unit_name || (r as any).unit || '').trim().toUpperCase();
         return {
           ...r,
+          ...(resolvedMrNo ? { mr_no: resolvedMrNo } : {}),
           unit_name: (!curUnit || (curUnit === 'LOOSE' && tempUnit && tempUnit !== 'LOOSE')) ? (tempUnit || r.unit_name) : r.unit_name,
           ...(curPackets === 0 && tempPackets > 0 ? { total_packets: tempPackets } : {})
         };
@@ -709,7 +737,7 @@ export function useFinalArrivalRegisterLogic({ isArchiveView = false }: UseFinal
     const isVoid = r.status === 'cancelled';
     const matchSearch = !q || (
       (r.final_arrival_no || '').toLowerCase().includes(q) ||
-      /* (r.mr_no || '').toLowerCase().includes(q) || */
+      (r.mr_no || '').toLowerCase().includes(q) ||
       (r.po_no || '').toLowerCase().includes(q) ||
       (r.supplier || '').toLowerCase().includes(q) ||
       (r.broker || '').toLowerCase().includes(q) ||
@@ -753,6 +781,16 @@ export function useFinalArrivalRegisterLogic({ isArchiveView = false }: UseFinal
         return (numA - numB) * dir;
       }
       const cmp = arrA.localeCompare(arrB, undefined, { numeric: true });
+      if (cmp !== 0) return cmp * dir;
+    } else if (sortField === 'mr_no') {
+      const mrA = String(a.mr_no || '').replace(/^#+/, '').trim().toUpperCase();
+      const mrB = String(b.mr_no || '').replace(/^#+/, '').trim().toUpperCase();
+      const numA = parseInt(mrA.replace(/[^0-9]/g, ''), 10);
+      const numB = parseInt(mrB.replace(/[^0-9]/g, ''), 10);
+      if (!isNaN(numA) && !isNaN(numB) && numA !== numB) {
+        return (numA - numB) * dir;
+      }
+      const cmp = mrA.localeCompare(mrB, undefined, { numeric: true });
       if (cmp !== 0) return cmp * dir;
     }
 

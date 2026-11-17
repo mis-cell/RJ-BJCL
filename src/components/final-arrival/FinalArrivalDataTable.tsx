@@ -28,9 +28,9 @@ interface FinalArrivalDataTableProps {
   setCurrentPage: (p: number) => void;
   pageSize: number;
   setPageSize: (size: number) => void;
-  sortField: 'date' | 'arrival';
+  sortField: 'date' | 'arrival' | 'mr_no';
   sortDirection: 'asc' | 'desc';
-  onSort: (field: 'date' | 'arrival') => void;
+  onSort: (field: 'date' | 'arrival' | 'mr_no') => void;
   onEditRecord: (record: FinalArrivalRecord) => void;
   onViewSlip: (record: FinalArrivalRecord) => void;
   onPrintSlip: (record: FinalArrivalRecord) => void;
@@ -100,6 +100,18 @@ export function FinalArrivalDataTable({
                     </span>
                   </div>
                 </th>
+                <th
+                  onClick={() => onSort('mr_no')}
+                  className="px-3 border-r border-[#D94B5A] font-bold text-center w-24 whitespace-nowrap cursor-pointer select-none hover:bg-[#E85A5A] transition-colors"
+                  title="Sort by M.R. No."
+                >
+                  <div className="inline-flex items-center justify-center gap-1">
+                    <span>M.R. No.</span>
+                    <span className="text-[10px] font-sans opacity-90">
+                      {sortField === 'mr_no' ? (sortDirection === 'asc' ? '↑' : '↓') : '⇅'}
+                    </span>
+                  </div>
+                </th>
                 <th className="px-3 border-r border-[#D94B5A] font-bold text-center w-28 whitespace-nowrap">PO</th>
                 <th className="px-3 border-r border-[#D94B5A] font-bold text-left whitespace-nowrap">Supplier Name</th>
                 <th className="px-3 border-r border-[#D94B5A] font-bold text-left whitespace-nowrap">Broker Reference</th>
@@ -153,6 +165,11 @@ export function FinalArrivalDataTable({
                           <span className="text-[8.5px] px-1 bg-amber-500 text-white font-extrabold uppercase rounded-sm mt-0.5 tracking-wide leading-none ">Pending</span>
                         )}
                       </div>
+                    </td>
+
+                    {/* M.R. No. */}
+                    <td className={cn("text-center font-black font-mono px-2 border-r border-gray-200 whitespace-nowrap", isSelected ? "text-indigo-950" : isPending ? "text-amber-700" : "text-emerald-800")}>
+                      {!isPending && r.mr_no ? String(r.mr_no).replace(/^#+/, '').trim() : '--'}
                     </td>
 
                     {/* PO No */}
