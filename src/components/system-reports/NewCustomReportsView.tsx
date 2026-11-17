@@ -99,7 +99,7 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
           supabase.from('material_mismatch').select('*').then(r => r, () => ({ data: [] })),
           supabase.from('satta_mismatch').select('*').then(r => r, () => ({ data: [] })),
           supabase.from('sauda_check_point_deductions').select('*').order('updated_at', { ascending: false }).then(r => r, () => ({ data: [] })),
-          supabase.from('satta_base_rates').select('*').order('start_date', { ascending: false }).then(r => r, () => ({ data: [] }))
+          supabase.from('satta_base_rates').select('*').order('start_date', { ascending: false }).order('created_at', { ascending: false }).then(r => r, () => ({ data: [] }))
         ]);
 
         const rawPos = poRes.data || [];
@@ -950,10 +950,15 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
         const normalizedSattaBaseRates = rawSattaBaseRates
           .map((b: any) => ({
             ymd: normalizeDateYmd(b.start_date || b.effective_date || b.satta_date || b.date || b.base_date || b.start || ''),
-            rate: Number(b.base_rate || b.td5_base_rate || b.rate || b.b_rate || b.baseRate || 0)
+            rate: Number(b.base_rate || b.td5_base_rate || b.rate || b.b_rate || b.baseRate || 0),
+            ts: String(b.updated_at || b.created_at || b.id || '')
           }))
-          .filter((item: { ymd: string; rate: number }) => item.rate > 0)
-          .sort((a: { ymd: string; rate: number }, b: { ymd: string; rate: number }) => b.ymd.localeCompare(a.ymd));
+          .filter((item: { ymd: string; rate: number; ts: string }) => item.rate > 0)
+          .sort((a: { ymd: string; rate: number; ts: string }, b: { ymd: string; rate: number; ts: string }) => {
+            const dCmp = b.ymd.localeCompare(a.ymd);
+            if (dCmp !== 0) return dCmp;
+            return b.ts.localeCompare(a.ts);
+          });
 
         const getTd5RateForDate = (dateStr?: string): number => {
           if (normalizedSattaBaseRates.length === 0) return 0;
@@ -1073,8 +1078,8 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
           });
 
           const saudaRate =
-            Number(cp?.b_rate || cp?.base_rate || cp?.b_rate_qtl || cp?.s_b_rate || cp?.sauda_b_rate || 0) ||
             getTd5RateForDate(saudaDate) ||
+            Number(cp?.b_rate || cp?.base_rate || cp?.b_rate_qtl || cp?.s_b_rate || cp?.sauda_b_rate || 0) ||
             Number(cp?.rate || cp?.purchase_rate || cp?.rate_per_qtl || cp?.sauda_rate || cp?.contract_rate || savedDed?.sauda_rate || 0) ||
             12900;
 

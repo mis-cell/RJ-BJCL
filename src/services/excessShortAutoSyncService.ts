@@ -69,9 +69,15 @@ export const normalizeSattaBaseRates = (baseList: any[]): NormalizedBaseRate[] =
         b.start_date || b.effective_date || b.satta_date || b.date || b.base_date || b.start || ''
       ),
       rate: Number(b.base_rate || b.rate || b.b_rate || b.baseRate || 0),
+      ts: String(b.updated_at || b.created_at || b.id || ''),
     }))
     .filter((item) => item.rate > 0)
-    .sort((a, b) => b.ymd.localeCompare(a.ymd));
+    .sort((a, b) => {
+      const dCmp = b.ymd.localeCompare(a.ymd);
+      if (dCmp !== 0) return dCmp;
+      return b.ts.localeCompare(a.ts);
+    })
+    .map(({ ymd, rate }) => ({ ymd, rate }));
 };
 
 export const getSattaBaseRateOnDateFromList = (
@@ -191,10 +197,15 @@ export function computeExcessShortPayload(
     0,
     parseFloat(po.b_rate || po.base_rate || po.b_rate_qtl || po.s_b_rate || po.sauda_b_rate || 0) || 0
   );
+  const fromSattaBase = getSattaBaseRateOnDateFromList(normalizedBaseRates, saudaDate, 0);
   const saudaDateSattaRate =
-    fromBrate > 0
-      ? fromBrate
-      : getSattaBaseRateOnDateFromList(normalizedBaseRates, saudaDate, directContractRate);
+    fromSattaBase > 0
+      ? fromSattaBase
+      : fromBrate > 0
+        ? fromBrate
+        : directContractRate > 0
+          ? directContractRate
+          : 12000;
 
   const latestMr = mrEntries[mrEntries.length - 1];
   const lastMrNo = latestMr.mrNo;
@@ -717,7 +728,7 @@ export async function syncExcessShortDeductionForSinglePo(poNo: string): Promise
         supabase.from('sauda_master').select('*').ilike('sauda_no', `%${cleanTarget}%`).limit(5).then((r) => r.data || [], () => []),
         supabase.from('material_inspection').select('*').ilike('po_no', `%${cleanTarget}%`).then((r) => r.data || [], () => []),
         supabase.from('mill_inspection_master').select('*').ilike('po_no', `%${cleanTarget}%`).then((r) => r.data || [], () => []),
-        supabase.from('satta_base_rates').select('*').order('start_date', { ascending: false }).then((r) => r.data || [], () => []),
+        supabase.from('satta_base_rates').select('*').order('start_date', { ascending: false }).order('created_at', { ascending: false }).then((r) => r.data || [], () => []),
         supabase.from('sauda_check_point_deductions').select('*').ilike('po_no', `%${cleanTarget}%`).limit(10).then((r) => r.data || [], () => []),
       ]);
 

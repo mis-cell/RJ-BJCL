@@ -110,7 +110,7 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
   
   // Sauda Date state (Defaults to PO date or today)
   const [saudaDate, setSaudaDate] = useState<string>(() => {
-    return normalizeToYMD(po.sauda_date || po.po_date || po.contract_date || po.voucher_date || po.date || new Date().toISOString());
+    return normalizeToYMD(po.sauda_date || po.s_date || po.po_date || po.contract_date || po.voucher_date || po.date || new Date().toISOString());
   });
 
   // Existing Sauda Total Amount
@@ -378,7 +378,7 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
         if (needBaseRates || needInspections || needTempArrivals || needFinalArrivals) {
           const [sBases, matInspRes, inspMasterRes, tArrivals, fArrivals] = await Promise.all([
             needBaseRates
-              ? supabase.from('satta_base_rates').select('*').order('start_date', { ascending: false }).then(r => r.data || [], () => [])
+              ? supabase.from('satta_base_rates').select('*').order('start_date', { ascending: false }).order('created_at', { ascending: false }).then(r => r.data || [], () => [])
               : Promise.resolve(EMPTY_ARRAY),
             needInspections
               ? supabase.from('material_inspection').select('*').or([poNo ? `po_no.ilike.%${poNo}%` : '', saudaNo ? `sauda_no.ilike.%${saudaNo}%` : ''].filter(Boolean).join(',')).then(r => r.data || [], () => [])
@@ -462,15 +462,20 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
     return baseList
       .map((b: any) => ({
         ymd: normalizeToYMD(b.start_date || b.effective_date || b.satta_date || b.date || b.base_date || b.start || ''),
-        rate: Number(b.base_rate || b.rate || b.b_rate || b.baseRate || 0)
+        rate: Number(b.base_rate || b.rate || b.b_rate || b.baseRate || 0),
+        ts: String(b.updated_at || b.created_at || b.id || '')
       }))
-      .filter((item: { ymd: string; rate: number }) => item.rate > 0)
-      .sort((a: { ymd: string; rate: number }, b: { ymd: string; rate: number }) => b.ymd.localeCompare(a.ymd));
+      .filter((item: { ymd: string; rate: number; ts: string }) => item.rate > 0)
+      .sort((a: { ymd: string; rate: number; ts: string }, b: { ymd: string; rate: number; ts: string }) => {
+        const dCmp = b.ymd.localeCompare(a.ymd);
+        if (dCmp !== 0) return dCmp;
+        return b.ts.localeCompare(a.ts);
+      });
   }, [liveBaseRates, sattaBaseRates]);
 
-  // Satta Base Rates lookup by date
-  const getSattaBaseRateOnDate = (dateStr: string): number => {
-    if (normalizedBaseRates.length === 0) return 12000;
+  // Satta Base Rates lookup by date (sourced directly from Satta Chart Base Rate / satta_base_rates)
+  const getSattaBaseRateOnDate = (dateStr: string, fallback = 12000): number => {
+    if (normalizedBaseRates.length === 0) return fallback;
     const targetYmd = normalizeToYMD(dateStr);
 
     if (targetYmd) {
@@ -484,17 +489,17 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
     }
 
     // 3. Fallback: First valid rate in list
-    return normalizedBaseRates[0].rate || 12000;
+    return normalizedBaseRates[0].rate || fallback;
   };
 
-  // Sauda Date Satta Base Rate (Step 6)
+  // Sauda Date Satta Base Rate (sourced directly from Satta Chart Base Rate / satta_base_rates)
   const saudaDateSattaRate = useMemo(() => {
-    // Check direct B Rate (Base Rate) from Sauda Check Point / Purchase Order Header first
+    const fromSatta = getSattaBaseRateOnDate(saudaDate, 0);
+    if (fromSatta > 0) return fromSatta;
+
+    // Fallback to P.O header B-Rate / Contract Rate only if satta_base_rates has no entries
     const fromBrate = parseFloat(po.b_rate || po.base_rate || po.b_rate_qtl || po.s_b_rate || po.sauda_b_rate || 0);
     if (fromBrate > 0) return fromBrate;
-
-    const fromSatta = getSattaBaseRateOnDate(saudaDate);
-    if (fromSatta > 0) return fromSatta;
 
     const directContractRate = parseFloat(po.rate || po.purchase_rate || po.rate_per_qtl || po.sauda_rate || po.contract_rate || 0);
     if (directContractRate > 0) return directContractRate;
@@ -593,7 +598,7 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
 
     const latestMrNo = latestMr.mrNo;
     const latestMrDate = latestMr.rawDate || normalizeToYMD(saudaDate);
-    const latestMrSattaRate = getSattaBaseRateOnDate(latestMrDate);
+    const latestMrSattaRate = getSattaBaseRateOnDate(latestMrDate, saudaDateSattaRate);
 
     // Helper to normalize raw weight (kg, Qtl, or MT) into MT
     const toMtFromRawWt = (val: any): number => {
@@ -784,7 +789,7 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
       sumShortClaimMt += shortClaimMt;
       sumExcessClaimMt += excessClaimMt;
 
-      const mrSattaRate = getSattaBaseRateOnDate(mrEntry.rawDate);
+      const mrSattaRate = getSattaBaseRateOnDate(mrEntry.rawDate, saudaDateSattaRate);
       const rateDiff = mrSattaRate > saudaDateSattaRate ? (mrSattaRate - saudaDateSattaRate) : 0;
 
       rows.push({
