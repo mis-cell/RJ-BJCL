@@ -391,19 +391,18 @@ export function useInspectionLogic() {
           const faCols = "*";
 
           const queries: Promise<any>[] = [
-            withTimeout(Promise.resolve(supabase.from("material_inspection").select(miCols).order("created_at", { ascending: false })), 20000),
-            withTimeout(Promise.resolve(supabase.from("mill_inspection_master").select("*").order("created_at", { ascending: false })), 20000).catch(() => ({ data: null })),
-            withTimeout(Promise.resolve(supabase.from("final_arrival").select(faCols).order("created_at", { ascending: false })), 20000),
-            withTimeout(Promise.resolve(supabase.from("temporary_material_received").select("*").order("created_at", { ascending: false })), 20000).catch(() => ({ data: null })),
-            withTimeout(Promise.resolve(supabase.from("material_inspection_deductions").select("*").order("created_at", { ascending: true })), 20000).catch(() => ({ data: null })),
-            withTimeout(Promise.resolve(supabase.from("mill_inspection_deduction").select("*").order("created_at", { ascending: true })), 20000).catch(() => ({ data: null }))
+            withTimeout(Promise.resolve(supabase.from("material_inspection").select(miCols).order("created_at", { ascending: false })), 60000),
+            withTimeout(Promise.resolve(supabase.from("mill_inspection_master").select("*").order("created_at", { ascending: false })), 60000).catch(() => ({ data: null })),
+            withTimeout(Promise.resolve(supabase.from("final_arrival").select(faCols).order("created_at", { ascending: false })), 60000),
+            withTimeout(Promise.resolve(supabase.from("material_inspection_deductions").select("*").order("created_at", { ascending: true })), 30000).catch(() => ({ data: null })),
+            withTimeout(Promise.resolve(supabase.from("mill_inspection_deduction").select("*").order("created_at", { ascending: true })), 30000).catch(() => ({ data: null }))
           ];
 
-            queries.push(withTimeout(Promise.resolve(supabase.from("deduction_master").select("*").order("deduction", { ascending: true })), 20000).catch(() => ({ data: null })));
-            queries.push(withTimeout(Promise.resolve(supabase.from("moisture_logic").select("*")), 20000).catch(() => ({ data: null })));
-            queries.push(withTimeout(Promise.resolve(supabase.from("mill_issue_master").select("issue_no, issue_type, requisition_no, created_at").order("created_at", { ascending: false })), 20000).catch(() => ({ data: null })));
+            queries.push(withTimeout(Promise.resolve(supabase.from("deduction_master").select("*").order("deduction", { ascending: true })), 30000).catch(() => ({ data: null })));
+            queries.push(withTimeout(Promise.resolve(supabase.from("moisture_logic").select("*")), 30000).catch(() => ({ data: null })));
+            queries.push(withTimeout(Promise.resolve(supabase.from("mill_issue_master").select("issue_no, issue_type, requisition_no, created_at").order("created_at", { ascending: false })), 30000).catch(() => ({ data: null })));
 
-          const [miRes, mimRes, faRes, tmrRes, dedPrimaryRes, dedFallbackRes, dMasterRes, moistRes, issueMasterRes] = await Promise.all(queries);
+          const [miRes, mimRes, faRes, dedPrimaryRes, dedFallbackRes, dMasterRes, moistRes, issueMasterRes] = await Promise.all(queries);
 
           if (issueMasterRes?.data && Array.isArray(issueMasterRes.data)) {
             issueMasterRes.data.forEach((iss: any) => {
@@ -435,30 +434,18 @@ export function useInspectionLogic() {
               }
             });
           }
-          if (faRes.data && Array.isArray(faRes.data)) {
+          if (faRes?.data && Array.isArray(faRes.data) && faRes.data.length > 0) {
             faList = [...faRes.data];
-          }
-          if (tmrRes?.data && Array.isArray(tmrRes.data)) {
-            const existingFaNos = new Set<string>();
-            faList.forEach(f => {
-              [f.final_arrival_no, f.temporary_arrival_no, f.arrival_no, f.mr_no, f.amad_no].forEach(k => {
-                const clean = String(k || '').trim().toUpperCase();
-                if (clean) existingFaNos.add(clean);
-              });
-            });
-            tmrRes.data.forEach((t: any) => {
-              const tNo = (t.temporary_arrival_no || t.amad_no || t.arrival_no || '').trim().toUpperCase();
-              const tMr = (t.mr_no || '').trim().toUpperCase();
-              if (tNo && !existingFaNos.has(tNo) && (!tMr || !existingFaNos.has(tMr))) {
-                faList.push({
-                  ...t,
-                  final_arrival_no: t.temporary_arrival_no || t.amad_no || t.arrival_no,
-                  arrival_no: t.temporary_arrival_no || t.amad_no || t.arrival_no,
-                  arrival_date: t.date || t.temporary_arrival_date
-                });
-                existingFaNos.add(tNo);
+          } else if (supabase) {
+            const directFa = await supabase.from("final_arrival").select("*").order("created_at", { ascending: false });
+            if (directFa?.data && Array.isArray(directFa.data) && directFa.data.length > 0) {
+              faList = [...directFa.data];
+            } else {
+              const fallbackFa = await dbModule.fetchAll("final_arrival").catch(() => []);
+              if (Array.isArray(fallbackFa) && fallbackFa.length > 0) {
+                faList = [...fallbackFa];
               }
-            });
+            }
           }
           if (dMasterRes && dMasterRes.data && Array.isArray(dMasterRes.data)) {
             setDeductionMasterList(prev => JSON.stringify(prev) === JSON.stringify(dMasterRes.data) ? prev : dMasterRes.data);
@@ -1042,7 +1029,10 @@ export function useInspectionLogic() {
 
   const populateFromFinalArrival = async (fa: any) => {
     try {
-      const arrNo = fa.final_arrival_no || fa.arrival_no || fa.temporary_arrival_no || fa.mr_no || "";
+      const rawCandidates = [fa.final_arrival_no, fa.mr_no, fa.arrival_no, fa.temporary_arrival_no]
+        .map((v: any) => String(v || "").replace(/^#+/, "").trim())
+        .filter((s: string) => Boolean(s) && !["mr", "mr0", "ar", "ar0", "direct register", "na", "n/a", "none", "-", "--"].includes(s.toLowerCase()));
+      const arrNo = rawCandidates.find((s: string) => /^mr0*[1-9]/i.test(s)) || rawCandidates[0] || "";
       const isLoose = (fa.unit_name || fa.unit_code || fa.unit || "").toString().trim().toUpperCase().includes("LOOSE");
       const resolvedUnit = isLoose ? "LOOSE" : (fa.unit_name || fa.unit || "BALES");
       const resolvedArea = fa.arrival_area_name || fa.area || fa.arrival_area || "";
@@ -2241,35 +2231,71 @@ export function useInspectionLogic() {
   const totalDeductions = activeDataset.reduce((acc, r) => acc + (Number(r.deduction_amount) || 0), 0);
 
   const pendingArrivalList = useMemo(() => {
-    return finalArrivalList.filter(fa => {
-      const normalize = (s: any) => String(s || "").trim().toLowerCase().replace(/^#/, '');
+    const normalize = (s: any) => String(s || "").trim().toLowerCase().replace(/^#+/, "");
+    const isMeaningfulToken = (val: string) =>
+      Boolean(val) &&
+      !["mr", "mr0", "ar", "ar0", "direct register", "direct", "na", "n/a", "none", "nil", "-", "--", "null", "undefined"].includes(val);
 
+    const pending = finalArrivalList.filter(fa => {
       const faNo = normalize(fa.final_arrival_no || fa.arrival_no);
       const faMrNo = normalize(fa.mr_no);
       const faId = normalize(fa.final_arrival_id);
       const faTempNo = normalize(fa.temporary_arrival_no);
-      const faLorry = String(fa.lorry_number || "").trim().toLowerCase().replace(/[^a-z0-9]/g, "");
+      const faLorry = String(fa.lorry_number || fa.lorry_no || "").trim().toLowerCase().replace(/[^a-z0-9]/g, "");
+
+      const faPrimaryMr = (isMeaningfulToken(faNo) && faNo.startsWith("mr"))
+        ? faNo
+        : ((isMeaningfulToken(faMrNo) && faMrNo.startsWith("mr")) ? faMrNo : "");
+
+      // Only show finalized Final Arrival M.R. No. records (exclude unfinalized AR-only stubs if any exist)
+      if (!faPrimaryMr && (!isMeaningfulToken(faNo) || faNo.startsWith("ar"))) {
+        return false;
+      }
 
       const isAlreadyInspected = records.some(r => {
         const rMr = normalize(r.mr_no);
         const rArr = normalize(r.arrival_no);
+        const rFaNo = normalize((r as any).final_arrival_no);
         const rTemp = normalize((r as any).temporary_arrival_no);
         const rLorry = String(r.lorry_number || "").trim().toLowerCase().replace(/[^a-z0-9]/g, "");
 
-        if (faNo && (rMr === faNo || rArr === faNo)) return true;
-        if (faMrNo && (rMr === faMrNo || rArr === faMrNo)) return true;
-        if (faId && (rMr === faId || rArr === faId || rMr === `fa-${faId}` || rArr === `fa-${faId}`)) return true;
-        if (faTempNo && (rTemp === faTempNo || rMr === faTempNo || rArr === faTempNo)) return true;
+        if (isMeaningfulToken(faNo) && (rMr === faNo || rArr === faNo || rFaNo === faNo)) return true;
+        if (isMeaningfulToken(faMrNo) && faMrNo.startsWith("mr") && (rMr === faMrNo || rArr === faMrNo || rFaNo === faMrNo)) return true;
+
+        const rHasDifferentRealMr =
+          Boolean(faPrimaryMr) &&
+          isMeaningfulToken(rMr) &&
+          rMr.startsWith("mr") &&
+          rMr !== faPrimaryMr;
+
+        if (!rHasDifferentRealMr) {
+          if (isMeaningfulToken(faMrNo) && (rMr === faMrNo || rArr === faMrNo)) return true;
+          if (isMeaningfulToken(faId) && (rMr === faId || rArr === faId || rMr === `fa-${faId}` || rArr === `fa-${faId}`)) return true;
+          if (isMeaningfulToken(faTempNo) && (rTemp === faTempNo || rMr === faTempNo || rArr === faTempNo)) return true;
+        }
 
         if (faLorry && rLorry && faLorry === rLorry) {
-          if (faNo && (rMr.includes(faNo) || rArr.includes(faNo))) return true;
-          if (faMrNo && (rMr.includes(faMrNo) || rArr.includes(faMrNo))) return true;
+          if (isMeaningfulToken(faNo) && (rMr === faNo || rArr === faNo)) return true;
+          if (isMeaningfulToken(faMrNo) && faMrNo.startsWith("mr") && (rMr === faMrNo || rArr === faMrNo)) return true;
         }
 
         return false;
       });
 
       return !isAlreadyInspected;
+    });
+
+    return pending.sort((a, b) => {
+      const dateA = new Date(a.date || a.final_arrival_date || a.arrival_date || a.created_at || 0).getTime() || 0;
+      const dateB = new Date(b.date || b.final_arrival_date || b.arrival_date || b.created_at || 0).getTime() || 0;
+      if (dateA !== dateB) return dateB - dateA;
+
+      const mrA = normalize(a.final_arrival_no || a.mr_no || a.arrival_no);
+      const mrB = normalize(b.final_arrival_no || b.mr_no || b.arrival_no);
+      const numA = parseInt(mrA.replace(/[^0-9]/g, ""), 10);
+      const numB = parseInt(mrB.replace(/[^0-9]/g, ""), 10);
+      if (!isNaN(numA) && !isNaN(numB) && numA !== numB) return numB - numA;
+      return mrB.localeCompare(mrA, undefined, { numeric: true });
     });
   }, [finalArrivalList, records]);
 

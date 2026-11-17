@@ -26,11 +26,25 @@ const SearchablePendingArrivalSelect: React.FC<SearchablePendingArrivalSelectPro
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
+  const resolveDisplayMrNo = (fa: any) => {
+    const clean = (v: any) => String(v || "").replace(/^#+/, "").trim();
+    const candidates = [fa.final_arrival_no, fa.mr_no, fa.arrival_no, fa.temporary_arrival_no].map(clean);
+    const realMr = candidates.find((s) => /^mr0*[1-9]/i.test(s));
+    if (realMr) return realMr;
+    return (
+      candidates.find(
+        (s) =>
+          Boolean(s) &&
+          !["mr", "mr0", "ar", "ar0", "-", "--", "na", "n/a", "none", "direct register"].includes(s.toLowerCase())
+      ) || "MR"
+    );
+  };
+
   const filteredList = pendingArrivalList.filter((fa) => {
     if (!searchTerm.trim()) return true;
 
     const q = searchTerm.toLowerCase().trim();
-    const faNo = String(fa.final_arrival_no || fa.mr_no || fa.arrival_no || fa.temporary_arrival_no || "").toLowerCase();
+    const faNo = resolveDisplayMrNo(fa).toLowerCase();
     const mrNo = String(fa.mr_no || "").toLowerCase();
     const tempNo = String(fa.temporary_arrival_no || fa.amad_no || "").toLowerCase();
     const poNo = String(fa.po_no || "without p.o.").toLowerCase();
@@ -114,7 +128,7 @@ const SearchablePendingArrivalSelect: React.FC<SearchablePendingArrivalSelectPro
               </div>
             ) : (
               filteredList.map((fa, idx) => {
-                const arrNo = fa.final_arrival_no || fa.mr_no || fa.arrival_no || fa.temporary_arrival_no || 'MR';
+                const arrNo = resolveDisplayMrNo(fa);
                 const rawPo = String(fa.po_no || '').trim();
                 const hasPo = rawPo !== '' && !['NO', 'N/A', 'NONE', '-'].includes(rawPo.toUpperCase());
                 const poDisplay = hasPo ? `PO: ${rawPo}` : 'Without P.O.';
