@@ -21,13 +21,6 @@ import {
   extractContractNumber,
   isPtfRecord
 } from './reportHelpers';
-import {
-  buildFinalArrivalIndex,
-  extractFinalArrivalOfficialMr,
-  extractFinalArrivalLinkedTemp,
-  resolveOfficialArrivalId,
-  normalizeArrivalToken
-} from '../utils/arrivalMrResolver';
 
 
 // Compile all raw transactional tables into structured, accurate percentage data
@@ -93,20 +86,14 @@ export function compileReportData(
     if (contractNum) scpByPO[contractNum] = scp;
   });
 
-  const faIndex = buildFinalArrivalIndex(mrList || []);
-
-  // Fast index for Temporary Arrival dates from temporary_material_received (indexed by both Temp No & finalized M.R. No.)
+  // Fast index for Temporary Arrival dates from temporary_material_received
   const tempMRDateMap: Record<string, string> = {};
   const tempDatesByPO: Record<string, string[]> = {};
   (tempMRList || []).forEach(tmr => {
     const tDate = tmr.date || tmr.temporary_arrival_date || tmr.receipt_date || '';
     if (!tDate) return;
     const tNo = String(tmr.temporary_arrival_no || tmr.mr_no || tmr.amad_id || '').trim().toUpperCase();
-    if (tNo) {
-      tempMRDateMap[tNo] = tDate;
-      const officialMr = normalizeArrivalToken(resolveOfficialArrivalId(tNo, faIndex));
-      if (officialMr && officialMr !== tNo) tempMRDateMap[officialMr] = tDate;
-    }
+    if (tNo) tempMRDateMap[tNo] = tDate;
     const po = String(tmr.po_no || '').trim().toUpperCase();
     if (po) {
       if (!tempDatesByPO[po]) tempDatesByPO[po] = [];
@@ -184,13 +171,12 @@ export function compileReportData(
     if (!mrByPO[cleanKey]) {
       mrByPO[cleanKey] = { finalMT: 0, tempMT: 0, finalMRs: [], tempMRs: [], lastDate: '', arrivals: [] };
     }
-    const officialMr = extractFinalArrivalOfficialMr(mrObj);
-    const mrUniqueId = String(officialMr || mrObj.final_arrival_no || mrObj.mr_no || mrObj.id || mrObj.final_arrival_id || mrObj.amad_no || '').trim().toUpperCase();
-    if (mrUniqueId && mrByPO[cleanKey].arrivals.some((a: any) => String(extractFinalArrivalOfficialMr(a) || a.final_arrival_no || a.mr_no || a.id || a.final_arrival_id || a.amad_no || '').trim().toUpperCase() === mrUniqueId)) {
+    const mrUniqueId = String(mrObj.id || mrObj.final_arrival_id || mrObj.mr_no || mrObj.final_arrival_no || mrObj.amad_no || '');
+    if (mrUniqueId && mrByPO[cleanKey].arrivals.some((a: any) => String(a.id || a.final_arrival_id || a.mr_no || a.final_arrival_no || a.amad_no || '') === mrUniqueId)) {
       return;
     }
     mrByPO[cleanKey].finalMT += wtMT;
-    const mrNum = officialMr || mrObj.final_arrival_no || mrObj.mr_no || mrObj.amad_no;
+    const mrNum = mrObj.mr_no || mrObj.final_arrival_no || mrObj.amad_no;
     if (mrNum && !mrByPO[cleanKey].finalMRs.includes(mrNum)) {
       mrByPO[cleanKey].finalMRs.push(mrNum);
     }
@@ -215,21 +201,19 @@ export function compileReportData(
     // Cap: Ensure realistic single lorry weight in MT
     const finalWt = wt > 100 ? wt / 1000 : wt;
 
-    const officialMrNo = extractFinalArrivalOfficialMr(mr) || mr.final_arrival_no || mr.mr_no || '';
-    const enrichedMr = officialMrNo ? { ...mr, mr_no: officialMrNo } : mr;
-    allMatchedArrivals.push({ ...enrichedMr, calculatedMT: finalWt });
+    allMatchedArrivals.push({ ...mr, calculatedMT: finalWt });
 
     // Index under deduplicated contract keys so overlapping aliases (e.g. cleanDigits === contractNum) never double-count
     const rawPo = String(mr.po_no || '').trim().toUpperCase();
     const rawId = String(mr.po_id || '').trim().toUpperCase();
-    const rawAmad = String(officialMrNo || mr.amad_no || mr.mr_no || mr.final_arrival_no || '').trim().toUpperCase();
+    const rawAmad = String(mr.amad_no || mr.mr_no || mr.final_arrival_no || '').trim().toUpperCase();
     const cleanDigits = getCleanDigits(rawPo);
     const contractNum = extractContractNumber(rawPo);
 
     const uniqueKeys = new Set<string>(
       [rawPo, rawId, rawAmad, cleanDigits, contractNum].filter(Boolean)
     );
-    uniqueKeys.forEach(k => addToMrBucket(k, finalWt, enrichedMr));
+    uniqueKeys.forEach(k => addToMrBucket(k, finalWt, mr));
   });
 
   // Pre-index Material Payments by PO Number, Sauda Number & Broker Name
@@ -387,19 +371,9 @@ export function compileReportData(
 
     if (matchingReceipt.arrivals && matchingReceipt.arrivals.length > 0) {
       matchingReceipt.arrivals.forEach((arr: any) => {
-        const officialMr = extractFinalArrivalOfficialMr(arr) || arr.final_arrival_no || arr.mr_no || '';
-        const linkedTemp = extractFinalArrivalLinkedTemp(arr) || arr.temporary_arrival_no || arr.amad_no || '';
-        const arrTmrNo = String(linkedTemp || officialMr).trim().toUpperCase();
+        const arrTmrNo = String(arr.temporary_arrival_no || arr.mr_no || arr.final_arrival_no || arr.amad_no || '').trim().toUpperCase();
         // Temporary Arrival Date ("Temporary Date *")
-        const tempArrivalDateStr =
-          arr.temporary_arrival_date ||
-          (arrTmrNo ? tempMRDateMap[arrTmrNo] : '') ||
-          (officialMr ? tempMRDateMap[officialMr.toUpperCase()] : '') ||
-          (tempDatesByPO[sId]?.[0]) ||
-          (tempDatesByPO[sNo.toUpperCase()]?.[0]) ||
-          arr.date ||
-          arr.final_arrival_date ||
-          '';
+        const tempArrivalDateStr = arr.temporary_arrival_date || tempMRDateMap[arrTmrNo] || (tempDatesByPO[sId]?.[0]) || (tempDatesByPO[sNo.toUpperCase()]?.[0]) || arr.date || arr.final_arrival_date || '';
         const tempArrivalDateObj = parseDateOnly(tempArrivalDateStr);
         const arrWt = Number(arr.calculatedMT) || (deliveredWt / matchingReceipt.arrivals.length);
 
@@ -415,9 +389,9 @@ export function compileReportData(
             daysPending = Math.max(daysPending, lateDays);
 
             delayedArrivalRecords.push({
-              id: arr.id || officialMr || `${sNo}-${delayedArrivalRecords.length + 1}`,
-              recordNo: officialMr || linkedTemp || sNo,
-              tempArrivalNo: linkedTemp || officialMr || 'N/A',
+              id: arr.id || arr.mr_no || arr.final_arrival_no || `${sNo}-${delayedArrivalRecords.length + 1}`,
+              recordNo: arr.final_arrival_no || arr.mr_no || arr.temporary_arrival_no || sNo,
+              tempArrivalNo: arr.temporary_arrival_no || arr.final_arrival_no || arr.mr_no || 'N/A',
               contractNo: sNo,
               type: 'Delayed Arrival',
               date: tempArrivalDateStr,
@@ -437,9 +411,9 @@ export function compileReportData(
             contractOnTimeMT += arrWt;
 
             onTimeArrivalRecords.push({
-              id: arr.id || officialMr || `${sNo}-${onTimeArrivalRecords.length + 1}`,
-              recordNo: officialMr || linkedTemp || sNo,
-              tempArrivalNo: linkedTemp || officialMr || 'N/A',
+              id: arr.id || arr.mr_no || arr.final_arrival_no || `${sNo}-${onTimeArrivalRecords.length + 1}`,
+              recordNo: arr.final_arrival_no || arr.mr_no || arr.temporary_arrival_no || sNo,
+              tempArrivalNo: arr.temporary_arrival_no || arr.final_arrival_no || arr.mr_no || 'N/A',
               contractNo: sNo,
               type: 'On-Time Arrival',
               date: tempArrivalDateStr,
@@ -1193,17 +1167,8 @@ export function compileReportData(
       const pDeliveryToObj = parseDateOnly(pDeliveryTo);
       if (mrInfo.arrivals && mrInfo.arrivals.length > 0) {
         mrInfo.arrivals.forEach((arr: any) => {
-          const officialMr = extractFinalArrivalOfficialMr(arr) || arr.final_arrival_no || arr.mr_no || '';
-          const linkedTemp = extractFinalArrivalLinkedTemp(arr) || arr.temporary_arrival_no || arr.amad_no || '';
-          const arrTmrNo = String(linkedTemp || officialMr).trim().toUpperCase();
-          const tempArrivalDateStr =
-            arr.temporary_arrival_date ||
-            (arrTmrNo ? tempMRDateMap[arrTmrNo] : '') ||
-            (officialMr ? tempMRDateMap[officialMr.toUpperCase()] : '') ||
-            (tempDatesByPO[pNo]?.[0]) ||
-            arr.date ||
-            arr.final_arrival_date ||
-            '';
+          const arrTmrNo = String(arr.temporary_arrival_no || arr.mr_no || arr.final_arrival_no || arr.amad_no || '').trim().toUpperCase();
+          const tempArrivalDateStr = arr.temporary_arrival_date || tempMRDateMap[arrTmrNo] || (tempDatesByPO[pNo]?.[0]) || arr.date || arr.final_arrival_date || '';
           const tempArrivalDateObj = parseDateOnly(tempArrivalDateStr);
           const arrWt = Number(arr.calculatedMT) || (rWt / mrInfo.arrivals.length);
 
@@ -1213,9 +1178,9 @@ export function compileReportData(
               const diffMs = tempArrivalDateObj.getTime() - pDeliveryToObj.getTime();
               const lateDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
               delayedArrivalRecords.push({
-                id: arr.id || officialMr || `${pNo}-${delayedArrivalRecords.length + 1}`,
-                recordNo: officialMr || linkedTemp || pNo,
-                tempArrivalNo: linkedTemp || officialMr || 'N/A',
+                id: arr.id || arr.mr_no || arr.final_arrival_no || `${pNo}-${delayedArrivalRecords.length + 1}`,
+                recordNo: arr.final_arrival_no || arr.mr_no || arr.temporary_arrival_no || pNo,
+                tempArrivalNo: arr.temporary_arrival_no || arr.final_arrival_no || arr.mr_no || 'N/A',
                 contractNo: pNo,
                 type: 'Delayed PTF Arrival',
                 date: tempArrivalDateStr,
@@ -1232,9 +1197,9 @@ export function compileReportData(
             } else {
               onTimeDeliveredMT += arrWt;
               onTimeArrivalRecords.push({
-                id: arr.id || officialMr || `${pNo}-${onTimeArrivalRecords.length + 1}`,
-                recordNo: officialMr || linkedTemp || pNo,
-                tempArrivalNo: linkedTemp || officialMr || 'N/A',
+                id: arr.id || arr.mr_no || arr.final_arrival_no || `${pNo}-${onTimeArrivalRecords.length + 1}`,
+                recordNo: arr.final_arrival_no || arr.mr_no || arr.temporary_arrival_no || pNo,
+                tempArrivalNo: arr.temporary_arrival_no || arr.final_arrival_no || arr.mr_no || 'N/A',
                 contractNo: pNo,
                 type: 'On-Time PTF Arrival',
                 date: tempArrivalDateStr,

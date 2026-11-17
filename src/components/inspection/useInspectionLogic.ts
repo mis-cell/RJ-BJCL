@@ -33,7 +33,6 @@ import {
 export function useInspectionLogic() {
   const [records, setRecords] = useState<InspectionMasterRecord[]>([]);
   const [finalArrivalList, setFinalArrivalList] = useState<any[]>([]);
-  const [finalArrivalOnlyList, setFinalArrivalOnlyList] = useState<any[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const isFetchingRecordsRef = useRef<boolean>(false);
   const [searchQuery, setSearchQuery] = useState<string>("");
@@ -436,66 +435,9 @@ export function useInspectionLogic() {
               }
             });
           }
-          const cleanArrTok = (v: any) => String(v || "").trim().replace(/^#+/, "").trim();
-          const inspMrByArrival = new Map<string, string>();
-          inspectionList.forEach((ins: any) => {
-            const mrVal = cleanArrTok(ins?.mr_no);
-            if (!mrVal || !/^mr/i.test(mrVal)) return;
-            [ins.arrival_no, ins.final_arrival_no, ins.mr_no].forEach((k) => {
-              const clean = cleanArrTok(k).toUpperCase();
-              if (clean && !inspMrByArrival.has(clean)) {
-                inspMrByArrival.set(clean, mrVal);
-              }
-            });
-          });
-
-          const tempByKey = new Map<string, any>();
-          (tmrRes?.data || []).forEach((t: any) => {
-            [t.temporary_arrival_no, t.amad_no, t.arrival_no, t.mr_no].forEach((k) => {
-              const clean = cleanArrTok(k).toUpperCase();
-              if (clean && !tempByKey.has(clean)) {
-                tempByKey.set(clean, t);
-              }
-            });
-          });
-
-          let pureFinalArrivalList: any[] = [];
           if (faRes.data && Array.isArray(faRes.data)) {
-            pureFinalArrivalList = faRes.data.map((fa: any) => {
-              const keys = [fa.temporary_arrival_no, fa.final_arrival_no, fa.arrival_no, fa.mr_no]
-                .map((k) => cleanArrTok(k).toUpperCase())
-                .filter(Boolean);
-
-              let resolvedMrNo = cleanArrTok(fa.mr_no);
-              if (resolvedMrNo.toUpperCase() === "DIRECT REGISTER") resolvedMrNo = "";
-              if (!resolvedMrNo) {
-                for (const k of keys) {
-                  if (inspMrByArrival.has(k)) {
-                    resolvedMrNo = inspMrByArrival.get(k)!;
-                    break;
-                  }
-                }
-              }
-
-              const matchedTemp = keys.map((k) => tempByKey.get(k)).find(Boolean);
-              const curUnit = String(fa.unit_name || fa.unit || "").trim().toUpperCase();
-              const tempUnit = String(matchedTemp?.unit_name || matchedTemp?.unit || "").trim().toUpperCase();
-              const curPackets = Number(fa.total_packets || fa.packets || 0);
-              const tempPackets = Number(matchedTemp?.total_packets || matchedTemp?.packets || 0);
-
-              return {
-                ...fa,
-                ...(resolvedMrNo && !cleanArrTok(fa.mr_no) ? { mr_no: resolvedMrNo } : {}),
-                unit_name: (!curUnit || (curUnit === "LOOSE" && tempUnit && tempUnit !== "LOOSE")) ? (tempUnit || fa.unit_name) : fa.unit_name,
-                ...(curPackets === 0 && tempPackets > 0 ? { total_packets: tempPackets } : {}),
-                ...(!fa.grid_details && matchedTemp?.grid_details ? { grid_details: matchedTemp.grid_details } : {}),
-                ...(!Number(fa.apmc_fees) && Number(matchedTemp?.apmc_fees) > 0 ? { apmc_fees: matchedTemp.apmc_fees } : {}),
-                _sourceTable: "final_arrival",
-              };
-            });
-            faList = [...pureFinalArrivalList];
+            faList = [...faRes.data];
           }
-
           if (tmrRes?.data && Array.isArray(tmrRes.data)) {
             const existingFaNos = new Set(faList.map(f => (f.final_arrival_no || f.temporary_arrival_no || f.arrival_no || '').trim().toUpperCase()).filter(Boolean));
             tmrRes.data.forEach((t: any) => {
@@ -505,14 +447,12 @@ export function useInspectionLogic() {
                   ...t,
                   final_arrival_no: t.temporary_arrival_no || t.arrival_no,
                   arrival_no: t.temporary_arrival_no || t.arrival_no,
-                  arrival_date: t.date || t.temporary_arrival_date,
-                  _sourceTable: "temporary_material_received",
+                  arrival_date: t.date || t.temporary_arrival_date
                 });
                 existingFaNos.add(tNo);
               }
             });
           }
-          setFinalArrivalOnlyList(pureFinalArrivalList);
           if (dMasterRes && dMasterRes.data && Array.isArray(dMasterRes.data)) {
             setDeductionMasterList(prev => JSON.stringify(prev) === JSON.stringify(dMasterRes.data) ? prev : dMasterRes.data);
           } else {
@@ -1095,16 +1035,7 @@ export function useInspectionLogic() {
 
   const populateFromFinalArrival = async (fa: any) => {
     try {
-      const cleanToken = (v: any) => String(v || "").replace(/^#+/, "").trim();
-      const normalizePoVal = (v: any) => {
-        const s = String(v || "").trim();
-        return /^(?:--|no|n\/a|none|null|undefined|-)$/i.test(s) ? "" : s;
-      };
-      const mrCandidates = [fa._resolvedMrNo, fa.mr_no, fa.final_arrival_no, fa.arrival_no, fa.temporary_arrival_no]
-        .map(cleanToken)
-        .filter((t) => t && t.toUpperCase() !== "DIRECT REGISTER");
-      const arrNo = mrCandidates.find(v => v.toUpperCase().startsWith("MR")) || mrCandidates[0] || "";
-      const initialPo = normalizePoVal(fa.po_no);
+      const arrNo = fa.final_arrival_no || fa.arrival_no || fa.temporary_arrival_no || fa.mr_no || "";
       const isLoose = (fa.unit_name || fa.unit_code || fa.unit || "").toString().trim().toUpperCase().includes("LOOSE");
       const resolvedUnit = isLoose ? "LOOSE" : (fa.unit_name || fa.unit || "BALES");
       const resolvedArea = fa.arrival_area_name || fa.area || fa.arrival_area || "";
@@ -1121,16 +1052,16 @@ export function useInspectionLogic() {
         clmMoist = calculateClaimMoisture(actMoist, arrDate, resolvedArea, moistureLogicRules);
       }
 
-      // 1. Update Header Form with full details from the selected Final Arrival record (works with or without a P.O. No.)
+      // 1. Update Header Form with full details from the selected arrival (do not leak prev form PO/dates)
       setHeaderForm(prev => {
         const next: InspectionMasterRecord = {
           ...prev,
           mr_no: arrNo || "",
           arrival_no: arrNo,
           arrival_date: arrDate,
-          po_no: initialPo,
+          po_no: fa.po_no || "",
           mr_date: arrDate,
-          po_date: initialPo ? (sanitizeDate(fa.po_date) || "") : "",
+          po_date: sanitizeDate(fa.po_date || fa.date) || "",
           supplier_name: fa.supplier || fa.challan_supplier || fa.supplier_name || "",
           broker_name: fa.broker || fa.broker_name || "",
           lorry_number: fa.lorry_number || fa.lorry_no || "",
@@ -1165,64 +1096,43 @@ export function useInspectionLogic() {
         }
       }
 
-      // Query Supabase for matching Final Arrival (by id / MR / Temp Arrival No) and Temporary Arrival to reconcile Weight, Unit, and Packets
+      // Always query Supabase for both Final Arrival and Temporary Arrival so we can reconcile exact lorry Weight (M.Ton), Unit, and Packets
       let foundFa: any = null;
       let foundTmr: any = null;
       if (supabase) {
         try {
           const arrClean = arrNo.trim();
-          const tempNoClean = cleanToken(fa.temporary_arrival_no || fa.amad_no || arrClean);
-          const faOrParts = [
-            arrClean ? `final_arrival_no.eq.${arrClean},arrival_no.eq.${arrClean},temporary_arrival_no.eq.${arrClean},mr_no.eq.${arrClean}` : "",
-            tempNoClean && tempNoClean !== arrClean ? `final_arrival_no.eq.${tempNoClean},arrival_no.eq.${tempNoClean},temporary_arrival_no.eq.${tempNoClean},mr_no.eq.${tempNoClean}` : ""
-          ].filter(Boolean).join(",");
-
-          const faQuery = fa.final_arrival_id
-            ? supabase.from('final_arrival').select('*').eq('final_arrival_id', fa.final_arrival_id).limit(1)
-            : (faOrParts ? supabase.from('final_arrival').select('*').or(faOrParts).limit(1) : Promise.resolve({ data: null }));
-
+          const tempNoClean = String(fa.temporary_arrival_no || fa.amad_no || arrClean).trim();
           const [faDbRes, tmrDbRes, fadRes, tmdRes, midRes, millDetailRes] = await Promise.all([
-            faQuery,
+            arrClean ? supabase.from('final_arrival').select('*').or(`final_arrival_no.eq.${arrClean},arrival_no.eq.${arrClean},temporary_arrival_no.eq.${arrClean},mr_no.eq.${arrClean}`).limit(1) : Promise.resolve({ data: null }),
             (arrClean || tempNoClean) ? supabase.from('temporary_material_received').select('*').or(`temporary_arrival_no.eq.${arrClean},amad_no.eq.${arrClean},arrival_no.eq.${arrClean},mr_no.eq.${arrClean}${tempNoClean && tempNoClean !== arrClean ? `,temporary_arrival_no.eq.${tempNoClean},amad_no.eq.${tempNoClean}` : ''}`).limit(1) : Promise.resolve({ data: null }),
             arrClean ? supabase.from('final_arrival_details').select('*').eq('final_arrival_no', arrClean) : Promise.resolve({ data: null }),
-            (tempNoClean || arrClean) ? supabase.from('temporary_material_details').select('*').eq('temporary_arrival_no', tempNoClean || arrClean) : Promise.resolve({ data: null }),
+            arrClean ? supabase.from('temporary_material_details').select('*').eq('temporary_arrival_no', arrClean) : Promise.resolve({ data: null }),
             arrClean ? supabase.from('material_inspection_details').select('*').eq('mr_no', arrClean) : Promise.resolve({ data: null }),
             arrClean ? supabase.from('mill_inspection_detail').select('*').eq('mr_no', arrClean) : Promise.resolve({ data: null })
           ]);
 
           foundFa = Array.isArray(faDbRes.data) ? faDbRes.data[0] : faDbRes.data;
           foundTmr = Array.isArray(tmrDbRes.data) ? tmrDbRes.data[0] : tmrDbRes.data;
-          const mergedSource = foundFa || fa;
-          const dbPoNo = normalizePoVal(mergedSource?.po_no || foundTmr?.po_no);
-          const dbPoDate = dbPoNo ? sanitizeDate(mergedSource?.po_date || foundTmr?.po_date) : "";
-          const dbApmc = Number(foundTmr?.apmc_fees ?? foundTmr?.arival_apmc_fees ?? mergedSource?.apmc_fees ?? mergedSource?.arival_apmc_fees ?? 0);
-          const dbFaArrDate = sanitizeDate(mergedSource?.date || mergedSource?.arrival_date || mergedSource?.final_arrival_date);
-          const dbUnit = String(foundTmr?.unit_name || foundTmr?.unit || mergedSource?.unit_name || mergedSource?.unit || '').trim().toUpperCase();
-          const dbSupplier = mergedSource?.supplier || mergedSource?.challan_supplier || mergedSource?.supplier_name || foundTmr?.supplier || "";
-          const dbBroker = mergedSource?.broker || mergedSource?.broker_name || foundTmr?.broker || "";
-          const dbLorry = mergedSource?.lorry_number || mergedSource?.lorry_no || foundTmr?.lorry_number || "";
-          const dbArea = mergedSource?.arrival_area_name || mergedSource?.area || mergedSource?.arrival_area || "";
-
-          setHeaderForm(prev => ({
-            ...prev,
-            ...(dbPoNo ? { po_no: dbPoNo } : {}),
-            ...(dbPoDate ? { po_date: dbPoDate } : {}),
-            ...(dbSupplier ? { supplier_name: dbSupplier } : {}),
-            ...(dbBroker ? { broker_name: dbBroker } : {}),
-            ...(dbLorry ? { lorry_number: dbLorry } : {}),
-            ...(dbArea ? { arrival_area: dbArea, arrival_area_name: dbArea } : {}),
-            ...(dbApmc > 0 ? { arival_apmc_fees: dbApmc } : {}),
-            ...(dbFaArrDate ? { mr_date: dbFaArrDate, arrival_date: dbFaArrDate } : {}),
-            ...(dbUnit && dbUnit !== 'LOOSE' ? { unit_name: dbUnit } : {})
-          }));
+          const dbApmc = Number(foundTmr?.apmc_fees ?? foundTmr?.arival_apmc_fees ?? foundFa?.apmc_fees ?? foundFa?.arival_apmc_fees ?? 0);
+          const dbFaArrDate = sanitizeDate(foundFa?.date || foundFa?.arrival_date || foundFa?.final_arrival_date);
+          const dbUnit = String(foundTmr?.unit_name || foundTmr?.unit || foundFa?.unit_name || foundFa?.unit || '').trim().toUpperCase();
+          if (dbApmc > 0 || dbFaArrDate || (dbUnit && dbUnit !== 'LOOSE')) {
+            setHeaderForm(prev => ({
+              ...prev,
+              ...(dbApmc > 0 ? { arival_apmc_fees: dbApmc } : {}),
+              ...(dbFaArrDate ? { mr_date: dbFaArrDate, arrival_date: dbFaArrDate } : {}),
+              ...(dbUnit && dbUnit !== 'LOOSE' ? { unit_name: dbUnit } : {})
+            }));
+          }
 
           if (rawGridItems.length === 0) {
-            if (foundFa?.grid_details) {
-              const parsed = parseGridSafe(foundFa.grid_details);
+            if (foundTmr?.grid_details) {
+              const parsed = parseGridSafe(foundTmr.grid_details);
               if (parsed.length > 0) rawGridItems = parsed;
             }
-            if (rawGridItems.length === 0 && foundTmr?.grid_details) {
-              const parsed = parseGridSafe(foundTmr.grid_details);
+            if (rawGridItems.length === 0 && foundFa?.grid_details) {
+              const parsed = parseGridSafe(foundFa.grid_details);
               if (parsed.length > 0) rawGridItems = parsed;
             }
             if (rawGridItems.length === 0 && midRes.data && Array.isArray(midRes.data) && midRes.data.length > 0) {
@@ -1375,56 +1285,11 @@ export function useInspectionLogic() {
         }
       }
 
-      // Fallback: If no arrival grid items found, load from PO if assigned, else synthesize from Final Arrival header weights/packets
-      const resolvedFallbackPo = normalizePoVal(foundFa?.po_no || fa.po_no);
-      if (resolvedFallbackPo) {
-        await loadDetailsForPo(resolvedFallbackPo, foundFa || fa);
-      } else {
-        const srcFa = foundFa || fa;
-        const fallbackWt = getAuthoritativeArrivalWeightMt(srcFa) || getAuthoritativeArrivalWeightMt(foundTmr) || 0;
-        const fallbackPkts = isLoose ? 0 : getAuthoritativeArrivalPackets(srcFa, foundTmr);
-        const fallbackUnit = String(foundTmr?.unit_name || foundTmr?.unit || srcFa?.unit_name || srcFa?.unit || resolvedUnit || "BALES").trim().toUpperCase();
-        const fallbackRow: InspectionDetailRow = {
-          srl_no: 1,
-          arrival_grade: "",
-          stock_grade_code: "",
-          stock_grade_name: "",
-          area: String(srcFa?.arrival_area_name || srcFa?.area || resolvedArea || "").toUpperCase(),
-          agency: String(srcFa?.agency_name || srcFa?.agency || ""),
-          agency_code: "",
-          marks: "",
-          crop_year: "2026-27",
-          lot: "",
-          quantity: fallbackPkts,
-          unit: fallbackUnit || "BALES",
-          rate: 0,
-          rate_qntl: 0,
-          challan_gross_wt: fallbackWt,
-          receipt_gross_wt: fallbackWt,
-          gross_weight_batch: fallbackWt,
-          add_weight: 0,
-          less_weight: 0,
-          reduced_weight: fallbackWt,
-          moisture_act: actMoist,
-          moisture_claim: clmMoist,
-          dust_act: actDust,
-          dust_claim: clmDust,
-          ncv_act: actNcv,
-          ncv_claim: clmNcv,
-          final_receipt_wt: fallbackWt,
-          settlement_moisture: actMoist,
-          settlement_dust: actDust,
-          settlement_ncv: actNcv,
-          tolerable: "No",
-          expanded: false,
-          is_auto: true,
-        };
-        Object.assign(fallbackRow, computeDetailRowWeights(fallbackRow));
-        fallbackRow.qty_in_mt = calculateQtyInMt(fallbackRow);
-        fallbackRow.amount = calculateRowAmount(fallbackRow);
-        setDetailRows([fallbackRow]);
+      // Fallback: If no arrival grid items found, load from PO
+      if (fa.po_no) {
+        await loadDetailsForPo(fa.po_no, foundFa || fa);
       }
-      showToast(`Imported Final Arrival #${arrNo}`);
+      showToast(`Selected Final Arrival #${arrNo}`);
     } catch (e) {
       console.error("Error populating from final arrival:", e);
     }
@@ -2359,111 +2224,37 @@ export function useInspectionLogic() {
   const totalDeductions = activeDataset.reduce((acc, r) => acc + (Number(r.deduction_amount) || 0), 0);
 
   const pendingArrivalList = useMemo(() => {
-    const cleanToken = (s: any) => String(s || "").trim().replace(/^#+/, "").trim();
-    const normalize = (s: any) => cleanToken(s).toLowerCase();
+    return finalArrivalList.filter(fa => {
+      const normalize = (s: any) => String(s || "").trim().toLowerCase().replace(/^#/, '');
 
-    const resolveFinalizedMrNo = (fa: any): string => {
-      const faNo = cleanToken(fa?.final_arrival_no);
-      const mrNo = cleanToken(fa?.mr_no);
-      const arrNo = cleanToken(fa?.arrival_no);
-      const candidates = [
-        faNo,
-        mrNo && mrNo.toUpperCase() !== "DIRECT REGISTER" ? mrNo : "",
-        arrNo,
-      ].filter(Boolean);
-      const explicitMr = candidates.find((c) => /^mr/i.test(c));
-      if (explicitMr) return explicitMr;
-      // Fallback for non-AR finalized numbers stored directly in final_arrival_no / mr_no
-      const nonTemp = candidates.find((c) => !/^ar\d+/i.test(c) && c.toUpperCase() !== "DIRECT REGISTER");
-      return nonTemp || "";
-    };
-
-    const isGenuineInspectionRecord = (r: any): boolean => {
-      if (!r) return false;
-      const st = String(r.status || "").trim().toLowerCase();
-      if (st === "cancelled" || st === "void" || st === "deleted") return false;
-
-      const hasQualityMetrics = Boolean(
-        Number(r.actual_moisture || 0) > 0 ||
-        Number(r.claim_moisture || 0) > 0 ||
-        Number(r.actual_dust || 0) > 0 ||
-        Number(r.claim_dust || 0) > 0 ||
-        Number(r.actual_ncv || 0) > 0 ||
-        Number(r.claim_ncv || 0) > 0 ||
-        Number(r.final_receipt_wt || 0) > 0 ||
-        Number(r.deduction_amount || 0) > 0
-      );
-      const hasGrid = Array.isArray(r.grid_details)
-        ? r.grid_details.length > 0
-        : (typeof r.grid_details === "string" && r.grid_details.trim().length > 2 && r.grid_details.trim() !== "[]");
-      return hasQualityMetrics || hasGrid;
-    };
-
-    const activeInspections = records.filter(isGenuineInspectionRecord);
-
-    // Keep dropdown strictly sourced from final_arrival records, NEVER filtering by po_no,
-    // and NEVER hiding Final Arrival M.R. Nos. even when an existing/partial inspection exists.
-    const seenMr = new Map<string, any>();
-
-    finalArrivalOnlyList.forEach((fa) => {
-      const faStatus = String(fa.status || "").trim().toLowerCase();
-      if (faStatus === "cancelled" || faStatus === "void" || faStatus === "deleted" || (fa as any).archived_at) {
-        return;
-      }
-
-      const resolvedMr = resolveFinalizedMrNo(fa);
-      if (!resolvedMr) return;
-
-      const mrKey = resolvedMr.toLowerCase();
       const faNo = normalize(fa.final_arrival_no || fa.arrival_no);
       const faMrNo = normalize(fa.mr_no);
       const faId = normalize(fa.final_arrival_id);
       const faTempNo = normalize(fa.temporary_arrival_no);
+      const faLorry = String(fa.lorry_number || "").trim().toLowerCase().replace(/[^a-z0-9]/g, "");
 
-      const isAlreadyInspected = activeInspections.some((r) => {
+      const isAlreadyInspected = records.some(r => {
         const rMr = normalize(r.mr_no);
         const rArr = normalize(r.arrival_no);
         const rTemp = normalize((r as any).temporary_arrival_no);
+        const rLorry = String(r.lorry_number || "").trim().toLowerCase().replace(/[^a-z0-9]/g, "");
 
-        if (mrKey && (rMr === mrKey || rArr === mrKey)) return true;
         if (faNo && (rMr === faNo || rArr === faNo)) return true;
         if (faMrNo && (rMr === faMrNo || rArr === faMrNo)) return true;
         if (faId && (rMr === faId || rArr === faId || rMr === `fa-${faId}` || rArr === `fa-${faId}`)) return true;
         if (faTempNo && (rTemp === faTempNo || rMr === faTempNo || rArr === faTempNo)) return true;
+
+        if (faLorry && rLorry && faLorry === rLorry) {
+          if (faNo && (rMr.includes(faNo) || rArr.includes(faNo))) return true;
+          if (faMrNo && (rMr.includes(faMrNo) || rArr.includes(faMrNo))) return true;
+        }
+
         return false;
       });
 
-      const enrichedItem = {
-        ...fa,
-        _resolvedMrNo: resolvedMr,
-        _isAlreadyInspected: isAlreadyInspected,
-      };
-
-      const existing = seenMr.get(mrKey);
-      if (!existing) {
-        seenMr.set(mrKey, enrichedItem);
-      } else {
-        const existingScore = (existing.po_no ? 2 : 0) + (existing.grid_details ? 2 : 0) + (existing.supplier ? 1 : 0);
-        const nextScore = (enrichedItem.po_no ? 2 : 0) + (enrichedItem.grid_details ? 2 : 0) + (enrichedItem.supplier ? 1 : 0);
-        if (nextScore > existingScore) {
-          seenMr.set(mrKey, enrichedItem);
-        }
-      }
+      return !isAlreadyInspected;
     });
-
-    return Array.from(seenMr.values()).sort((a, b) => {
-      if (Boolean(a._isAlreadyInspected) !== Boolean(b._isAlreadyInspected)) {
-        return a._isAlreadyInspected ? 1 : -1;
-      }
-      const dateA = new Date(a.date || a.final_arrival_date || a.arrival_date || a.created_at || 0).getTime();
-      const dateB = new Date(b.date || b.final_arrival_date || b.arrival_date || b.created_at || 0).getTime();
-      if (dateB !== dateA) return dateB - dateA;
-      return String(b._resolvedMrNo || "").localeCompare(String(a._resolvedMrNo || ""), undefined, {
-        numeric: true,
-        sensitivity: "base",
-      });
-    });
-  }, [finalArrivalOnlyList, records]);
+  }, [finalArrivalList, records]);
 
   return {
     records,

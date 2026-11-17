@@ -1,15 +1,6 @@
 import { supabase } from '../lib/supabase';
 import { invalidateTableCache } from './dbModule';
 import { normalizeToYMD, formatDisplayDate } from '../components/excess-short/excessShortUtils';
-import {
-  FinalArrivalIndex,
-  buildFinalArrivalIndex,
-  resolveRecordOfficialArrivalId,
-  resolveOfficialArrivalId,
-  getLinkedArrivalKeys,
-  normalizeArrivalToken,
-  isMrIdentifier
-} from '../utils/arrivalMrResolver';
 
 export interface NormalizedBaseRate {
   ymd: string;
@@ -20,7 +11,6 @@ export interface ExcessShortComputeParams {
   po: any;
   inspections: any[];
   inspectionDetails?: any[];
-  finalArrivals?: any[];
   normalizedBaseRates: NormalizedBaseRate[];
   existingDed?: any | null;
   contractMtOverride?: number | null;
@@ -55,6 +45,12 @@ const extractMrSeq = (mrStr: string): number => {
   const matches = String(mrStr || '').match(/\d+/g);
   if (!matches || matches.length === 0) return 0;
   return parseInt(matches[matches.length - 1], 10) || 0;
+};
+
+const canonicalMrKey = (mrStr: string): string => {
+  const seq = extractMrSeq(mrStr);
+  if (seq > 0) return `MR_${seq}`;
+  return String(mrStr || '').trim().toUpperCase();
 };
 
 const toMtFromRawWt = (val: any): number => {
@@ -147,8 +143,6 @@ export function computeExcessShortPayload(
 
   if (contractMt <= 0) return null;
 
-  const faIndex: FinalArrivalIndex = buildFinalArrivalIndex(params.finalArrivals || []);
-
   // Match all real inspection records belonging to this PO / Sauda
   const matchingInsps = (inspections || []).filter((insp: any) => {
     const iPo = cleanAlnumUpper(insp.po_no);
@@ -160,31 +154,22 @@ export function computeExcessShortPayload(
 
   const uniqueMrMap = new Map<string, { mrNo: string; date: string; rawDate: string; source: any }>();
   matchingInsps.forEach((insp: any) => {
-    const { officialId, isFinalized } = resolveRecordOfficialArrivalId(insp, faIndex);
-    const num = String(officialId || insp.mr_no || insp.arrival_no || '').trim();
+    const num = String(insp.mr_no || insp.arrival_no || '').trim();
     if (num && num.toUpperCase() !== 'NO' && num.toUpperCase() !== 'N/A' && num !== '-') {
       const rawD = normalizeToYMD(
         insp.arrival_date || insp.mr_date || insp.inspection_date || insp.date || insp.created_at || ''
       );
-      const key = normalizeArrivalToken(num);
+      const key = canonicalMrKey(num);
       const existing = uniqueMrMap.get(key);
       const hasGrid = Boolean(insp.grid_details || insp.details);
       const existingHasGrid = Boolean(existing?.source?.grid_details || existing?.source?.details);
-      const existingIsOfficial = existing ? isMrIdentifier(existing.mrNo) : false;
-      const newIsOfficial = isFinalized || isMrIdentifier(num);
       const preferNew =
         !existing ||
-        (!existingIsOfficial && newIsOfficial) ||
-        (existingIsOfficial === newIsOfficial && !existingHasGrid && hasGrid) ||
+        (!existingHasGrid && hasGrid) ||
         (!existing.rawDate && Boolean(rawD)) ||
-        (num.length > existing.mrNo.length && hasGrid === existingHasGrid && existingIsOfficial === newIsOfficial);
+        (num.length > existing.mrNo.length && hasGrid === existingHasGrid);
       if (preferNew) {
-        uniqueMrMap.set(key, {
-          mrNo: num,
-          date: formatDisplayDate(rawD),
-          rawDate: rawD,
-          source: { ...insp, mr_no: num }
-        });
+        uniqueMrMap.set(key, { mrNo: num, date: formatDisplayDate(rawD), rawDate: rawD, source: insp });
       }
     }
   });
@@ -237,15 +222,7 @@ export function computeExcessShortPayload(
   let sumExcessClaimMt = 0;
 
   mrEntries.forEach((mrEntry, mrIdx) => {
-    const mrLinkedKeys = new Set(getLinkedArrivalKeys(mrEntry.source || mrEntry.mrNo, faIndex));
-    mrLinkedKeys.add(normalizeArrivalToken(mrEntry.mrNo));
-    const matchesThisMr = (val: any): boolean => {
-      const n = normalizeArrivalToken(val);
-      if (!n) return false;
-      if (mrLinkedKeys.has(n)) return true;
-      const resolved = normalizeArrivalToken(resolveOfficialArrivalId(val, faIndex));
-      return Boolean(resolved && mrLinkedKeys.has(resolved));
-    };
+    const mrKey = canonicalMrKey(mrEntry.mrNo);
     const isLastLorry = mrIdx === mrEntries.length - 1;
     const isFirstLorry = mrIdx === 0;
     const src = mrEntry.source;
@@ -271,8 +248,8 @@ export function computeExcessShortPayload(
     }
 
     const matchingDetails = (inspectionDetails || []).filter((d: any) => {
-      const dMr = String(d.mr_no || d.arrival_no || '').trim();
-      return Boolean(dMr && matchesThisMr(dMr));
+      const dMr = String(d.mr_no || '').trim();
+      return dMr && canonicalMrKey(dMr) === mrKey;
     });
 
     const rawDetailItems = embeddedGrid.length > 0 ? embeddedGrid : matchingDetails;
@@ -282,7 +259,7 @@ export function computeExcessShortPayload(
     rawDetailItems.forEach((d: any, idx: number) => {
       if (!d || typeof d !== 'object') return;
       const itemMr = String(d.mr_no || '').trim();
-      if (itemMr && !matchesThisMr(itemMr)) return;
+      if (itemMr && canonicalMrKey(itemMr) !== mrKey) return;
       const gRaw = Number(d.challan_gross_wt ?? d.receipt_gross_wt ?? d.gross_weight_batch ?? d.gross_weight ?? 0);
       const nRaw = Number(d.final_receipt_wt ?? d.reduced_weight ?? d.netto_pnto ?? 0);
       if (gRaw <= 0 && nRaw <= 0) return;
@@ -745,13 +722,12 @@ export async function syncExcessShortDeductionForSinglePo(poNo: string): Promise
 
   const task = (async () => {
     try {
-      const [scpRes, pmRes, saudaRes, matInspRes, millInspRes, faRes, sBasesRes, dedRes] = await Promise.all([
+      const [scpRes, pmRes, saudaRes, matInspRes, millInspRes, sBasesRes, dedRes] = await Promise.all([
         supabase.from('sauda_check_point').select('*').ilike('po_no', `%${cleanTarget}%`).limit(10).then((r) => r.data || [], () => []),
         supabase.from('purchase_master').select('*').ilike('po_no', `%${cleanTarget}%`).limit(10).then((r) => r.data || [], () => []),
         supabase.from('sauda_master').select('*').ilike('sauda_no', `%${cleanTarget}%`).limit(5).then((r) => r.data || [], () => []),
         supabase.from('material_inspection').select('*').ilike('po_no', `%${cleanTarget}%`).then((r) => r.data || [], () => []),
         supabase.from('mill_inspection_master').select('*').ilike('po_no', `%${cleanTarget}%`).then((r) => r.data || [], () => []),
-        supabase.from('final_arrival').select('*').ilike('po_no', `%${cleanTarget}%`).then((r) => r.data || [], () => []),
         supabase.from('satta_base_rates').select('*').order('start_date', { ascending: false }).order('created_at', { ascending: false }).then((r) => r.data || [], () => []),
         supabase.from('sauda_check_point_deductions').select('*').ilike('po_no', `%${cleanTarget}%`).limit(10).then((r) => r.data || [], () => []),
       ]);
@@ -783,15 +759,10 @@ export async function syncExcessShortDeductionForSinglePo(poNo: string): Promise
       const combinedInsps = [...(matInspRes as any[]), ...(millInspRes as any[])];
       if (combinedInsps.length === 0) return null;
 
-      const faIndex = buildFinalArrivalIndex(faRes as any[]);
       const mrArray = Array.from(
         new Set(
           combinedInsps
-            .flatMap((i: any) => [
-              String(i.mr_no || '').trim(),
-              String(i.arrival_no || '').trim(),
-              ...getLinkedArrivalKeys(i, faIndex),
-            ])
+            .map((i: any) => String(i.mr_no || '').trim())
             .filter((m) => m && m.toUpperCase() !== 'NO' && m.toUpperCase() !== 'N/A' && m !== '-')
         )
       );
@@ -815,7 +786,6 @@ export async function syncExcessShortDeductionForSinglePo(poNo: string): Promise
         po: mergedPo,
         inspections: combinedInsps,
         inspectionDetails: details,
-        finalArrivals: faRes as any[],
         normalizedBaseRates: normalizedRates,
         existingDed,
         isLocked: existingDed ? isManualLockedDeduction(existingDed) : false,
@@ -855,13 +825,12 @@ let batchSyncInProgress = false;
 export async function syncExcessShortDeductionsBatch(params: {
   pos: any[];
   inspections: any[];
-  finalArrivals?: any[];
   baseRates: any[];
   existingDeductions: any[];
   onSynced?: (savedRows: any[]) => void;
 }): Promise<any[]> {
   if (!supabase || batchSyncInProgress) return [];
-  const { pos, inspections, finalArrivals = [], baseRates, existingDeductions, onSynced } = params;
+  const { pos, inspections, baseRates, existingDeductions, onSynced } = params;
   if (!Array.isArray(pos) || pos.length === 0 || !Array.isArray(inspections) || inspections.length === 0) {
     return [];
   }
@@ -869,7 +838,6 @@ export async function syncExcessShortDeductionsBatch(params: {
   batchSyncInProgress = true;
   try {
     const normalizedRates = normalizeSattaBaseRates(baseRates);
-    const faIndex = buildFinalArrivalIndex(finalArrivals || []);
 
     const existingDedByPo = new Map<string, any>();
     (existingDeductions || []).forEach((d: any) => {
@@ -920,7 +888,6 @@ export async function syncExcessShortDeductionsBatch(params: {
         const mr = String(insp?.mr_no || '').trim();
         if (mr && !insp?.grid_details && !insp?.details) {
           candidateMrs.add(mr);
-          getLinkedArrivalKeys(insp, faIndex).forEach((k) => candidateMrs.add(k));
         }
       });
 

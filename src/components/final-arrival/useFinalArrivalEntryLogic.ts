@@ -7,7 +7,6 @@ import { sanitizeDate } from '../../lib/utils';
 import { useKeyboardNavigation } from '../../hooks/useKeyboardNavigation';
 import { screenDraftService } from '../../services/screenDraftService';
 import { getUniqueAgenciesForArea } from '../../services/areaLogicService';
-import { isMrIdentifier, normalizeArrivalToken } from '../../utils/arrivalMrResolver';
 
 interface UseFinalArrivalEntryLogicProps {
   initialData?: any;
@@ -574,7 +573,7 @@ export function useFinalArrivalEntryLogic({ initialData, onSave }: UseFinalArriv
       setFormData(prev => ({
         ...prev,
         temporary_arrival_no: matchedAmad?.temporary_arrival_no || matchedAmad?.amad_no || matchedInsp?.arrival_no || searchVal,
-        mr_no: isMrIdentifier(matchedInsp?.mr_no) ? matchedInsp.mr_no : (isMrIdentifier(prev.mr_no) ? prev.mr_no : prev.arrival_no),
+        mr_no: matchedInsp?.mr_no || matchedAmad?.temporary_arrival_no || prev.mr_no,
         temporary_arrival_date: matchedAmad?.date || matchedAmad?.temporary_arrival_date || matchedInsp?.arrival_date || prev.temporary_arrival_date,
         po_no: finalPoNo || prev.po_no,
         po_date: matchedPo?.po_date || matchedPo?.s_date || matchedAmad?.po_date || matchedAmad?.date || matchedInsp?.po_date || prev.po_date,
@@ -833,9 +832,7 @@ export function useFinalArrivalEntryLogic({ initialData, onSave }: UseFinalArriv
 
       setFormData(prev => ({
         ...prev,
-        mr_no: isMrIdentifier(matchedInspection?.mr_no)
-          ? matchedInspection.mr_no
-          : (isMrIdentifier(prev.mr_no) ? prev.mr_no : prev.arrival_no),
+        mr_no: matchedInspection?.mr_no || amadData?.temporary_arrival_no || mrNoUpper,
         po_no: finalPoNo || prev.po_no || '',
         po_date: matchedPo?.po_date || matchedPo?.s_date || matchedInspection?.po_date || amadData?.date || amadData?.lorry_date || prev.po_date || '',
         jci: matchedInspection?.jci || amadData?.jci || prev.jci || 'No',
@@ -1472,16 +1469,13 @@ export function useFinalArrivalEntryLogic({ initialData, onSave }: UseFinalArriv
       const totalWeightSum = activeRows.reduce((acc, curr) => acc + (Number(curr.netto_pnto) || 0), 0);
 
       const isHeaderLoose = (formData.unit_name || '').toString().trim().toUpperCase().includes('LOOSE');
-      const officialMrNo = isMrIdentifier(formData.mr_no)
-        ? String(formData.mr_no).trim()
-        : (isMrIdentifier(formData.arrival_no) ? String(formData.arrival_no).trim() : (formData.mr_no || formData.arrival_no || null));
       const payload = {
         financial_year: formData.financial_year,
         final_arrival_no: formData.arrival_no,
         arrival_no: formData.arrival_no,
         final_arrival_date: sanitizeDate(formData.date),
         arrival_date: sanitizeDate(formData.date),
-        mr_no: officialMrNo,
+        mr_no: formData.mr_no || null,
         po_no: formData.po_no || null,
         po_date: sanitizeDate(formData.po_date),
         date: sanitizeDate(formData.date),
@@ -1608,29 +1602,14 @@ export function useFinalArrivalEntryLogic({ initialData, onSave }: UseFinalArriv
         }
       }
 
-      if (supabase) {
-        const u = formData.unit_name ? formData.unit_name.toUpperCase() : undefined;
-        const resolvedMr = officialMrNo ? String(officialMrNo).trim() : String(formData.arrival_no || '').trim();
-        const linkedTemp = String(formData.temporary_arrival_no || '').trim();
-        if (resolvedMr && linkedTemp && normalizeArrivalToken(linkedTemp) !== normalizeArrivalToken(resolvedMr)) {
-          await Promise.all([
-            supabase.from('material_inspection').update(u ? { mr_no: resolvedMr, arrival_no: resolvedMr, unit_name: u } : { mr_no: resolvedMr, arrival_no: resolvedMr }).eq('mr_no', linkedTemp),
-            supabase.from('mill_inspection_master').update(u ? { mr_no: resolvedMr, unit_name: u } : { mr_no: resolvedMr }).eq('mr_no', linkedTemp),
-            supabase.from('material_inspection_details').update(u ? { mr_no: resolvedMr, unit: u } : { mr_no: resolvedMr }).eq('mr_no', linkedTemp),
-            supabase.from('mill_inspection_detail').update({ mr_no: resolvedMr }).eq('mr_no', linkedTemp),
-            supabase.from('material_inspection_deductions').update({ mr_no: resolvedMr }).eq('mr_no', linkedTemp),
-            supabase.from('payment_master').update({ mr_no: resolvedMr }).eq('mr_no', linkedTemp),
-            supabase.from('mr_settlement_master').update({ mr_no: resolvedMr }).eq('mr_no', linkedTemp),
+      if (supabase && formData.unit_name) {
+        const u = formData.unit_name.toUpperCase();
+        const keys = [formData.arrival_no, formData.mr_no, formData.temporary_arrival_no, formData.po_no].filter(Boolean);
+        for (const k of keys) {
+          Promise.all([
+            supabase.from('material_inspection_details').update({ unit: u }).eq('mr_no', k),
+            supabase.from('material_inspection').update({ unit_name: u }).eq('mr_no', k)
           ]).catch(() => {});
-        }
-        if (u) {
-          const keys = [formData.arrival_no, resolvedMr, linkedTemp, formData.po_no].filter(Boolean);
-          for (const k of keys) {
-            Promise.all([
-              supabase.from('material_inspection_details').update({ unit: u }).eq('mr_no', k),
-              supabase.from('material_inspection').update({ unit_name: u }).eq('mr_no', k)
-            ]).catch(() => {});
-          }
         }
       }
 

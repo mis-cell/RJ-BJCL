@@ -13,11 +13,6 @@ import {
 import { PaginationControls } from "../PaginationControls";
 import { enforceEditOrDeletePermission, canEditOrDelete } from "../../lib/permissions";
 import { safeRenderText } from "../../types/inspection.types";
-import {
-  buildFinalArrivalIndex,
-  getLinkedArrivalKeys,
-  isMrIdentifier,
-} from "../../utils/arrivalMrResolver";
 
 export interface MaterialInspectionRegisterViewProps {
   savedInspections: any[];
@@ -145,13 +140,10 @@ export const MaterialInspectionRegisterView: React.FC<MaterialInspectionRegister
   const totalPendingWeight = purchaseOrders.reduce((sum, po) => sum + (Number(po.pending_received) || 0), 0);
   const totalReceivedWeight = Math.max(0, totalContractWeight - totalPendingWeight);
 
-  const faBridge = React.useMemo(() => buildFinalArrivalIndex(finalArrivals), [finalArrivals]);
-
   const getVoucherForInspection = (row: any) => {
-    const rowKeys = new Set(getLinkedArrivalKeys(row, faBridge));
-    if (rowKeys.size === 0) return null;
-    return arrivalVouchers.find((v) =>
-      getLinkedArrivalKeys(v, faBridge).some((k) => rowKeys.has(k))
+    if (!row.arrival_no) return null;
+    return arrivalVouchers.find(
+      (v) => (v.temporary_arrival_no || v.amad_no || '').trim().toLowerCase() === (row.arrival_no || '').trim().toLowerCase()
     );
   };
 
@@ -931,11 +923,11 @@ export const MaterialInspectionRegisterView: React.FC<MaterialInspectionRegister
                 const arrivalDateFormatted = row.date ? new Date(row.date).toLocaleDateString("en-GB") : "--";
                 const bales = Number(row.total_packets || row.packets || 0);
                 const weightMt = Number(row.weight_qtl || row.weight || 0) / 10;
-                const arrivalVal = row._officialId || row.mr_no || row.final_arrival_no || row.arrival_no || row.temporary_arrival_no || row.amad_no;
+                const arrivalVal = row.temporary_arrival_no || row.amad_no;
 
                 return (
                   <tr
-                    key={row.id || arrivalVal || row.temporary_arrival_no || row.arrival_no || `pending-${idx}`}
+                    key={row.id || row.temporary_arrival_no || row.arrival_no || `pending-${idx}`}
                     className={`h-9 hover:bg-amber-50/50 transition-colors ${
                       idx % 2 === 0 ? "bg-white" : "bg-slate-50/50"
                     }`}
@@ -989,7 +981,6 @@ export const MaterialInspectionRegisterView: React.FC<MaterialInspectionRegister
                           const freshMaster = initialMasterState();
                           setMasterData({
                             ...freshMaster,
-                            mr_no: isMrIdentifier(arrivalVal) ? arrivalVal : freshMaster.mr_no,
                             arrival_no: arrivalVal
                           });
                           setDetailsList([1, 2, 3, 4, 5].map(createEmptyRow));

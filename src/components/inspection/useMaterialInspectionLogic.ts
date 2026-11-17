@@ -24,15 +24,6 @@ import {
   calculateInspectionWeightMt,
   fetchAllReturnLorries,
 } from "../../services/returnLorryService";
-import {
-  buildFinalArrivalIndex,
-  extractFinalArrivalOfficialMr,
-  getLinkedArrivalKeys,
-  isMrIdentifier,
-  mergeArrivalsFinalFirst,
-  normalizeArrivalToken,
-  resolveOfficialArrivalId,
-} from "../../utils/arrivalMrResolver";
 
 export function useMaterialInspectionLogic(onLogEvent?: (event: string, details: string) => void) {
   // Autocomplete lists from database
@@ -482,7 +473,7 @@ export function useMaterialInspectionLogic(onLogEvent?: (event: string, details:
           withTimeout(Promise.resolve(supabase.from("area_master").select("area_name").order("area_name").limit(150))),
           withTimeout(Promise.resolve(supabase.from("agency_master").select("agency_name").order("agency_name").limit(150))),
           withTimeout(Promise.resolve(supabase.from("marka_master").select("marka_name").order("marka_name").limit(150))),
-          withTimeout(Promise.resolve(supabase.from("final_arrival").select("*").order("date", { ascending: false }).limit(1000))),
+          withTimeout(Promise.resolve(supabase.from("material_inspection").select("*").order("created_at", { ascending: false }).limit(1000))),
           withTimeout(Promise.resolve(supabase.from("unit_master").select("unit_name").order("unit_name").limit(150))),
           withTimeout(Promise.resolve(supabase.from("moisture_logic").select("*"))),
           withTimeout(Promise.resolve(supabase.from("deduction_master").select("*"))).then((r: any) => r?.data || [], () => []),
@@ -495,14 +486,9 @@ export function useMaterialInspectionLogic(onLogEvent?: (event: string, details:
         if (ag) setAgencies(ag.map((x: any) => ({ name: x.agency_name })));
         if (m) setMarkas(m.map((x: any) => ({ name: x.marka_name })));
         if (av) {
-          const { data: tmrRows } = await supabase.from("temporary_material_received").select("*").order("date", { ascending: false }).limit(1000).then(r => r, () => ({ data: [] }));
-          const faBridge = buildFinalArrivalIndex(av || []);
-          const mergedArrivals = mergeArrivalsFinalFirst(tmrRows || [], av || [], faBridge);
-          const mapped = mergedArrivals.map((v: any) => ({
+          const mapped = av.map((v: any) => ({
             ...v,
-            mr_no: v._isFinalized ? v._officialId : (v.mr_no || ''),
-            arrival_no: v._officialId || v.final_arrival_no || v.arrival_no || v.temporary_arrival_no || v.amad_no,
-            temporary_arrival_no: v._linkedTempNo || v.temporary_arrival_no || v.amad_no || v.arrival_no || v._officialId,
+            temporary_arrival_no: v.arrival_no || v.temporary_arrival_no || v.ref_arrival_no || v.mr_no,
             supplier: v.supplier_name || v.supplier,
             broker: v.broker_name || v.broker,
           }));
@@ -587,7 +573,6 @@ export function useMaterialInspectionLogic(onLogEvent?: (event: string, details:
       if (!arrivalsErr && arrivalsData) {
         setFinalArrivals(arrivalsData);
       }
-      const faBridge = buildFinalArrivalIndex(arrivalsData || []);
 
       const norm = (v: any) => String(v || "").trim().toUpperCase();
       const isBlankPo = (v: any) => {
@@ -622,23 +607,12 @@ export function useMaterialInspectionLogic(onLogEvent?: (event: string, details:
 
       const rlByMr = new Map<string, any>();
       returnLorries.forEach(rl => {
-        const k = norm(resolveOfficialArrivalId(rl.mr_no || rl.final_arrival_no, faBridge));
+        const k = norm(rl.mr_no || rl.final_arrival_no);
         if (k) rlByMr.set(k, rl);
       });
 
       const allInspections = Array.from(uniqueMap.values()).map((insp: any) => {
         let updated = { ...insp };
-        const officialMr = resolveOfficialArrivalId(updated.mr_no || updated.arrival_no || "", faBridge);
-        if (officialMr && isMrIdentifier(officialMr)) {
-          updated.mr_no = officialMr;
-          const faRec = faBridge.mrToRecord.get(normalizeArrivalToken(officialMr));
-          if (faRec?.temporary_arrival_no && !updated.temporary_arrival_no) {
-            updated.temporary_arrival_no = faRec.temporary_arrival_no;
-          }
-          if (!updated.arrival_no || normalizeArrivalToken(updated.arrival_no) === normalizeArrivalToken(faRec?.temporary_arrival_no)) {
-            updated.arrival_no = officialMr;
-          }
-        }
         const grnNo = grnByMrMap.get(norm(updated.mr_no)) || grnByMrMap.get(norm(updated.arrival_no)) || "";
         if (grnNo) {
           updated.godown_receipt_no = grnNo;
@@ -662,7 +636,7 @@ export function useMaterialInspectionLogic(onLogEvent?: (event: string, details:
             } catch (e) {}
           }
         }
-        const matchedFa = faBridge.mrToRecord.get(norm(updated.mr_no)) || (arrivalsData || []).find((f: any) => norm(f.final_arrival_no || f.mr_no) === norm(updated.mr_no));
+        const matchedFa = (arrivalsData || []).find((f: any) => norm(f.final_arrival_no || f.mr_no) === norm(updated.mr_no));
         const wtMt = calculateInspectionWeightMt(updated, parsedGrid, matchedFa);
         updated.received_weight_mt = wtMt;
         const matchedRl = rlByMr.get(norm(updated.mr_no));
@@ -751,40 +725,32 @@ export function useMaterialInspectionLogic(onLogEvent?: (event: string, details:
           }
         }
 
-        const { data: finalArrival } = await supabase
-          .from("final_arrival")
-          .select("mr_no, final_arrival_no, arrival_no, temporary_arrival_no")
+        const { data: tempArrival } = await supabase
+          .from("temporary_material_received")
+          .select("temporary_arrival_no")
           .eq("po_no", masterData.po_no.trim())
           .limit(1)
           .maybeSingle();
 
-        if (finalArrival) {
-          const officialMr = extractFinalArrivalOfficialMr(finalArrival) || finalArrival.arrival_no || finalArrival.temporary_arrival_no;
-          if (officialMr) {
-            setMasterData((prev) => ({
-              ...prev,
-              mr_no: !prev.mr_no && isMrIdentifier(officialMr) ? officialMr : prev.mr_no,
-              arrival_no: !prev.arrival_no ? officialMr : prev.arrival_no,
-            }));
-          }
+        if (tempArrival && tempArrival.temporary_arrival_no) {
+          setMasterData((prev) => {
+            if (!prev.arrival_no && !prev.mr_no && prev.arrival_no !== tempArrival.temporary_arrival_no) {
+              return { ...prev, arrival_no: tempArrival.temporary_arrival_no };
+            }
+            return prev;
+          });
         } else {
-          const { data: tempArrival } = await supabase
-            .from("temporary_material_received")
+          const { data: finalArrival } = await supabase
+            .from("final_arrival")
             .select("temporary_arrival_no")
             .eq("po_no", masterData.po_no.trim())
             .limit(1)
             .maybeSingle();
 
-          if (tempArrival && tempArrival.temporary_arrival_no) {
-            const bridge = buildFinalArrivalIndex(finalArrivals);
-            const resolved = resolveOfficialArrivalId(tempArrival.temporary_arrival_no, bridge);
+          if (finalArrival && finalArrival.temporary_arrival_no) {
             setMasterData((prev) => {
-              if (!prev.arrival_no && !prev.mr_no) {
-                return {
-                  ...prev,
-                  mr_no: isMrIdentifier(resolved) ? resolved : prev.mr_no,
-                  arrival_no: resolved,
-                };
+              if (!prev.arrival_no && !prev.mr_no && prev.arrival_no !== finalArrival.temporary_arrival_no) {
+                return { ...prev, arrival_no: finalArrival.temporary_arrival_no };
               }
               return prev;
             });
@@ -1023,11 +989,9 @@ export function useMaterialInspectionLogic(onLogEvent?: (event: string, details:
   };
 
   const getVoucherForInspection = (row: any) => {
-    const bridge = buildFinalArrivalIndex(finalArrivals);
-    const rowKeys = new Set(getLinkedArrivalKeys(row, bridge));
-    if (rowKeys.size === 0) return null;
-    return arrivalVouchers.find((v) =>
-      getLinkedArrivalKeys(v, bridge).some((k) => rowKeys.has(k))
+    if (!row.arrival_no) return null;
+    return arrivalVouchers.find(
+      (v) => (v.temporary_arrival_no || v.amad_no || '').trim().toLowerCase() === (row.arrival_no || '').trim().toLowerCase()
     );
   };
 
@@ -1222,17 +1186,10 @@ export function useMaterialInspectionLogic(onLogEvent?: (event: string, details:
     setMasterData((prev) => {
       const voucherArrivalDate = voucher.date || voucher.arrival_date || prev.arrival_date || new Date().toISOString().split("T")[0];
       const voucherUnloadingDate = voucher.unloading_date || voucher.date || voucher.arrival_date || prev.unloading_date || voucherArrivalDate;
-      const bridge = buildFinalArrivalIndex(finalArrivals);
-      const officialVoucherMr = resolveOfficialArrivalId(
-        voucher._officialId || extractFinalArrivalOfficialMr(voucher) || voucher.mr_no || voucher.final_arrival_no || voucher.arrival_no || voucher.temporary_arrival_no || voucher.amad_no,
-        bridge
-      );
-      const nextMrNo = isMrIdentifier(officialVoucherMr) ? officialVoucherMr : prev.mr_no;
 
       return {
         ...prev,
-        mr_no: safeRenderText(nextMrNo, ""),
-        arrival_no: safeRenderText(officialVoucherMr || voucher.arrival_no || voucher.temporary_arrival_no || voucher.amad_no || prev.arrival_no, ""),
+        arrival_no: safeRenderText(voucher.temporary_arrival_no || voucher.arrival_no || voucher.amad_no || prev.arrival_no, ""),
         arrival_date: safeRenderText(voucherArrivalDate, ""),
         unloading_date: safeRenderText(voucherUnloadingDate, ""),
         consignment_date: safeRenderText(voucher.consignment_date || voucher.date || voucher.arrival_date || "", ""),
@@ -1585,10 +1542,9 @@ export function useMaterialInspectionLogic(onLogEvent?: (event: string, details:
           setTimeout(() => handleAutoFillFromVoucher(matched), 20);
         }
       } else if (name === "arrival_no" && finalValue) {
-        const valNorm = normalizeArrivalToken(finalValue);
-        const bridge = buildFinalArrivalIndex(finalArrivals);
-        const matched = arrivalVouchers.find((v) =>
-          getLinkedArrivalKeys(v, bridge).includes(valNorm)
+        const matched = arrivalVouchers.find(
+          (v) =>
+            (v.temporary_arrival_no || v.amad_no || "").toLowerCase() === finalValue.trim().toLowerCase(),
         );
         if (matched) {
           setTimeout(() => handleAutoFillFromVoucher(matched), 20);
@@ -1790,16 +1746,11 @@ export function useMaterialInspectionLogic(onLogEvent?: (event: string, details:
     }
   };
 
-  const matFaBridge = React.useMemo(() => buildFinalArrivalIndex(finalArrivals), [finalArrivals]);
-
   const filteredSavedInspections = savedInspections.filter((item) => {
     if (!canViewCompletedData()) return false;
     const term = searchFilter.toLowerCase();
-    const linkedKeysLower = getLinkedArrivalKeys(item, matFaBridge).map((k) => k.toLowerCase());
     const matchesSearch = (
-      (item.mr_no || "").toLowerCase().includes(term) ||
-      (item.arrival_no || "").toLowerCase().includes(term) ||
-      linkedKeysLower.some((k) => k.includes(term)) ||
+      item.mr_no.toLowerCase().includes(term) ||
       (item.po_no || "").toLowerCase().includes(term) ||
       (item.supplier_name || "").toLowerCase().includes(term) ||
       (item.broker_name || "").toLowerCase().includes(term)
@@ -1834,26 +1785,18 @@ export function useMaterialInspectionLogic(onLogEvent?: (event: string, details:
     return statusA.localeCompare(statusB);
   });
 
-  const inspectedKeysSet = React.useMemo(() => {
-    const set = new Set<string>();
-    savedInspections.forEach((insp) => {
-      getLinkedArrivalKeys(insp, matFaBridge).forEach((k) => set.add(k));
-    });
-    return set;
-  }, [savedInspections, matFaBridge]);
-
   const filteredPendingMrList = arrivalVouchers.filter((v) => {
-    const vKeys = getLinkedArrivalKeys(v, matFaBridge);
-    const officialDisplay = v._officialId || resolveOfficialArrivalId(v.mr_no || v.final_arrival_no || v.arrival_no || v.temporary_arrival_no || v.amad_no, matFaBridge);
-    if (!officialDisplay && vKeys.length === 0) return false;
+    const arrivalVal = (v.temporary_arrival_no || v.amad_no || "").trim().toUpperCase();
+    if (!arrivalVal) return false;
 
-    const isInspected = vKeys.some((k) => inspectedKeysSet.has(k));
+    const isInspected = savedInspections.some(
+      (insp) => (insp.arrival_no || "").trim().toUpperCase() === arrivalVal
+    );
     if (isInspected) return false;
 
     const term = searchFilter.toLowerCase();
     const matchesSearch = (
-      (officialDisplay || "").toLowerCase().includes(term) ||
-      vKeys.some((k) => k.toLowerCase().includes(term)) ||
+      arrivalVal.toLowerCase().includes(term) ||
       (v.po_no || "").toLowerCase().includes(term) ||
       (v.supplier || "").toLowerCase().includes(term) ||
       (v.broker || "").toLowerCase().includes(term)

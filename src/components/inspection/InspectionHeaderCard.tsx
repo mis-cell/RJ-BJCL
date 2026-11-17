@@ -7,26 +7,6 @@ interface SearchablePendingArrivalSelectProps {
   onSelect: (fa: any) => void;
 }
 
-const cleanArrivalToken = (s: any) => String(s || "").trim().replace(/^#+/, "").trim();
-
-const resolvePendingMrNo = (fa: any): string => {
-  if (fa?._resolvedMrNo) return cleanArrivalToken(fa._resolvedMrNo);
-  const rawMr = cleanArrivalToken(fa?.mr_no);
-  const candidates = [
-    fa?.final_arrival_no,
-    rawMr && rawMr.toUpperCase() !== "DIRECT REGISTER" ? rawMr : "",
-    fa?.arrival_no,
-  ]
-    .map(cleanArrivalToken)
-    .filter((c) => c && c.toUpperCase() !== "DIRECT REGISTER");
-  return candidates.find((c) => /^mr/i.test(c)) || candidates.find((c) => !/^ar\d+/i.test(c)) || "";
-};
-
-const formatDisplayPo = (po: any): string => {
-  const s = String(po || "").trim();
-  return !s || /^(?:--|no|n\/a|none|null|undefined|-)$/i.test(s) ? "--" : s;
-};
-
 const SearchablePendingArrivalSelect: React.FC<SearchablePendingArrivalSelectProps> = ({
   pendingArrivalList,
   onSelect,
@@ -46,25 +26,39 @@ const SearchablePendingArrivalSelect: React.FC<SearchablePendingArrivalSelectPro
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
+  /* const filteredList = pendingArrivalList.filter((fa) => {
+    if (!searchTerm.trim()) return true;
+    const q = searchTerm.toLowerCase().trim();
+    const faNo = String(fa.final_arrival_no || fa.mr_no || "").toLowerCase();
+    const poNo = String(fa.po_no || "").toLowerCase();
+    const supplier = String(fa.supplier || fa.challan_supplier || "").toLowerCase();
+    const lorry = String(fa.lorry_number || "").toLowerCase();
+    const broker = String(fa.broker || "").toLowerCase();
+
+    return (
+      faNo.includes(q) ||
+      poNo.includes(q) ||
+      supplier.includes(q) ||
+      lorry.includes(q) ||
+      broker.includes(q)
+    );
+  }); */
   const filteredList = pendingArrivalList.filter((fa) => {
-    const mrNo = resolvePendingMrNo(fa);
-    if (!mrNo) return false;
+    // Show only MR records, exclude AR records
+    const faNo = String(fa.final_arrival_no || fa.mr_no || "").toLowerCase();
+
+    if (!faNo.startsWith("mr")) return false;
 
     if (!searchTerm.trim()) return true;
 
-    const q = searchTerm.toLowerCase().trim().replace(/^#+/, "");
-    const mrLower = mrNo.toLowerCase();
-    const faNo = cleanArrivalToken(fa.final_arrival_no).toLowerCase();
-    const tempNo = cleanArrivalToken(fa.temporary_arrival_no || fa.arrival_no).toLowerCase();
+    const q = searchTerm.toLowerCase().trim();
     const poNo = String(fa.po_no || "").toLowerCase();
-    const supplier = String(fa.supplier || fa.challan_supplier || fa.supplier_name || "").toLowerCase();
-    const lorry = String(fa.lorry_number || fa.lorry_no || "").toLowerCase();
-    const broker = String(fa.broker || fa.broker_name || "").toLowerCase();
+    const supplier = String(fa.supplier || fa.challan_supplier || "").toLowerCase();
+    const lorry = String(fa.lorry_number || "").toLowerCase();
+    const broker = String(fa.broker || "").toLowerCase();
 
     return (
-      mrLower.includes(q) ||
       faNo.includes(q) ||
-      tempNo.includes(q) ||
       poNo.includes(q) ||
       supplier.includes(q) ||
       lorry.includes(q) ||
@@ -81,7 +75,7 @@ const SearchablePendingArrivalSelect: React.FC<SearchablePendingArrivalSelectPro
         <div className="flex items-center gap-2 truncate pr-2">
           <Search className="w-3.5 h-3.5 text-emerald-600 flex-shrink-0" />
           <span className={selectedDisplay ? "text-slate-900 font-black truncate" : "text-slate-500 font-semibold truncate"}>
-            {selectedDisplay || "-- Select / Search Final Arrival M.R. No. to Auto-Fill --"}
+            {selectedDisplay || "-- Select / Search Pending Arrival Record to Auto-Fill --"}
           </span>
         </div>
         <div className="flex items-center gap-1 flex-shrink-0">
@@ -112,7 +106,7 @@ const SearchablePendingArrivalSelect: React.FC<SearchablePendingArrivalSelectPro
               autoFocus
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              placeholder="Search by M.R. No, Arrival, PO, Supplier, Lorry..."
+              placeholder="Search by Arrival, PO, Supplier, Lorry..."
               className="w-full bg-white border border-emerald-300 rounded-lg px-2.5 py-1.5 text-xs font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-500 placeholder:text-slate-400 placeholder:font-normal"
             />
             {searchTerm && (
@@ -129,55 +123,42 @@ const SearchablePendingArrivalSelect: React.FC<SearchablePendingArrivalSelectPro
           <div className="max-h-64 overflow-y-auto divide-y divide-slate-100">
             {pendingArrivalList.length === 0 ? (
               <div className="p-4 text-center text-slate-500 font-medium italic">
-                -- No Final Arrival M.R. Records Found --
+                -- No Pending Arrivals (All Already Inspected) --
               </div>
             ) : filteredList.length === 0 ? (
               <div className="p-4 text-center text-slate-500 font-medium italic">
-                No matching Final Arrival record found for "{searchTerm}"
+                No matching pending arrival record found for "{searchTerm}"
               </div>
             ) : (
               filteredList.map((fa, idx) => {
-                const mrNo = resolvePendingMrNo(fa) || cleanArrivalToken(fa.final_arrival_no || fa.mr_no) || "MR";
-                const tempNo = cleanArrivalToken(fa.temporary_arrival_no || fa.arrival_no);
-                const poNo = formatDisplayPo(fa.po_no);
-                const suppName = fa.supplier || fa.challan_supplier || fa.supplier_name || "Supplier";
-                const lorryNo = fa.lorry_number || fa.lorry_no || "-";
-                const isInspected = Boolean(fa._isAlreadyInspected);
-                const labelStr = `M.R. ${mrNo} | PO: ${poNo} | ${suppName} | Lorry: ${lorryNo}`;
+                const arrNo = fa.final_arrival_no || 'MR';
+                const poNo = fa.po_no || '-';
+                const suppName = fa.supplier || fa.challan_supplier || 'Supplier';
+                const lorryNo = fa.lorry_number || '-';
+                const labelStr = `Arrival ${arrNo} | PO: ${poNo} | ${suppName} | Lorry: ${lorryNo}`;
 
                 return (
                   <div
-                    key={`p-arr-${fa.final_arrival_id || mrNo}-${idx}`}
+                    key={`p-arr-${idx}`}
                     onClick={() => {
                       setSelectedDisplay(labelStr);
                       setIsOpen(false);
                       onSelect(fa);
                     }}
-                    className="p-2.5 hover:bg-emerald-50 cursor-pointer transition-colors flex items-center justify-between gap-2"
+                    className="p-2.5 hover:bg-emerald-50 cursor-pointer transition-colors flex items-center justify-between"
                   >
-                    <div className="min-w-0">
-                      <div className="font-bold text-slate-900 flex flex-wrap items-center gap-1.5">
-                        <span className="text-emerald-700 font-mono">{mrNo}</span>
-                        {tempNo && tempNo.toUpperCase() !== mrNo.toUpperCase() && (
-                          <span className="text-[10px] font-mono text-slate-500">({tempNo})</span>
-                        )}
-                        <span className="text-slate-300">|</span>
-                        <span className={poNo === "--" ? "text-amber-700 font-semibold" : "text-slate-800"}>
-                          PO: {poNo}
-                        </span>
+                    <div>
+                      <div className="font-bold text-slate-900 flex items-center gap-2">
+                        <span className="text-emerald-700">{arrNo}</span>
+                        <span className="text-slate-400">|</span>
+                        <span>PO: {poNo}</span>
                       </div>
-                      <div className="text-[11px] text-slate-500 mt-0.5 truncate">
+                      <div className="text-[11px] text-slate-500 mt-0.5">
                         {suppName} • Lorry: {lorryNo}
                       </div>
                     </div>
-                    <span
-                      className={
-                        isInspected
-                          ? "text-[10px] bg-slate-100 text-slate-600 font-bold px-2 py-0.5 rounded shrink-0"
-                          : "text-[10px] bg-emerald-100 text-emerald-800 font-bold px-2 py-0.5 rounded shrink-0"
-                      }
-                    >
-                      {isInspected ? "Inspected" : "Pick"}
+                    <span className="text-[10px] bg-emerald-100 text-emerald-800 font-bold px-2 py-0.5 rounded">
+                      Pick
                     </span>
                   </div>
                 );
@@ -205,26 +186,22 @@ export const InspectionHeaderCard: React.FC<InspectionHeaderCardProps> = ({
 }) => {
   return (
     <section className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
-      {/* Final Arrival M.R. Picker Bar */}
+      {/* Pending Arrival Picker Bar */}
       <div className="bg-emerald-50/80 px-5 py-3 border-b border-emerald-200 flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <FileText className="w-4 h-4 text-emerald-700" />
           <span className="text-xs font-bold text-emerald-950">
             Import / Pick From Final Arrival:
           </span>
-          {(() => {
-            const mrItems = pendingArrivalList.filter((fa) => Boolean(resolvePendingMrNo(fa)));
-            const pendingOnlyCount = mrItems.filter((fa) => !fa._isAlreadyInspected).length;
-            return mrItems.length > 0 ? (
-              <span className="bg-emerald-200 text-emerald-900 text-[10px] font-extrabold px-2 py-0.5 rounded">
-                {mrItems.length} M.R. ({pendingOnlyCount} Pending)
-              </span>
-            ) : (
-              <span className="bg-slate-200 text-slate-700 text-[10px] font-bold px-2 py-0.5 rounded">
-                No Final Arrival M.R. Found
-              </span>
-            );
-          })()}
+          {pendingArrivalList.length > 0 ? (
+            <span className="bg-emerald-200 text-emerald-900 text-[10px] font-extrabold px-2 py-0.5 rounded-full">
+              {pendingArrivalList.length} Pending
+            </span>
+          ) : (
+            <span className="bg-slate-200 text-slate-700 text-[10px] font-bold px-2 py-0.5 rounded-full">
+              All Arrivals Inspected
+            </span>
+          )}
         </div>
         <SearchablePendingArrivalSelect
           pendingArrivalList={pendingArrivalList}

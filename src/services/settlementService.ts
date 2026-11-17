@@ -9,14 +9,6 @@ import { getCachedSattaDiffs } from './sattaCalculation';
 
 
 import { resolveGradeName, resolveAgencyName, resolveMarkaName, resolveAreaName } from './settlement/settlementResolvers';
-import {
-  FinalArrivalIndex,
-  resolveRecordOfficialArrivalId,
-  resolveOfficialArrivalId,
-  getLinkedArrivalKeys,
-  isMrIdentifier,
-  normalizeArrivalToken
-} from '../utils/arrivalMrResolver';
 export { resolveGradeName, resolveAgencyName, resolveMarkaName, resolveAreaName };
 
 export const buildSettlementCol = (
@@ -896,8 +888,7 @@ export const getPoContractLorryCount = (poData?: any): number => {
 export const getUniquePoLorryGroups = (
   poNo: string,
   inspections: any[],
-  selectedPoData?: any,
-  faIndex?: FinalArrivalIndex | null
+  selectedPoData?: any
 ): Array<{ primaryMr: string; allIds: Set<string>; dateStr: string; lorryNo: string }> => {
   if (!poNo) return [];
   const normPo = (s: any) =>
@@ -950,27 +941,16 @@ export const getUniquePoLorryGroups = (
   };
 
   for (const insp of matched) {
-    const { officialId } = resolveRecordOfficialArrivalId(insp, faIndex);
-    const linked = getLinkedArrivalKeys(insp, faIndex);
-    const rawCandidates = [
-      officialId,
+    const idCandidates = [
       insp.final_arrival_no,
       insp.mr_no,
       insp.arrival_no,
-      insp.temporary_arrival_no,
-      ...linked
+      insp.temporary_arrival_no
     ]
       .map((v: any) => String(v || '').trim().toUpperCase())
       .filter((v: string) => v && v !== 'NO' && v !== 'N/A' && v !== 'NONE');
 
-    if (rawCandidates.length === 0) continue;
-
-    // Sort so official MR... identifiers always precede AR... temp identifiers
-    const idCandidates = Array.from(new Set(rawCandidates)).sort((a, b) => {
-      const aIsMr = isMrIdentifier(a) ? 1 : 0;
-      const bIsMr = isMrIdentifier(b) ? 1 : 0;
-      return bIsMr - aIsMr;
-    });
+    if (idCandidates.length === 0) continue;
 
     const normLorry = String(insp.lorry_number || insp.lorry_no || '')
       .trim()
@@ -993,9 +973,7 @@ export const getUniquePoLorryGroups = (
     if (existingGroup) {
       idCandidates.forEach((id) => existingGroup.allIds.add(id));
       const bestCandidate = idCandidates[0];
-      const existingIsMr = isMrIdentifier(existingGroup.primaryMr);
-      const bestIsMr = isMrIdentifier(bestCandidate);
-      if ((!existingIsMr && bestIsMr) || (existingIsMr === bestIsMr && getNum(bestCandidate) > getNum(existingGroup.primaryMr))) {
+      if (getNum(bestCandidate) > getNum(existingGroup.primaryMr)) {
         existingGroup.primaryMr = bestCandidate;
       }
       if (!existingGroup.dateStr && rawDate) existingGroup.dateStr = rawDate;
@@ -1013,37 +991,22 @@ export const getUniquePoLorryGroups = (
   return groups;
 };
 
-export const isLastMrForPo = (
-  targetMrNo: string,
-  poNo: string,
-  inspections: any[],
-  selectedPoData?: any,
-  faIndex?: FinalArrivalIndex | null
-): boolean => {
+export const isLastMrForPo = (targetMrNo: string, poNo: string, inspections: any[], selectedPoData?: any): boolean => {
   if (!targetMrNo || !poNo || !selectedPoData) return false;
-  const resolvedTarget = resolveOfficialArrivalId(targetMrNo, faIndex) || targetMrNo;
-  const cleanTargetMr = normalizeArrivalToken(resolvedTarget) || targetMrNo.trim().toUpperCase();
-  const targetLinkedKeys = new Set(getLinkedArrivalKeys(targetMrNo, faIndex));
-  targetLinkedKeys.add(cleanTargetMr);
-  targetLinkedKeys.add(targetMrNo.trim().toUpperCase());
+  const cleanTargetPo = poNo.trim().replace(/^#/, '').toUpperCase();
+  const cleanTargetMr = targetMrNo.trim().toUpperCase();
 
   const contractLorries = getPoContractLorryCount(selectedPoData);
-  const groups = getUniquePoLorryGroups(poNo, inspections, selectedPoData, faIndex);
-
-  const matchesGroup = (g: { primaryMr: string; allIds: Set<string> }) => {
-    if (targetLinkedKeys.has(g.primaryMr.toUpperCase())) return true;
-    for (const k of targetLinkedKeys) {
-      if (g.allIds.has(k)) return true;
-    }
-    return false;
-  };
+  const groups = getUniquePoLorryGroups(poNo, inspections, selectedPoData);
 
   // Ensure targetMrNo is represented in groups if not already matched
-  const isTargetInGroups = groups.some(matchesGroup);
+  const isTargetInGroups = groups.some(
+    (g) => g.allIds.has(cleanTargetMr) || g.primaryMr.toUpperCase() === cleanTargetMr
+  );
   if (!isTargetInGroups) {
     groups.push({
       primaryMr: cleanTargetMr,
-      allIds: new Set(targetLinkedKeys),
+      allIds: new Set([cleanTargetMr]),
       dateStr: '',
       lorryNo: ''
     });
@@ -1090,5 +1053,5 @@ export const isLastMrForPo = (
   });
 
   const lastGroup = groups[0];
-  return matchesGroup(lastGroup);
+  return lastGroup.allIds.has(cleanTargetMr) || lastGroup.primaryMr.toUpperCase() === cleanTargetMr;
 };

@@ -9,13 +9,6 @@ import {
   isInvalidAgency,
   isInvalidArea
 } from "./systemReportSanitizers";
-import {
-  buildFinalArrivalIndex,
-  isArrivalFinalized,
-  extractFinalArrivalOfficialMr,
-  getLinkedArrivalKeys,
-  normalizeArrivalToken
-} from "../../utils/arrivalMrResolver";
 let cachedReportResult: {
   data: {
     allTransactions: ReportTransactionLine[];
@@ -870,18 +863,10 @@ export async function loadAndProcessSystemReportData(forceRefresh = false): Prom
       ? Number(sattaRates[0].base_rate || 0) 
       : 0;
 
-    // Arrival by PO and Sauda (deduplicated per finalized official M.R. No. so finalized temp + final arrivals never double-count)
-    const faIndex = buildFinalArrivalIndex(finals || []);
-    const seenFinalMrs = new Set<string>();
+    // Arrival by PO and Sauda (deduplicated per arrival row so identical po_no/contract_po_no/sauda_no never double-add weight)
     const arrivalByPo = new Map<string, number>();
     const finalArrivalSet = new Set<string>();
     (finals || []).forEach((f: any) => {
-      const officialMr = normalizeArrivalToken(extractFinalArrivalOfficialMr(f) || f.final_arrival_no || f.mr_no);
-      if (officialMr) {
-        if (seenFinalMrs.has(officialMr)) return;
-        seenFinalMrs.add(officialMr);
-      }
-
       const wt = Number(f.electronic_net_weight || f.weight_reduced || 0);
       const rowKeys = new Set<string>(
         [f.po_no, f.contract_po_no, f.sauda_no, f.arrival_no]
@@ -892,17 +877,14 @@ export async function loadAndProcessSystemReportData(forceRefresh = false): Prom
         arrivalByPo.set(k, (arrivalByPo.get(k) || 0) + wt);
         finalArrivalSet.add(k.toUpperCase());
       });
-      if (officialMr) finalArrivalSet.add(officialMr);
       if (f.mr_no) finalArrivalSet.add(String(f.mr_no).trim().toUpperCase());
       if (f.final_arrival_no) finalArrivalSet.add(String(f.final_arrival_no).trim().toUpperCase());
-      getLinkedArrivalKeys(f, faIndex).forEach(k => finalArrivalSet.add(k));
     });
 
     const amadSet = new Set<string>();
     (amad || []).forEach((a: any) => {
-      const isFinalized = isArrivalFinalized(a, faIndex);
       const key = a.po_no || a.temporary_arrival_no;
-      if (!isFinalized && key && !arrivalByPo.has(key)) {
+      if (key && !arrivalByPo.has(key)) {
         const wt = Number(a.weight_qtl ? a.weight_qtl / 10 : 0);
         if (wt > 0) arrivalByPo.set(key, wt);
       }
@@ -919,7 +901,6 @@ export async function loadAndProcessSystemReportData(forceRefresh = false): Prom
       if (i.mr_no) inspectionSet.add(String(i.mr_no).trim().toUpperCase());
       if (i.arrival_no) inspectionSet.add(String(i.arrival_no).trim().toUpperCase());
       if (i.sauda_no) inspectionSet.add(String(i.sauda_no).trim().toUpperCase());
-      getLinkedArrivalKeys(i, faIndex).forEach(k => inspectionSet.add(k));
       const poKey = i.po_no || i.mr_no || i.arrival_no;
       if (poKey) {
         const prev = inspectionDeductionByPo.get(poKey) || { deduction: 0, moisture: 0, gradeDown: 0, hasInspection: false };

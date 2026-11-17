@@ -3,11 +3,6 @@ import { dbModule } from "../../services/dbModule";
 import { comparePoInspection } from "../../lib/poMatch";
 import { InspectionMaster, InspectionDetailRow } from "../../types/inspection.types";
 import { checkAndProcessReturnLorryOnInspection } from "../../services/returnLorryService";
-import {
-  buildFinalArrivalIndex,
-  isMrIdentifier,
-  resolveOfficialArrivalId,
-} from "../../utils/arrivalMrResolver";
 
 export interface SaveInspectionParams {
   masterData: InspectionMaster;
@@ -66,33 +61,13 @@ export async function saveMaterialInspection({
   ) / 1000;
   const summedBags = activeInspectionRows.reduce((sum, r) => sum + (Number(r.quantity) || 0), 0);
 
-  let resolvedMasterData = { ...masterData };
-  try {
-    const { data: faRows } = await supabase
-      .from("final_arrival")
-      .select("final_arrival_no, mr_no, arrival_no, temporary_arrival_no");
-    if (Array.isArray(faRows) && faRows.length > 0) {
-      const faBridge = buildFinalArrivalIndex(faRows);
-      const offMr = resolveOfficialArrivalId(masterData.mr_no || masterData.arrival_no, faBridge);
-      const offArr = resolveOfficialArrivalId(masterData.arrival_no || masterData.mr_no, faBridge);
-      if (offMr && isMrIdentifier(offMr)) {
-        resolvedMasterData.mr_no = offMr;
-      }
-      if (offArr && isMrIdentifier(offArr)) {
-        resolvedMasterData.arrival_no = offArr;
-      } else if (isMrIdentifier(resolvedMasterData.mr_no)) {
-        resolvedMasterData.arrival_no = resolvedMasterData.mr_no;
-      }
-    }
-  } catch (_e) {}
-
   const masterPayload: any = {
-    mr_no: resolvedMasterData.mr_no,
-    mr_date: resolvedMasterData.mr_date || null,
-    date: resolvedMasterData.mr_date || resolvedMasterData.arrival_date || null,
-    arrival_no: resolvedMasterData.arrival_no || resolvedMasterData.mr_no,
-    arrival_date: resolvedMasterData.arrival_date || null,
-    po_no: resolvedMasterData.po_no,
+    mr_no: masterData.mr_no,
+    mr_date: masterData.mr_date || null,
+    date: masterData.mr_date || masterData.arrival_date || null,
+    arrival_no: masterData.arrival_no,
+    arrival_date: masterData.arrival_date || null,
+    po_no: masterData.po_no,
     po_date: masterData.po_date || null,
     broker_name: masterData.broker_name,
     broker: masterData.broker_name,
@@ -230,7 +205,7 @@ export async function saveMaterialInspection({
       const rowNcvDeductionKg = rowGrossWtVal > 0 && rowNcvPctVal > 0 ? Math.round(rowGrossWtVal * 1000 * (rowNcvPctVal / 100)) : 0;
 
       return {
-        mr_no: resolvedMasterData.mr_no,
+        mr_no: masterData.mr_no,
         srl_no: row.srl_no || idx + 1,
         arrival_grade: row.arrival_grade || "",
         stock_grade_code: row.stock_grade_code || "",
@@ -311,16 +286,16 @@ export async function saveMaterialInspection({
     await dbModule.upsert("material_inspection", masterPayload, "mr_no");
     await dbModule.upsert("mill_inspection_master", {
       ...masterPayload,
-      inspection_no: resolvedMasterData.mr_no,
+      inspection_no: masterData.mr_no,
       supplier: masterPayload.supplier_name,
       broker: masterPayload.broker_name,
       lorry_no: masterPayload.lorry_number,
     }, "mr_no").catch(() => {});
 
-    await supabase.from("inspection_details").delete().eq("mr_no", resolvedMasterData.mr_no).then(() => {}, () => {});
-    await supabase.from("inspection_checklist_details").delete().eq("mr_no", resolvedMasterData.mr_no).then(() => {}, () => {});
-    await supabase.from("mill_inspection_detail").delete().eq("mr_no", resolvedMasterData.mr_no).then(() => {}, () => {});
-    await supabase.from("material_inspection_details").delete().eq("mr_no", resolvedMasterData.mr_no).then(() => {}, () => {});
+    await supabase.from("inspection_details").delete().eq("mr_no", masterData.mr_no).then(() => {}, () => {});
+    await supabase.from("inspection_checklist_details").delete().eq("mr_no", masterData.mr_no).then(() => {}, () => {});
+    await supabase.from("mill_inspection_detail").delete().eq("mr_no", masterData.mr_no).then(() => {}, () => {});
+    await supabase.from("material_inspection_details").delete().eq("mr_no", masterData.mr_no).then(() => {}, () => {});
     if (validRowsToWrite.length > 0) {
       await supabase.from("inspection_details").insert(validRowsToWrite).then(() => {}, () => {});
       await supabase.from("inspection_checklist_details").insert(validRowsToWrite).then(() => {}, () => {});
@@ -330,10 +305,10 @@ export async function saveMaterialInspection({
   } catch (_txErr) {
     const { error: mErr } = await supabase.from("material_inspection").upsert(masterPayload, { onConflict: "mr_no" });
     if (mErr) throw mErr;
-    await supabase.from("inspection_details").delete().eq("mr_no", resolvedMasterData.mr_no).then(() => {}, () => {});
-    await supabase.from("inspection_checklist_details").delete().eq("mr_no", resolvedMasterData.mr_no).then(() => {}, () => {});
-    await supabase.from("mill_inspection_detail").delete().eq("mr_no", resolvedMasterData.mr_no).then(() => {}, () => {});
-    await supabase.from("material_inspection_details").delete().eq("mr_no", resolvedMasterData.mr_no).then(() => {}, () => {});
+    await supabase.from("inspection_details").delete().eq("mr_no", masterData.mr_no).then(() => {}, () => {});
+    await supabase.from("inspection_checklist_details").delete().eq("mr_no", masterData.mr_no).then(() => {}, () => {});
+    await supabase.from("mill_inspection_detail").delete().eq("mr_no", masterData.mr_no).then(() => {}, () => {});
+    await supabase.from("material_inspection_details").delete().eq("mr_no", masterData.mr_no).then(() => {}, () => {});
     if (validRowsToWrite.length > 0) {
       await supabase.from("inspection_details").insert(validRowsToWrite).then(() => {}, () => {});
       await supabase.from("inspection_checklist_details").insert(validRowsToWrite).then(() => {}, () => {});
@@ -352,9 +327,8 @@ export async function saveMaterialInspection({
     const lorryNo = masterData.lorry_number || matchingVoucher?.lorry_number || matchingVoucher?.lorry_no || matchingVoucher?.vehicle_no || masterData.arrival_no || null;
 
     const orConditions = [
-      resolvedMasterData.mr_no ? `mr_no.eq.${resolvedMasterData.mr_no}` : '',
-      resolvedMasterData.mr_no ? `final_arrival_no.eq.${resolvedMasterData.mr_no}` : '',
-      resolvedMasterData.arrival_no ? `temporary_arrival_no.eq.${resolvedMasterData.arrival_no}` : '',
+      masterData.mr_no ? `mr_no.eq.${masterData.mr_no}` : '',
+      masterData.mr_no ? `final_arrival_no.eq.${masterData.mr_no}` : '',
       masterData.arrival_no ? `temporary_arrival_no.eq.${masterData.arrival_no}` : ''
     ].filter(Boolean).join(',');
 
@@ -362,7 +336,7 @@ export async function saveMaterialInspection({
     if (orConditions) {
       const { data: faMatches } = await supabase
         .from("final_arrival")
-        .select("final_arrival_id, final_arrival_no, temporary_arrival_no")
+        .select("final_arrival_id, final_arrival_no")
         .or(orConditions)
         .limit(1);
       if (faMatches && faMatches.length > 0) {
@@ -371,28 +345,28 @@ export async function saveMaterialInspection({
     }
 
     const faSyncPayload = {
-      mr_no: resolvedMasterData.mr_no,
-      mr_date: resolvedMasterData.mr_date || null,
-      temporary_arrival_no: existingFa?.temporary_arrival_no || resolvedMasterData.temporary_arrival_no || (isMrIdentifier(resolvedMasterData.arrival_no) ? null : resolvedMasterData.arrival_no),
-      arrival_date: resolvedMasterData.arrival_date || null,
-      date: resolvedMasterData.arrival_date || resolvedMasterData.mr_date || null,
-      po_no: resolvedMasterData.po_no,
+      mr_no: masterData.mr_no,
+      mr_date: masterData.mr_date || null,
+      temporary_arrival_no: masterData.arrival_no,
+      arrival_date: masterData.arrival_date || null,
+      date: masterData.arrival_date || masterData.mr_date || null,
+      po_no: masterData.po_no,
       po_date: masterPayload.po_date || null,
-      broker: resolvedMasterData.broker_name,
-      broker_name: resolvedMasterData.broker_name,
-      supplier: resolvedMasterData.supplier_name,
-      supplier_name: resolvedMasterData.supplier_name,
-      actual_moisture: resolvedMasterData.actual_moisture ? Number(resolvedMasterData.actual_moisture) : null,
-      claim_moisture: resolvedMasterData.claim_moisture ? Number(resolvedMasterData.claim_moisture) : null,
-      actual_dust: resolvedMasterData.actual_dust ? Number(resolvedMasterData.actual_dust) : null,
-      claim_dust: resolvedMasterData.claim_dust ? Number(resolvedMasterData.claim_dust) : null,
-      actual_ncv: resolvedMasterData.actual_ncv ? Number(resolvedMasterData.actual_ncv) : null,
-      claim_ncv: resolvedMasterData.claim_ncv ? Number(resolvedMasterData.claim_ncv) : null,
-      detention_days: resolvedMasterData.detention_days ? Number(resolvedMasterData.detention_days) : null,
-      unloading_date: resolvedMasterData.unloading_date || null,
-      remarks: resolvedMasterData.remarks,
-      lorry_number: resolvedMasterData.lorry_number || lorryNo,
-      final_arrival_no: existingFa?.final_arrival_no || resolvedMasterData.mr_no,
+      broker: masterData.broker_name,
+      broker_name: masterData.broker_name,
+      supplier: masterData.supplier_name,
+      supplier_name: masterData.supplier_name,
+      actual_moisture: masterData.actual_moisture ? Number(masterData.actual_moisture) : null,
+      claim_moisture: masterData.claim_moisture ? Number(masterData.claim_moisture) : null,
+      actual_dust: masterData.actual_dust ? Number(masterData.actual_dust) : null,
+      claim_dust: masterData.claim_dust ? Number(masterData.claim_dust) : null,
+      actual_ncv: masterData.actual_ncv ? Number(masterData.actual_ncv) : null,
+      claim_ncv: masterData.claim_ncv ? Number(masterData.claim_ncv) : null,
+      detention_days: masterData.detention_days ? Number(masterData.detention_days) : null,
+      unloading_date: masterData.unloading_date || null,
+      remarks: masterData.remarks,
+      lorry_number: masterData.lorry_number || lorryNo,
+      final_arrival_no: existingFa?.final_arrival_no || masterData.mr_no,
       total_packets: totalPackets,
       total_actual_weight: totalWeightKgs,
       grid_details: JSON.stringify(validRowsToWrite.map(r => ({
@@ -492,18 +466,18 @@ export async function saveMaterialInspection({
 
   // Auto-check Return Lorry (< 5 MT) and copy Sauda Check Point P.O. to Return Lorry (4000 series)
   const returnCheck = await checkAndProcessReturnLorryOnInspection({
-    mrNo: resolvedMasterData.mr_no,
-    poNo: resolvedMasterData.po_no || "",
-    arrivalNo: resolvedMasterData.arrival_no || resolvedMasterData.mr_no,
-    lorryNo: resolvedMasterData.lorry_number || "",
-    inspectionDate: resolvedMasterData.mr_date || resolvedMasterData.arrival_date || undefined,
-    headerForm: resolvedMasterData,
+    mrNo: masterData.mr_no,
+    poNo: masterData.po_no || "",
+    arrivalNo: masterData.arrival_no || masterData.mr_no,
+    lorryNo: masterData.lorry_number || "",
+    inspectionDate: masterData.mr_date || masterData.arrival_date || undefined,
+    headerForm: masterData,
     detailRows: validRowsToWrite,
   });
 
-  let baseSuccess = `System Database Updated: Inspection report ${resolvedMasterData.mr_no} registered successfully!`;
+  let baseSuccess = `System Database Updated: Inspection report ${masterData.mr_no} registered successfully!`;
   if (returnCheck.isReturnLorry && returnCheck.newPoNo) {
-    baseSuccess = `System Database Updated: Inspection ${resolvedMasterData.mr_no} saved! [RETURN LORRY < 5 MT: ${returnCheck.weightMt.toFixed(3)} MT -> Generated 4000-Series P.O. #${returnCheck.newPoNo} (Ref: #${returnCheck.referencePoNo})]`;
+    baseSuccess = `System Database Updated: Inspection ${masterData.mr_no} saved! [RETURN LORRY < 5 MT: ${returnCheck.weightMt.toFixed(3)} MT -> Generated 4000-Series P.O. #${returnCheck.newPoNo} (Ref: #${returnCheck.referencePoNo})]`;
   }
 
   if (onLogEvent) {
