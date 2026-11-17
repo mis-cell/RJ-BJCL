@@ -1,4 +1,4 @@
-// Ensure crypto.randomUUID is available on HTTP (non-HTTPS) static IP / LAN deployments
+
 if (typeof window !== 'undefined') {
   const gCrypto = (window.crypto || (window as any).msCrypto || {}) as any;
   if (typeof gCrypto.randomUUID !== 'function') {
