@@ -120,103 +120,190 @@ export function getCanonicalPoKey(raw: any): string {
   return clean;
 }
 
+export interface ParsedIndianDate {
+  dateObj: Date;
+  dateStr: string;     // YYYY-MM-DD (Indian calendar)
+  displayDate: string; // DD/MM/YYYY
+  year: number;
+  month: number;       // 0-11
+  day: number;         // 1-31
+  isValid: boolean;
+}
+
+const MONTH_ABBR_MAP: Record<string, number> = {
+  jan: 0, january: 0,
+  feb: 1, february: 1,
+  mar: 2, march: 2,
+  apr: 3, april: 3,
+  may: 4,
+  jun: 5, june: 5,
+  jul: 6, july: 6,
+  aug: 7, august: 7,
+  sep: 8, sept: 8, september: 8,
+  oct: 9, october: 9,
+  nov: 10, november: 10,
+  dec: 11, december: 11,
+};
+
+const IST_OFFSET_MS = 330 * 60 * 1000; // Asia/Kolkata UTC+05:30
+
+function buildValidParsedDate(year: number, month: number, day: number): ParsedIndianDate | null {
+  if (year < 2000 || year > 2100 || month < 0 || month > 11 || day < 1 || day > 31) {
+    return null;
+  }
+  const d = new Date(year, month, day);
+  if (
+    isNaN(d.getTime()) ||
+    d.getFullYear() !== year ||
+    d.getMonth() !== month ||
+    d.getDate() !== day
+  ) {
+    return null;
+  }
+  const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+  const displayDate = `${String(day).padStart(2, '0')}/${String(month + 1).padStart(2, '0')}/${year}`;
+  return { dateObj: d, dateStr, displayDate, year, month, day, isValid: true };
+}
+
 /**
- * Robust date parser returning standard date object and parts
+ * Checks whether a reference number (Temp Arrival, Final Arrival, MR No, PO No) is a genuine non-empty value.
  */
-export function parseRecordDate(rawDate: any): { dateObj: Date; dateStr: string; year: number; month: number; isValid: boolean } {
+export function isRealBusinessRef(raw: any): string {
+  const clean = normalizePoRef(raw);
+  if (
+    !clean ||
+    clean === '-' ||
+    clean === '--' ||
+    clean === '---' ||
+    clean === 'N/A' ||
+    clean === 'NA' ||
+    clean === 'NONE' ||
+    clean === 'NULL' ||
+    clean === 'UNDEFINED'
+  ) {
+    return '';
+  }
+  return clean;
+}
+
+/**
+ * Robust Indian-calendar date parser returning standard date object and parts.
+ * - Parses DD/MM/YYYY, DD-MM-YYYY, DD.MM.YYYY, DD-MM-YY, DD-MMM-YYYY strictly in Day-Month-Year order.
+ * - Preserves YYYY-MM-DD plain DB dates without local timezone shift.
+ * - Converts UTC/offset ISO timestamps to IST (Asia/Kolkata, +05:30) calendar day/month/year boundaries.
+ */
+export function parseRecordDate(rawDate: any): ParsedIndianDate {
   const fallback = new Date();
-  if (!rawDate) {
-    return {
-      dateObj: fallback,
-      dateStr: '',
-      year: 0,
-      month: -1,
-      isValid: false
-    };
+  const invalid: ParsedIndianDate = {
+    dateObj: fallback,
+    dateStr: '',
+    displayDate: '',
+    year: 0,
+    month: -1,
+    day: 0,
+    isValid: false,
+  };
+
+  if (rawDate === null || rawDate === undefined || rawDate === '') {
+    return invalid;
+  }
+
+  if (rawDate instanceof Date) {
+    if (isNaN(rawDate.getTime())) return invalid;
+    const ist = new Date(rawDate.getTime() + IST_OFFSET_MS);
+    return buildValidParsedDate(ist.getUTCFullYear(), ist.getUTCMonth(), ist.getUTCDate()) || invalid;
   }
 
   const str = String(rawDate).trim();
-  if (!str) {
-    return {
-      dateObj: fallback,
-      dateStr: '',
-      year: 0,
-      month: -1,
-      isValid: false
-    };
+  if (!str || str === '-' || str === '--' || /^(null|undefined|n\/a|invalid date)$/i.test(str)) {
+    return invalid;
   }
-  
-  // Handle YYYY-MM-DD or YYYY/MM/DD or ISO prefix (must start with 4-digit year)
-  if (/^\d{4}[-/]\d{1,2}[-/]\d{1,2}/.test(str)) {
-    const cleanDatePart = str.split('T')[0];
-    const parts = cleanDatePart.split(/[-/]/);
-    let year = parseInt(parts[0], 10);
-    const month = parseInt(parts[1], 10) - 1; // 0-indexed
-    const day = parseInt(parts[2], 10);
 
-    // Sanitize corrupted/truncated years (e.g. 0009 -> 2009 or 2026 if year < 100)
-    if (year < 100 && year >= 0) {
-      year = year < 50 ? 2000 + year : 1900 + year;
-    }
+  // Reject corrupt zero-padded years such as 0000-00-00 or 0009-09-12
+  if (/^0{2,4}[-/.]/.test(str)) {
+    return invalid;
+  }
 
-    const d = new Date(year, month, day);
-    if (!isNaN(d.getTime())) {
-      return {
-        dateObj: d,
-        dateStr: `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`,
-        year,
-        month,
-        isValid: true
-      };
+  // 1. Timestamps with explicit timezone offset (e.g. ...Z, +00:00, +05:30, -08:00): convert instant -> IST (+05:30)
+  if (/^\d{4}[-/]\d{1,2}[-/]\d{1,2}[T\s]\d{1,2}:\d{2}.*(?:Z|[+-]\d{2}:?\d{2})$/i.test(str)) {
+    const normalizedIso = str.includes(' ') && !str.includes('T') ? str.replace(' ', 'T') : str;
+    const inst = new Date(normalizedIso);
+    if (!isNaN(inst.getTime())) {
+      const ist = new Date(inst.getTime() + IST_OFFSET_MS);
+      const res = buildValidParsedDate(ist.getUTCFullYear(), ist.getUTCMonth(), ist.getUTCDate());
+      if (res) return res;
     }
   }
 
-  // Handle DD-MM-YYYY or DD/MM/YYYY (ends with 4-digit year)
-  if (/^\d{1,2}[-/]\d{1,2}[-/]\d{4}/.test(str)) {
-    const parts = str.split(/[-/]/);
-    const day = parseInt(parts[0], 10);
-    const month = parseInt(parts[1], 10) - 1; // 0-indexed
-    let year = parseInt(parts[2], 10);
-
-    if (year < 100 && year >= 0) {
-      year = year < 50 ? 2000 + year : 1900 + year;
-    }
-
-    const d = new Date(year, month, day);
-    if (!isNaN(d.getTime())) {
-      return {
-        dateObj: d,
-        dateStr: `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`,
-        year,
-        month,
-        isValid: true
-      };
-    }
+  // 2. ISO / PostgreSQL YYYY-MM-DD (or YYYY/MM/DD or YYYY-MM-DD HH:MM:SS without offset)
+  const ymdMatch = str.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})(?:[T\s]|$)/);
+  if (ymdMatch) {
+    const year = parseInt(ymdMatch[1], 10);
+    const month = parseInt(ymdMatch[2], 10) - 1;
+    const day = parseInt(ymdMatch[3], 10);
+    const res = buildValidParsedDate(year, month, day);
+    if (res) return res;
+    return invalid;
   }
 
-  // Standard ISO or YYYY-MM-DD
+  // 3. Indian DD-MM-YYYY / DD/MM/YYYY / DD.MM.YYYY (strictly Day then Month)
+  const dmy4Match = str.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})(?:[T\s,].*)?$/);
+  if (dmy4Match) {
+    const day = parseInt(dmy4Match[1], 10);
+    const month = parseInt(dmy4Match[2], 10) - 1;
+    const year = parseInt(dmy4Match[3], 10);
+    const res = buildValidParsedDate(year, month, day);
+    if (res) return res;
+    return invalid;
+  }
+
+  // 4. Indian short year DD-MM-YY / DD/MM/YY / DD.MM.YY
+  const dmy2Match = str.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{2})(?:[T\s,].*)?$/);
+  if (dmy2Match) {
+    const day = parseInt(dmy2Match[1], 10);
+    const month = parseInt(dmy2Match[2], 10) - 1;
+    const yy = parseInt(dmy2Match[3], 10);
+    const year = yy < 80 ? 2000 + yy : 1900 + yy;
+    const res = buildValidParsedDate(year, month, day);
+    if (res) return res;
+    return invalid;
+  }
+
+  // 5. Indian named month e.g. 07-Nov-2026 or 7 Nov 26
+  const dMonYMatch = str.match(/^(\d{1,2})[-/\s]+([A-Za-z]{3,9})[-/,\s]+(\d{2,4})(?:\s.*)?$/);
+  if (dMonYMatch) {
+    const day = parseInt(dMonYMatch[1], 10);
+    const mIdx = MONTH_ABBR_MAP[dMonYMatch[2].toLowerCase()];
+    let year = parseInt(dMonYMatch[3], 10);
+    if (year < 100) year = year < 80 ? 2000 + year : 1900 + year;
+    if (mIdx !== undefined) {
+      const res = buildValidParsedDate(year, mIdx, day);
+      if (res) return res;
+    }
+    return invalid;
+  }
+
+  // 6. Fallback JS Date parse converted to IST
   const parsed = new Date(str);
   if (!isNaN(parsed.getTime())) {
-    let year = parsed.getFullYear();
-    if (year < 100 && year >= 0) {
-      year = year < 50 ? 2000 + year : 1900 + year;
-    }
-    return {
-      dateObj: parsed,
-      dateStr: parsed.toISOString().slice(0, 10),
-      year,
-      month: parsed.getMonth(),
-      isValid: true
-    };
+    const ist = new Date(parsed.getTime() + IST_OFFSET_MS);
+    const res = buildValidParsedDate(ist.getUTCFullYear(), ist.getUTCMonth(), ist.getUTCDate());
+    if (res) return res;
   }
 
-  return {
-    dateObj: fallback,
-    dateStr: '',
-    year: 0,
-    month: -1,
-    isValid: false
-  };
+  return invalid;
+}
+
+/**
+ * Picks the first valid Indian calendar date from a prioritized list of candidate fields.
+ */
+export function pickFirstValidRecordDate(candidates: any[]): ParsedIndianDate {
+  for (const c of candidates) {
+    if (c === null || c === undefined || c === '') continue;
+    const parsed = parseRecordDate(c);
+    if (parsed.isValid) return parsed;
+  }
+  return parseRecordDate(null);
 }
 
 /**

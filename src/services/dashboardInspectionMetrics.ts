@@ -10,10 +10,19 @@ import {
   extractPositiveVal,
   getRecordBales,
   getRecordNetWeightMt,
+  isRealBusinessRef,
   normalizePoRef,
   parseRecordDate,
+  pickFirstValidRecordDate,
   MONTH_NAMES
 } from './dashboardCalculationHelpers';
+
+function isCancelledOrArchivedRecord(rec: any): boolean {
+  if (!rec || typeof rec !== 'object') return false;
+  if (rec.archived_at) return true;
+  const st = String(rec.status || rec.payment_status || '').toLowerCase().trim();
+  return st === 'cancelled' || st === 'void' || st === 'rejected' || st === 'deleted';
+}
 
 export function computeInspectionMetrics(params: ComputeInspectionMetricsParams): InspectionMetricsResult {
   const { 
@@ -32,38 +41,46 @@ export function computeInspectionMetrics(params: ComputeInspectionMetricsParams)
     selectedYear 
   } = params;
 
-  // Pre-calculate available years from all sources to establish activeYear safely
+  // Pre-calculate available years from all authoritative section dates using strict Indian Date rules
   const yearsSet = new Set<number>();
   arrivals.forEach(a => {
-    const rawDate = a.date || a.temporary_arrival_date || a.amad_date || a.created_at;
-    if (rawDate) {
-      const { year: aYear, isValid } = parseRecordDate(rawDate);
-      if (isValid && aYear > 0) yearsSet.add(aYear);
-    }
+    if (isCancelledOrArchivedRecord(a)) return;
+    if (!isRealBusinessRef(a.temporary_arrival_no || a.amad_no)) return;
+    const { year: aYear, isValid } = pickFirstValidRecordDate([a.date, a.temporary_arrival_date, a.amad_date, a.created_at]);
+    if (isValid && aYear > 0) yearsSet.add(aYear);
   });
 
   finalArrivals.forEach(fa => {
-    const rawDate = fa.final_arrival_date || fa.date || fa.arrival_date || fa.created_at;
-    if (rawDate) {
-      const { year: fYear, isValid } = parseRecordDate(rawDate);
-      if (isValid && fYear > 0) yearsSet.add(fYear);
-    }
+    if (isCancelledOrArchivedRecord(fa)) return;
+    if (!isRealBusinessRef(fa.final_arrival_no)) return;
+    const { year: fYear, isValid } = pickFirstValidRecordDate([fa.date, fa.arrival_date, fa.final_arrival_date, fa.created_at]);
+    if (isValid && fYear > 0) yearsSet.add(fYear);
+  });
+
+  [...materialInspections, ...millInspections, ...inspections].forEach(insp => {
+    if (isCancelledOrArchivedRecord(insp)) return;
+    if (!isRealBusinessRef(insp.mr_no)) return;
+    const { year: iYear, isValid } = pickFirstValidRecordDate([insp.arrival_date, insp.date, insp.inspection_date, insp.mr_date, insp.unloading_date, insp.created_at]);
+    if (isValid && iYear > 0) yearsSet.add(iYear);
   });
 
   paymentRecords.forEach(p => {
-    const rawDate = p.date || p.payment_date || p.created_at;
-    if (rawDate) {
-      const { year: pYear, isValid } = parseRecordDate(rawDate);
-      if (isValid && pYear > 0) yearsSet.add(pYear);
-    }
+    if (isCancelledOrArchivedRecord(p)) return;
+    const hasRef = Boolean(isRealBusinessRef(p.mr_no || p.arrival_no) || isRealBusinessRef(p.po_no || p.reference_no));
+    if (!hasRef) return;
+    const { year: pYear, isValid } = pickFirstValidRecordDate([
+      p.payment_date, p.payable_bill_date, p.sett_date, p.payment_settlementdate, p.arrival_date, p.po_date, p.created_at
+    ]);
+    if (isValid && pYear > 0) yearsSet.add(pYear);
   });
 
   settlements.forEach(s => {
-    const rawDate = s.audit_date || s.sett_date || s.date || s.bill_date || s.created_at;
-    if (rawDate) {
-      const { year: sYear, isValid } = parseRecordDate(rawDate);
-      if (isValid && sYear > 0) yearsSet.add(sYear);
-    }
+    if (isCancelledOrArchivedRecord(s)) return;
+    if (!isRealBusinessRef(s.mr_no)) return;
+    const { year: sYear, isValid } = pickFirstValidRecordDate([
+      s.sett_date, s.arrival_date, s.payable_bill_date, s.po_date, s.audit_date, s.date, s.created_at
+    ]);
+    if (isValid && sYear > 0) yearsSet.add(sYear);
   });
 
   const availableYears = Array.from(yearsSet).sort((a, b) => b - a);
@@ -292,145 +309,97 @@ export function computeInspectionMetrics(params: ComputeInspectionMetricsParams)
     }
   });
 
-  // Build arrivals lookup map to enrich inspection metadata if needed
+  // Build arrivals lookup map strictly to enrich missing metadata on real Mill Inspection records
   const arrivalsByMr = new Map<string, any>();
-  arrivals.forEach((item, idx) => {
-    const mr = normalizePoRef(item.mr_no || item.temporary_arrival_no || item.arrival_no || item.amad_no || item.challan_no || `ARR-${idx}`);
-    if (mr) {
-      arrivalsByMr.set(mr, item);
-    }
+  arrivals.forEach((item) => {
+    if (isCancelledOrArchivedRecord(item)) return;
+    const keys = [
+      isRealBusinessRef(item.mr_no),
+      isRealBusinessRef(item.temporary_arrival_no),
+      isRealBusinessRef(item.amad_no),
+      isRealBusinessRef(item.arrival_no)
+    ].filter(Boolean);
+    keys.forEach(k => {
+      if (!arrivalsByMr.has(k)) arrivalsByMr.set(k, item);
+    });
   });
 
-  // Build a consolidated map of inspection records by MR No ONLY
+  // Build consolidated map of REAL Mill Inspection records keyed strictly by column "M.R. No."
+  // (Never inject uninspected Temporary Arrivals or Payment vouchers as completed Mill Inspections)
   const mapByMr = new Map<string, any>();
 
-  // 1. Process material_inspection records
-  materialInspections.forEach((item, idx) => {
-    const rawMr = item.mr_no || item.arrival_no || item.temporary_arrival_no || item.amad_no || item.id || `MI-${idx}`;
-    const mr = normalizePoRef(rawMr);
+  const mergeRealInspection = (item: any, source: 'material' | 'mill') => {
+    if (isCancelledOrArchivedRecord(item)) return;
+    const mr = isRealBusinessRef(item.mr_no);
     if (!mr) return;
-    const arr = arrivalsByMr.get(mr) || arrivalsByMr.get(normalizePoRef(item.arrival_no || '')) || {};
-    mapByMr.set(mr, { ...arr, ...item, inspection_source: 'material', is_inspected: true, status: item.status || 'Completed' });
-  });
 
-  // 2. Process mill_inspection_master records
-  millInspections.forEach((item, idx) => {
-    const rawMr = item.mr_no || item.arrival_no || item.temporary_arrival_no || item.amad_no || item.id || `MIM-${idx}`;
-    const mr = normalizePoRef(rawMr);
-    if (!mr) return;
-    const arr = arrivalsByMr.get(mr) || arrivalsByMr.get(normalizePoRef(item.arrival_no || '')) || {};
+    const arr =
+      arrivalsByMr.get(mr) ||
+      arrivalsByMr.get(isRealBusinessRef(item.arrival_no)) ||
+      {};
     const existing = mapByMr.get(mr);
-    mapByMr.set(mr, { ...arr, ...(existing || {}), ...item, inspection_source: 'mill', is_mill: true, is_inspected: true, status: item.status || 'Completed' });
-  });
+    const st = String(item.status || existing?.status || '').toLowerCase().trim();
+    const isPending = item.is_inspected === false || st === 'pending';
+    const isMill =
+      source === 'mill' ||
+      Boolean(existing?.is_mill) ||
+      item.inspection_source === 'mill' ||
+      Boolean(item.mill_code) ||
+      Boolean(item.mill_name);
 
-  // 3. Process generic inspection records if passed
-  inspections.forEach((item, idx) => {
-    const rawMr = item.mr_no || item.arrival_no || item.temporary_arrival_no || item.amad_no || item.id || `MR-${idx}`;
-    const mr = normalizePoRef(rawMr);
-    if (!mr) return;
-    
-    // Enrich with arrival data if available
-    const arr = arrivalsByMr.get(mr) || arrivalsByMr.get(normalizePoRef(item.arrival_no || '')) || {};
-    const isMill = item.inspection_source === 'mill' || item.is_mill || Boolean(item.mill_code) || Boolean(item.mill_name);
-    const existing = mapByMr.get(mr);
-    const isInspected = item.is_inspected === true || item.status === 'Completed' || item.status === 'Audited';
     mapByMr.set(mr, {
       ...arr,
       ...(existing || {}),
       ...item,
-      inspection_source: existing?.inspection_source || (isMill ? 'mill' : 'material'),
-      is_inspected: isInspected,
-      status: isInspected ? (item.status || 'Completed') : 'Pending'
+      mr_no: item.mr_no || existing?.mr_no,
+      arrival_no: item.arrival_no || existing?.arrival_no || arr?.temporary_arrival_no || '',
+      arrival_date: item.arrival_date || existing?.arrival_date || item.date || existing?.date || arr?.date || '',
+      date: item.date || existing?.date || item.arrival_date || existing?.arrival_date || arr?.date || '',
+      mr_date: item.mr_date || existing?.mr_date || '',
+      inspection_source: isMill ? 'mill' : (existing?.inspection_source || 'material'),
+      is_mill: isMill,
+      is_inspected: !isPending,
+      status: isPending ? 'Pending' : (item.status || existing?.status || 'Completed')
     });
-  });
+  };
 
-  // 4. Process all arrivals from temporary_material_received (MRs)
-  arrivals.forEach((item, idx) => {
-    const rawMr = item.mr_no || item.temporary_arrival_no || item.arrival_no || item.amad_no || item.amad_id || `ARR-${idx}`;
-    const mr = normalizePoRef(rawMr);
-    if (!mr) return;
-    if (!mapByMr.has(mr)) {
-      mapByMr.set(mr, {
-        ...item,
-        is_inspected: false,
-        status: (item.inspection_status === 'inspected' || item.status === 'inspected') ? 'Completed' : 'Pending',
-        inspection_source: 'arrival'
-      });
-    }
-  });
+  // 1. Process material_inspection records
+  materialInspections.forEach((item) => mergeRealInspection(item, 'material'));
 
-  // 5. Process Payment records and Payment Details so Payment Section MRs are included
-  paymentRecords.forEach((item, idx) => {
-    const rawMr = item.mr_no || item.arrival_no || `PAY-${idx}`;
-    const mr = normalizePoRef(rawMr);
-    if (!mr) return;
-    if (!mapByMr.has(mr)) {
-      mapByMr.set(mr, {
-        ...item,
-        mr_no: rawMr,
-        arrival_date: item.payment_date || item.date || item.created_at,
-        is_inspected: true,
-        status: item.status || 'Paid',
-        inspection_source: 'payment'
-      });
-    } else {
-      const existing = mapByMr.get(mr);
-      mapByMr.set(mr, {
-        ...existing,
-        is_inspected: true,
-        payment_date: item.payment_date || item.date || existing.payment_date,
-        paid_amount: item.paid_amount || item.payable_amt || existing.paid_amount
-      });
-    }
-  });
+  // 2. Process mill_inspection_master records
+  millInspections.forEach((item) => mergeRealInspection(item, 'mill'));
 
-  paymentDetails.forEach((item, idx) => {
-    const rawMr = item.mr_no || item.arrival_no || `PD-${idx}`;
-    const mr = normalizePoRef(rawMr);
-    if (!mr) return;
-    if (!mapByMr.has(mr)) {
-      mapByMr.set(mr, {
-        ...item,
-        mr_no: rawMr,
-        arrival_date: item.created_at || item.bill_date || item.date,
-        is_inspected: true,
-        status: 'Paid',
-        inspection_source: 'payment'
-      });
-    }
-  });
-
-  // 6. Ensure all MRs with Premium from Payment Section exist in mapByMr
-  paymentMrPremiumMap.forEach((entry, cleanMr) => {
-    if (!mapByMr.has(cleanMr)) {
-      mapByMr.set(cleanMr, {
-        id: `pay-prem-${cleanMr}`,
-        mr_no: entry.mrNo,
-        arrival_date: entry.date,
-        supplier_name: entry.supplier,
-        broker_name: entry.broker,
-        jute_grade: entry.juteGrade,
-        quantity_qtl: entry.weightQtl,
-        weight_mt: Number((entry.weightQtl / 10).toFixed(3)),
-        premium: entry.rate > 0 ? `₹${entry.rate}/Qtl` : 'Yes',
-        is_premium: true,
-        premium_rate: entry.rate,
-        summary_premium_amount: entry.amount,
-        is_inspected: true,
-        status: 'Paid',
-        inspection_source: 'payment'
-      });
-    }
+  // 3. Process unified inspection records (without overwriting real status/dates to Pending)
+  inspections.forEach((item) => {
+    const isMill = item.inspection_source === 'mill' || item.is_mill || Boolean(item.mill_code) || Boolean(item.mill_name);
+    mergeRealInspection(item, isMill ? 'mill' : 'material');
   });
 
   const parsedInspections: InspectionRecord[] = [];
+  const allInspectedLookupSet = new Set<string>();
 
   mapByMr.forEach((raw, cleanMr) => {
-    // Column Name from Screenshot 3: "Arrival Date"
-    const dateStr = raw.arrival_date || raw.date || raw.inspection_date || raw.mr_date || raw.unloading_date || raw.created_at || '';
-    const { year, month: monthIndex, isValid } = parseRecordDate(dateStr);
+    // Authoritative Arrival / Inspection Date matching Mill Inspection Register ("Arrival Date")
+    const parsedInspDate = pickFirstValidRecordDate([
+      raw.arrival_date,
+      raw.date,
+      raw.inspection_date,
+      raw.mr_date,
+      raw.unloading_date,
+      raw.created_at
+    ]);
+    const { year, month: monthIndex, isValid } = parsedInspDate;
     if (isValid && year > 0) {
       yearsSet.add(year);
+    }
+
+    if (raw.is_inspected) {
+      [cleanMr, isRealBusinessRef(raw.arrival_no), isRealBusinessRef(raw.temporary_arrival_no), isRealBusinessRef(raw.amad_no)]
+        .filter(Boolean)
+        .forEach(k => {
+          allInspectedLookupSet.add(k);
+          allInspectedLookupSet.add(k.replace(/[\s\-_]/g, ''));
+        });
     }
 
     const poRaw = raw.po_no || raw.mill_po_no || raw.contract_no || raw.sauda_no || '';
@@ -702,11 +671,11 @@ export function computeInspectionMetrics(params: ComputeInspectionMetricsParams)
 
     parsedInspections.push({
       id: raw.id || `insp-rec-${cleanMr}`,
-      mrNo: raw.mr_no || raw.amad_no || raw.challan_no || cleanMr,
+      mrNo: raw.mr_no || cleanMr,
       cleanMrNo: cleanMr,
       poNo: poRaw || '---',
       cleanPoNo: cleanPo,
-      date: dateStr ? new Date(dateStr).toLocaleDateString('en-IN') : '2026-09-24',
+      date: parsedInspDate.isValid ? parsedInspDate.displayDate : '',
       year,
       month: monthIndex,
       monthName: MONTH_NAMES[monthIndex] || `Month ${monthIndex + 1}`,
@@ -758,103 +727,153 @@ export function computeInspectionMetrics(params: ComputeInspectionMetricsParams)
     });
   });
 
-  // 1. Index Temporary Arrivals for activeYear by month
+  // 1. Index Temporary Arrivals for activeYear by month (deduplicated by column "Temp Arrival")
   const arrivalsByMonth = new Map<number, any[]>();
-  // 2. Index Final Arrivals for activeYear by month & build final lookup set
+  const arrivalSeenGlobal = new Set<string>();
+  // 2. Index Final Arrivals for activeYear by month & build final lookup set (deduplicated by column "Arrival")
   const finalArrivalsByMonth = new Map<number, any[]>();
+  const finalArrivalSeenGlobal = new Set<string>();
   const finalArrivalsSet = new Set<string>();
-  // 3. Index payments for activeYear by month
+  // 3. Index Payments for activeYear by month (count by column "M.R / P.O Reference")
   const paymentsByMonth = new Map<number, any[]>();
-  // 4. Index settlements for activeYear by month
+  const paymentRefSetByMonth = new Map<number, Set<string>>();
+  const allPaymentMrSet = new Set<string>();
+  const allPaymentPoSet = new Set<string>();
+  // 4. Index Settlements for activeYear by month (deduplicated by column "M.R. No.")
   const settlementsByMonth = new Map<number, any[]>();
+  const settlementMrSetByMonth = new Map<number, Set<string>>();
+  const allSettlementMrSet = new Set<string>();
+  const allSettlementPoSet = new Set<string>();
 
   for (let m = 0; m < 12; m++) {
     arrivalsByMonth.set(m, []);
     finalArrivalsByMonth.set(m, []);
     paymentsByMonth.set(m, []);
+    paymentRefSetByMonth.set(m, new Set());
     settlementsByMonth.set(m, []);
+    settlementMrSetByMonth.set(m, new Set());
   }
 
-  // Populate Temporary Arrivals
+  // Populate Stage 1: Temporary Arrivals (Column: "Temp Arrival" = temporary_arrival_no || amad_no)
   let yearTotalArrivalsBales = 0;
   let yearTotalArrivalsWeightMt = 0;
   const yearArrivals: any[] = [];
   arrivals.forEach(a => {
-    const rawDate = a.date || a.temporary_arrival_date || a.amad_date || a.created_at;
-    const { year: aYear, month: aMonth, isValid } = parseRecordDate(rawDate);
-    if (isValid && aYear === activeYear && aMonth >= 0 && aMonth < 12) {
-      arrivalsByMonth.get(aMonth)?.push(a);
+    if (isCancelledOrArchivedRecord(a)) return;
+    const tempNoKey = isRealBusinessRef(a.temporary_arrival_no || a.amad_no);
+    if (!tempNoKey) return;
+    if (arrivalSeenGlobal.has(tempNoKey)) return;
+    arrivalSeenGlobal.add(tempNoKey);
+
+    const parsedDate = pickFirstValidRecordDate([a.date, a.temporary_arrival_date, a.amad_date, a.created_at]);
+    if (parsedDate.isValid && parsedDate.year === activeYear && parsedDate.month >= 0 && parsedDate.month < 12) {
+      arrivalsByMonth.get(parsedDate.month)?.push(a);
       yearArrivals.push(a);
       yearTotalArrivalsBales += getRecordBales(a);
       yearTotalArrivalsWeightMt += getRecordNetWeightMt(a);
     }
   });
 
-  // Populate Final Arrivals and global Final Arrival set
+  // Populate Stage 2: Final Arrivals (Column ONLY: "Arrival" = final_arrival_no; Date: "Voucher Date" = fa.date)
   let yearTotalFinalArrivalsCount = 0;
   let yearTotalFinalBales = 0;
   let yearTotalFinalWeightMt = 0;
-  finalArrivals.forEach((fa, idx) => {
-    const rawNo = fa.final_arrival_no || fa.arrival_no || fa.temporary_arrival_no || fa.mr_no || fa.amad_no || `FA-${idx}`;
-    const cleanNo = normalizePoRef(rawNo);
-    if (cleanNo) {
-      finalArrivalsSet.add(cleanNo);
-      finalArrivalsSet.add(cleanNo.replace(/[\s\-_]/g, ''));
-    }
-    if (fa.temporary_arrival_no) {
-      finalArrivalsSet.add(normalizePoRef(fa.temporary_arrival_no));
-      finalArrivalsSet.add(String(fa.temporary_arrival_no).toUpperCase().replace(/[\s\-_]/g, ''));
-    }
-    if (fa.mr_no) {
-      finalArrivalsSet.add(normalizePoRef(fa.mr_no));
-      finalArrivalsSet.add(String(fa.mr_no).toUpperCase().replace(/[\s\-_]/g, ''));
-    }
-    if (fa.arrival_no) {
-      finalArrivalsSet.add(normalizePoRef(fa.arrival_no));
-      finalArrivalsSet.add(String(fa.arrival_no).toUpperCase().replace(/[\s\-_]/g, ''));
-    }
-    if (fa.final_arrival_no) {
-      finalArrivalsSet.add(normalizePoRef(fa.final_arrival_no));
-      finalArrivalsSet.add(String(fa.final_arrival_no).toUpperCase().replace(/[\s\-_]/g, ''));
-    }
+  finalArrivals.forEach((fa) => {
+    if (isCancelledOrArchivedRecord(fa)) return;
+    const cleanFinalNo = isRealBusinessRef(fa.final_arrival_no);
+    if (!cleanFinalNo) return;
+    if (finalArrivalSeenGlobal.has(cleanFinalNo)) return;
+    finalArrivalSeenGlobal.add(cleanFinalNo);
 
-    const rawDate = fa.final_arrival_date || fa.date || fa.arrival_date || fa.created_at;
-    const { year: fYear, month: fMonth, isValid } = parseRecordDate(rawDate);
-    if (isValid && fYear === activeYear && fMonth >= 0 && fMonth < 12) {
-      finalArrivalsByMonth.get(fMonth)?.push(fa);
+    // Index all valid reference tokens on this active Final Arrival row for Below-FMR matching
+    [
+      cleanFinalNo,
+      isRealBusinessRef(fa.temporary_arrival_no),
+      isRealBusinessRef(fa.arrival_no),
+      isRealBusinessRef(fa.mr_no)
+    ].filter(Boolean).forEach(k => {
+      finalArrivalsSet.add(k);
+      finalArrivalsSet.add(k.replace(/[\s\-_]/g, ''));
+    });
+
+    const parsedDate = pickFirstValidRecordDate([fa.date, fa.arrival_date, fa.final_arrival_date, fa.created_at]);
+    if (parsedDate.isValid && parsedDate.year === activeYear && parsedDate.month >= 0 && parsedDate.month < 12) {
+      finalArrivalsByMonth.get(parsedDate.month)?.push(fa);
       yearTotalFinalArrivalsCount++;
       yearTotalFinalBales += getRecordBales(fa);
       yearTotalFinalWeightMt += getRecordNetWeightMt(fa);
     }
   });
 
-  // Assign payments by payment Date
-  let totalYearPayments = 0;
+  // Populate Stage 4: Payments (Column: "M.R / P.O Reference"; Date: PaymentDashboardView.getPaymentDate)
+  const yearUniquePaymentRefs = new Set<string>();
   let totalYearPaidAmount = 0;
   paymentRecords.forEach(p => {
-    const rawDate = p.date || p.payment_date || p.created_at;
-    const { year: pYear, month: pMonth, isValid } = parseRecordDate(rawDate);
-    
-    if (isValid && pYear === activeYear && pMonth >= 0 && pMonth < 12) {
-      totalYearPayments++;
+    if (isCancelledOrArchivedRecord(p)) return;
+    const mrRef = isRealBusinessRef(p.mr_no || p.arrival_no);
+    const poRef = isRealBusinessRef(p.po_no || p.reference_no);
+    const refKey = mrRef ? `MR:${mrRef}` : (poRef ? `PO:${poRef}` : '');
+    if (!refKey) return;
+
+    if (mrRef) {
+      allPaymentMrSet.add(mrRef);
+      allPaymentMrSet.add(mrRef.replace(/[\s\-_]/g, ''));
+    }
+    if (poRef) {
+      allPaymentPoSet.add(poRef);
+    }
+
+    const parsedDate = pickFirstValidRecordDate([
+      p.payment_date,
+      p.payable_bill_date,
+      p.sett_date,
+      p.payment_settlementdate,
+      p.arrival_date,
+      p.po_date,
+      p.created_at
+    ]);
+    if (parsedDate.isValid && parsedDate.year === activeYear && parsedDate.month >= 0 && parsedDate.month < 12) {
+      yearUniquePaymentRefs.add(refKey);
       totalYearPaidAmount += Number(p.paid_amount || 0);
-      paymentsByMonth.get(pMonth)?.push(p);
+      paymentsByMonth.get(parsedDate.month)?.push(p);
+      paymentRefSetByMonth.get(parsedDate.month)?.add(refKey);
     }
   });
+  const totalYearPayments = yearUniquePaymentRefs.size;
 
-  // Assign settlements by Audit Date
-  let totalYearSettlements = 0;
+  // Populate Stage 5: Settlements (Column: "M.R. No."; Date: SettlementRegisterView.getSettlementDate)
+  const yearUniqueSettlementMrs = new Set<string>();
   let totalYearSettledAmount = 0;
   settlements.forEach(s => {
-    const rawDate = s.audit_date || s.sett_date || s.date || s.bill_date || s.created_at;
-    const { year: sYear, month: sMonth, isValid } = parseRecordDate(rawDate);
+    if (isCancelledOrArchivedRecord(s)) return;
+    const mrRef = isRealBusinessRef(s.mr_no);
+    if (!mrRef) return;
 
-    if (isValid && sYear === activeYear && sMonth >= 0 && sMonth < 12) {
-      totalYearSettlements++;
-      totalYearSettledAmount += Number(s.net_payable_amount || s.amount || s.total_value || 0);
-      settlementsByMonth.get(sMonth)?.push(s);
+    allSettlementMrSet.add(mrRef);
+    allSettlementMrSet.add(mrRef.replace(/[\s\-_]/g, ''));
+    const poRef = isRealBusinessRef(s.po_no);
+    if (poRef) allSettlementPoSet.add(poRef);
+
+    const parsedDate = pickFirstValidRecordDate([
+      s.sett_date,
+      s.arrival_date,
+      s.payable_bill_date,
+      s.po_date,
+      s.audit_date,
+      s.date,
+      s.created_at
+    ]);
+    if (parsedDate.isValid && parsedDate.year === activeYear && parsedDate.month >= 0 && parsedDate.month < 12) {
+      const mSet = settlementMrSetByMonth.get(parsedDate.month)!;
+      if (!mSet.has(mrRef)) {
+        mSet.add(mrRef);
+        settlementsByMonth.get(parsedDate.month)?.push(s);
+        totalYearSettledAmount += Number(s.net_payable_amount || s.amount || s.total_value || 0);
+      }
+      yearUniqueSettlementMrs.add(mrRef);
     }
   });
+  const totalYearSettlements = yearUniqueSettlementMrs.size;
 
   const yearInspections = parsedInspections.filter(r => r.year === activeYear);
 
@@ -864,9 +883,10 @@ export function computeInspectionMetrics(params: ComputeInspectionMetricsParams)
     const monthArrivals = arrivalsByMonth.get(mIdx) || [];
     const monthFinalArrivals = finalArrivalsByMonth.get(mIdx) || [];
     const monthPayments = paymentsByMonth.get(mIdx) || [];
+    const monthPaymentCount = paymentRefSetByMonth.get(mIdx)?.size || 0;
     const monthSettlements = settlementsByMonth.get(mIdx) || [];
 
-    const temporaryArrivalsCount = monthArrivals.length > 0 ? monthArrivals.length : list.length;
+    const temporaryArrivalsCount = monthArrivals.length;
     const temporaryArrivalsBales = monthArrivals.reduce((sum, a) => sum + getRecordBales(a), 0);
     const temporaryArrivalsWeightMt = monthArrivals.reduce((sum, a) => sum + getRecordNetWeightMt(a), 0);
 
@@ -874,15 +894,16 @@ export function computeInspectionMetrics(params: ComputeInspectionMetricsParams)
     const finalArrivalsBales = monthFinalArrivals.reduce((sum, f) => sum + getRecordBales(f), 0);
     const finalArrivalsWeightMt = monthFinalArrivals.reduce((sum, f) => sum + getRecordNetWeightMt(f), 0);
     const pendingFmrCount = monthArrivals.filter(a => {
-      const k = normalizePoRef(a.temporary_arrival_no || a.amad_no || a.mr_no || a.arrival_no || a.amad_id);
-      return !k || !finalArrivalsSet.has(k);
+      const k = isRealBusinessRef(a.temporary_arrival_no || a.amad_no);
+      const kStripped = k.replace(/[\s\-_]/g, '');
+      const hasLinkedFinal = (k && finalArrivalsSet.has(k)) || (kStripped && finalArrivalsSet.has(kStripped));
+      return !hasLinkedFinal;
     }).length;
 
     const completedInspections = list.filter(r => r.status !== 'Pending' && r.rawRecord?.is_inspected);
     const inspectionCount = completedInspections.length;
-    const pendingInspectionCount = Math.max(0, temporaryArrivalsCount - inspectionCount);
 
-    if (temporaryArrivalsCount === 0 && finalArrivalsCount === 0 && inspectionCount === 0 && monthPayments.length === 0 && monthSettlements.length === 0) {
+    if (temporaryArrivalsCount === 0 && finalArrivalsCount === 0 && inspectionCount === 0 && monthPaymentCount === 0 && monthSettlements.length === 0) {
       return null;
     }
 
@@ -972,16 +993,16 @@ export function computeInspectionMetrics(params: ComputeInspectionMetricsParams)
 
     // 1. Pipeline: MR -> Final MR (Pending FMR)
     const pendingFmrList: PendingStageRecord[] = monthArrivals.filter(a => {
-      const rawMr = a.temporary_arrival_no || a.amad_no || a.mr_no || a.arrival_no || a.amad_id;
-      const k1 = normalizePoRef(rawMr);
-      const k2 = String(rawMr || '').toUpperCase().replace(/[\s\-_]/g, '');
-      const isCompleted = (k1 && finalArrivalsSet.has(k1)) || (k2 && finalArrivalsSet.has(k2)) || (a.final_arrival_no && String(a.final_arrival_no).trim() !== '') || Boolean(a.is_final_arrival_done);
+      const k = isRealBusinessRef(a.temporary_arrival_no || a.amad_no);
+      const k2 = k.replace(/[\s\-_]/g, '');
+      const isCompleted = (k && finalArrivalsSet.has(k)) || (k2 && finalArrivalsSet.has(k2));
       return !isCompleted;
     }).map((a, idx) => {
-      const rawMr = a.temporary_arrival_no || a.amad_no || a.mr_no || a.arrival_no || a.amad_id || `ARR-${idx}`;
+      const rawMr = a.temporary_arrival_no || a.amad_no || `ARR-${idx}`;
       const rawPo = a.po_no || a.mill_po_no || a.contract_no || a.sauda_no || '';
       const wtMt = getRecordNetWeightMt(a);
       const bales = getRecordBales(a);
+      const parsedDt = pickFirstValidRecordDate([a.date, a.temporary_arrival_date, a.amad_date, a.created_at]);
       return {
         id: a.id || `pending-fmr-${mIdx}-${idx}-${rawMr}`,
         stage: 'MR_TO_FMR',
@@ -990,8 +1011,8 @@ export function computeInspectionMetrics(params: ComputeInspectionMetricsParams)
         poNo: rawPo || 'N/A',
         cleanPoNo: normalizePoRef(rawPo),
         mrNo: rawMr,
-        arrivalNo: a.arrival_no || a.temporary_arrival_no || rawMr,
-        date: a.date || a.temporary_arrival_date || a.amad_date || a.created_at || '',
+        arrivalNo: a.temporary_arrival_no || rawMr,
+        date: parsedDt.isValid ? parsedDt.displayDate : '',
         supplier: a.supplier_name || a.supplier || a.challan_supplier || a.party_name || 'N/A',
         broker: a.broker_name || a.broker || 'DIRECT',
         vehicleNo: a.lorry_number || a.vehicle_no || a.truck_no || 'N/A',
@@ -1005,17 +1026,24 @@ export function computeInspectionMetrics(params: ComputeInspectionMetricsParams)
       };
     });
 
-    // 2. Pipeline: Final MR -> Mill Inspection (Pending Inspection)
-    const inspectedMrSet = new Set(completedInspections.map(r => r.cleanMrNo).filter(Boolean));
+    // 2. Pipeline: Final MR -> Mill Inspection (Pending Inspection against global completed Mill Inspections)
     const pendingInspectionList: PendingStageRecord[] = monthFinalArrivals.filter(fa => {
-      const rawNo = fa.final_arrival_no || fa.arrival_no || fa.temporary_arrival_no || fa.mr_no;
-      const cleanNo = normalizePoRef(rawNo);
-      return !cleanNo || !inspectedMrSet.has(cleanNo);
+      const candidateKeys = [
+        isRealBusinessRef(fa.final_arrival_no),
+        isRealBusinessRef(fa.mr_no),
+        isRealBusinessRef(fa.arrival_no),
+        isRealBusinessRef(fa.temporary_arrival_no)
+      ].filter(Boolean);
+      const isInspected = candidateKeys.some(k =>
+        allInspectedLookupSet.has(k) || allInspectedLookupSet.has(k.replace(/[\s\-_]/g, ''))
+      );
+      return !isInspected;
     }).map((fa, idx) => {
-      const rawMr = fa.final_arrival_no || fa.arrival_no || fa.temporary_arrival_no || fa.mr_no || `FA-${idx}`;
+      const rawMr = fa.final_arrival_no || `FA-${idx}`;
       const rawPo = fa.po_no || fa.mill_po_no || fa.contract_no || '';
       const wtMt = getRecordNetWeightMt(fa);
       const bales = getRecordBales(fa);
+      const parsedDt = pickFirstValidRecordDate([fa.date, fa.arrival_date, fa.final_arrival_date, fa.created_at]);
       return {
         id: fa.id || `pending-insp-${mIdx}-${idx}-${rawMr}`,
         stage: 'FMR_TO_INSP',
@@ -1024,8 +1052,8 @@ export function computeInspectionMetrics(params: ComputeInspectionMetricsParams)
         poNo: rawPo || 'N/A',
         cleanPoNo: normalizePoRef(rawPo),
         mrNo: rawMr,
-        arrivalNo: fa.final_arrival_no || fa.arrival_no || rawMr,
-        date: fa.final_arrival_date || fa.date || fa.arrival_date || fa.created_at || '',
+        arrivalNo: fa.final_arrival_no || rawMr,
+        date: parsedDt.isValid ? parsedDt.displayDate : '',
         supplier: fa.supplier_name || fa.supplier || fa.challan_supplier || 'N/A',
         broker: fa.broker_name || fa.broker || 'DIRECT',
         vehicleNo: fa.lorry_number || fa.vehicle_no || 'N/A',
@@ -1038,13 +1066,14 @@ export function computeInspectionMetrics(params: ComputeInspectionMetricsParams)
         rawRecord: fa
       };
     });
+    const pendingInspectionCount = pendingInspectionList.length;
 
-    // 3. Pipeline: Mill Inspection -> Payment (Pending Payment)
-    const paymentMrSet = new Set(monthPayments.map(p => normalizePoRef(p.mr_no || p.arrival_no || p.final_arrival_no)).filter(Boolean));
-    const paymentPoSet = new Set(monthPayments.map(p => normalizePoRef(p.po_no)).filter(Boolean));
+    // 3. Pipeline: Mill Inspection -> Payment (Pending Payment across all valid payments)
     const pendingPaymentList: PendingStageRecord[] = completedInspections.filter(r => {
-      const hasMrPay = r.cleanMrNo && paymentMrSet.has(r.cleanMrNo);
-      const hasPoPay = r.cleanPoNo && paymentPoSet.has(r.cleanPoNo);
+      const mrNorm = isRealBusinessRef(r.cleanMrNo);
+      const mrStripped = mrNorm.replace(/[\s\-_]/g, '');
+      const hasMrPay = Boolean((mrNorm && allPaymentMrSet.has(mrNorm)) || (mrStripped && allPaymentMrSet.has(mrStripped)));
+      const hasPoPay = Boolean(r.cleanPoNo && allPaymentPoSet.has(r.cleanPoNo));
       return !hasMrPay && !hasPoPay;
     }).map((r, idx) => {
       return {
@@ -1070,12 +1099,12 @@ export function computeInspectionMetrics(params: ComputeInspectionMetricsParams)
       };
     });
 
-    // 4. Pipeline: Payment -> Settlement (Pending Settlement)
-    const settlementMrSet = new Set(monthSettlements.map(s => normalizePoRef(s.mr_no || s.arrival_no || s.final_arrival_no)).filter(Boolean));
-    const settlementPoSet = new Set(monthSettlements.map(s => normalizePoRef(s.po_no)).filter(Boolean));
+    // 4. Pipeline: Payment -> Settlement (Pending Settlement across all valid settlements)
     const pendingSettlementList: PendingStageRecord[] = completedInspections.filter(r => {
-      const hasMrSett = r.cleanMrNo && settlementMrSet.has(r.cleanMrNo);
-      const hasPoSett = r.cleanPoNo && settlementPoSet.has(r.cleanPoNo);
+      const mrNorm = isRealBusinessRef(r.cleanMrNo);
+      const mrStripped = mrNorm.replace(/[\s\-_]/g, '');
+      const hasMrSett = Boolean((mrNorm && allSettlementMrSet.has(mrNorm)) || (mrStripped && allSettlementMrSet.has(mrStripped)));
+      const hasPoSett = Boolean(r.cleanPoNo && allSettlementPoSet.has(r.cleanPoNo));
       return !hasMrSett && !hasPoSett;
     }).map((r, idx) => {
       return {
@@ -1130,7 +1159,7 @@ export function computeInspectionMetrics(params: ComputeInspectionMetricsParams)
       pendingInspectionCount,
       materialInspectionCount: matCount,
       millInspectionCount: millCount,
-      paymentCount: monthPayments.length,
+      paymentCount: monthPaymentCount,
       paymentPaidAmount: Number(paymentPaidAmount.toFixed(2)),
       paymentPayableAmount: Number(paymentPayableAmount.toFixed(2)),
       settlementCount: monthSettlements.length,
@@ -1234,12 +1263,13 @@ export function computeInspectionMetrics(params: ComputeInspectionMetricsParams)
   const overallAvgGradeDown = yearGradeDownCount > 0 ? Number((totalGradeDownSum / yearGradeDownCount).toFixed(1)) : 0;
   const overallAvgClaimGradeDown = yearClaimGradeDownCount > 0 ? Number((totalClaimGradeDownSum / yearClaimGradeDownCount).toFixed(1)) : 0;
 
-  const totalYearTemporaryArrivalsCount = yearArrivals.length > 0 ? yearArrivals.length : yearInspections.length;
+  const totalYearTemporaryArrivalsCount = yearArrivals.length;
   const totalYearPendingFmrCount = yearArrivals.filter(a => {
-    const k = normalizePoRef(a.temporary_arrival_no || a.amad_no || a.mr_no || a.arrival_no || a.amad_id);
-    return !k || !finalArrivalsSet.has(k);
+    const k = isRealBusinessRef(a.temporary_arrival_no || a.amad_no);
+    const k2 = k.replace(/[\s\-_]/g, '');
+    return !((k && finalArrivalsSet.has(k)) || (k2 && finalArrivalsSet.has(k2)));
   }).length;
-  const totalPendingInspectionsCount = yearInspections.filter(r => r.status === 'Pending').length;
+  const totalPendingInspectionsCount = monthInspectionSummaries.reduce((sum, m) => sum + m.pendingInspectionCount, 0);
 
   const allYearPendingFmrList = monthInspectionSummaries.flatMap(m => m.pendingFmrList);
   const allYearPendingInspectionList = monthInspectionSummaries.flatMap(m => m.pendingInspectionList);

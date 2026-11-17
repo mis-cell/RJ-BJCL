@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { Calendar, Filter, Layers, ChevronUp, ChevronDown, ArrowRight } from 'lucide-react';
 import { cn, formatIndianCurrency } from '../../lib/utils';
+import { parseRecordDate, MONTH_NAMES } from '../../services/dashboardCalculationHelpers';
 
 export interface CardMetricItem {
   label: string;
@@ -32,39 +33,14 @@ export interface ParsedMonthItem {
 }
 
 export function parseMonthKey(dateVal: any): ParsedMonthItem | null {
-  if (!dateVal) return null;
-  const str = String(dateVal).trim();
-  if (!str) return null;
-
-  // Case 1: DD/MM/YYYY or DD-MM-YYYY
-  const dmyMatch = str.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})/);
-  if (dmyMatch) {
-    const day = parseInt(dmyMatch[1], 10);
-    const monthIndex = parseInt(dmyMatch[2], 10) - 1; // 0-indexed
-    const year = parseInt(dmyMatch[3], 10);
-    if (!isNaN(day) && !isNaN(monthIndex) && !isNaN(year) && monthIndex >= 0 && monthIndex <= 11) {
-      const d = new Date(year, monthIndex, day);
-      if (!isNaN(d.getTime())) {
-        const key = `${year}-${String(monthIndex + 1).padStart(2, '0')}`;
-        const monthName = d.toLocaleString('en-US', { month: 'long' });
-        const shortName = d.toLocaleString('en-US', { month: 'short' }).toUpperCase();
-        return { key, monthIndex, monthName, shortName, year };
-      }
-    }
+  const parsed = parseRecordDate(dateVal);
+  if (!parsed.isValid || parsed.month < 0 || parsed.month > 11 || parsed.year <= 0) {
+    return null;
   }
-
-  // Case 2: YYYY-MM-DD or standard ISO
-  const d = new Date(str);
-  if (!isNaN(d.getTime())) {
-    const year = d.getFullYear();
-    const monthIndex = d.getMonth();
-    const key = `${year}-${String(monthIndex + 1).padStart(2, '0')}`;
-    const monthName = d.toLocaleString('en-US', { month: 'long' });
-    const shortName = d.toLocaleString('en-US', { month: 'short' }).toUpperCase();
-    return { key, monthIndex, monthName, shortName, year };
-  }
-
-  return null;
+  const key = `${parsed.year}-${String(parsed.month + 1).padStart(2, '0')}`;
+  const monthName = MONTH_NAMES[parsed.month] || `Month ${parsed.month + 1}`;
+  const shortName = monthName.slice(0, 3).toUpperCase();
+  return { key, monthIndex: parsed.month, monthName, shortName, year: parsed.year };
 }
 
 export const MonthWiseCardsRibbon = <T,>({
