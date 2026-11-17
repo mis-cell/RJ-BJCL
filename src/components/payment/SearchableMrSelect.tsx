@@ -48,49 +48,58 @@ export const SearchableMrSelect: React.FC<SearchableMrSelectProps> = ({
 
   const filteredList = baseList.filter((arr) => {
     const mrNo = String(
-      arr.mr_no || arr.final_arrival_no || arr.arrival_no || ""
+      arr._officialId || arr.mr_no || arr.final_arrival_no || arr.arrival_no || ""
     ).toLowerCase();
 
-    // Show only MR series
+    // Show only MR series (official finalized M.R.)
     if (!mrNo.startsWith("mr")) return false;
 
     if (!normalizedSearch) return true;
 
+    const linkedTemp = String(arr._linkedTempNo || arr.linked_temp_no || arr.temporary_arrival_no || "").toLowerCase();
     const supp = String(arr.supplier || arr.supplier_name || "").toLowerCase();
     const poNo = String(arr.po_no || arr.mill_po_no || "").toLowerCase();
     const lorry = String(arr.lorry_number || "").toLowerCase();
 
     return (
       mrNo.includes(normalizedSearch) ||
+      (linkedTemp && linkedTemp.includes(normalizedSearch)) ||
       supp.includes(normalizedSearch) ||
       poNo.includes(normalizedSearch) ||
       lorry.includes(normalizedSearch)
     );
   });
 
-  /* const filteredList = baseList.filter(arr => {
-    if (!normalizedSearch) return true;zz
-    const mrNo = String(arr.mr_no || arr.final_arrival_no || arr.arrival_no || '').toLowerCase();
-    const supp = String(arr.supplier || arr.supplier_name || '').toLowerCase();
-    const poNo = String(arr.po_no || arr.mill_po_no || '').toLowerCase();
-    const lorry = String(arr.lorry_number || '').toLowerCase();
-    return mrNo.includes(normalizedSearch) || supp.includes(normalizedSearch) || poNo.includes(normalizedSearch) || lorry.includes(normalizedSearch);
-  }); */
-
   const masterListToFind = allArrivals || verifiedArrivals;
+  const targetNorm = String(selectedMrNo || '').trim().toUpperCase();
   const selectedArr = masterListToFind.find(a => {
-    const arrMr = String(a.mr_no || a.final_arrival_no || a.arrival_no || a.temporary_arrival_no || a.amad_no || '').trim().toUpperCase();
-    const target = String(selectedMrNo).trim().toUpperCase();
-    return Boolean(target && (arrMr === target || arrMr.replace(/^MR0*/, '') === target.replace(/^MR0*/, '')));
+    if (!targetNorm) return false;
+    const candidates = [
+      a._officialId,
+      a.mr_no,
+      a.final_arrival_no,
+      a.arrival_no,
+      a.temporary_arrival_no,
+      a.linked_temp_no,
+      a._linkedTempNo,
+      a.amad_no
+    ]
+      .map(v => String(v || '').trim().toUpperCase())
+      .filter(Boolean);
+    if (candidates.includes(targetNorm)) return true;
+    const targetDigits = targetNorm.replace(/^(MR|AR)0*/, '');
+    return candidates.some(c => targetDigits && c.replace(/^(MR|AR)0*/, '') === targetDigits);
   });
 
   const getLabel = () => {
     if (selectedArr) {
-      const mr = selectedArr.mr_no || selectedArr.final_arrival_no || selectedArr.arrival_no || selectedArr.temporary_arrival_no || selectedMrNo;
+      const mr = selectedArr._officialId || selectedArr.mr_no || selectedArr.final_arrival_no || selectedArr.arrival_no || selectedArr.temporary_arrival_no || selectedMrNo;
+      const linkedTemp = selectedArr._linkedTempNo || selectedArr.linked_temp_no || selectedArr.temporary_arrival_no || '';
+      const tempSuffix = linkedTemp && linkedTemp.toUpperCase() !== String(mr).toUpperCase() ? ` (Temp: ${linkedTemp})` : '';
       const supp = selectedArr.supplier || selectedArr.supplier_name || selectedArr.party_name || 'N/A';
       const po = selectedArr.po_no || selectedArr.mill_po_no || 'N/A';
       const lorry = (selectedArr.lorry_number || selectedArr.lorry_no) ? ` | Lorry: ${selectedArr.lorry_number || selectedArr.lorry_no}` : '';
-      return `M.R: ${mr} | Supplier: ${supp} | P.O: ${po}${lorry}`;
+      return `M.R: ${mr}${tempSuffix} | Supplier: ${supp} | P.O: ${po}${lorry}`;
     }
     if (selectedMrNo) {
       return `M.R: ${selectedMrNo}`;
@@ -140,7 +149,7 @@ export const SearchableMrSelect: React.FC<SearchableMrSelectProps> = ({
             <input
               type="text"
               autoFocus
-              placeholder="Search M.R No, Supplier, P.O, Lorry..."
+              placeholder="Search M.R No, Temp Arrival, Supplier, P.O, Lorry..."
               value={searchTerm}
               onChange={e => setSearchTerm(e.target.value)}
               className="w-full text-xs outline-none bg-transparent font-medium text-slate-900 placeholder:text-slate-400"
@@ -169,8 +178,9 @@ export const SearchableMrSelect: React.FC<SearchableMrSelectProps> = ({
             </div>
 
             {filteredList.map((arr, i) => {
-              const mr = arr.mr_no || arr.final_arrival_no || arr.arrival_no;
-              const isSelected = selectedMrNo === mr;
+              const mr = arr._officialId || arr.mr_no || arr.final_arrival_no || arr.arrival_no;
+              const linkedTemp = arr._linkedTempNo || arr.linked_temp_no || arr.temporary_arrival_no || '';
+              const isSelected = String(selectedMrNo || '').trim().toUpperCase() === String(mr || '').trim().toUpperCase();
 
               return (
                 <div
@@ -186,8 +196,13 @@ export const SearchableMrSelect: React.FC<SearchableMrSelectProps> = ({
                   )}
                 >
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
                       <span className="font-mono font-extrabold text-slate-900">M.R: {mr}</span>
+                      {linkedTemp && linkedTemp.toUpperCase() !== String(mr).toUpperCase() && (
+                        <span className="bg-amber-50 border border-amber-200 text-amber-800 text-[10px] px-1.5 py-0.2 rounded font-mono">
+                          Temp: {linkedTemp}
+                        </span>
+                      )}
                       {arr.lorry_number && (
                         <span className="bg-slate-100 text-slate-700 text-[10px] px-1.5 py-0.2 rounded font-mono">
                           Lorry: {arr.lorry_number}

@@ -1035,7 +1035,11 @@ export function useInspectionLogic() {
 
   const populateFromFinalArrival = async (fa: any) => {
     try {
-      const arrNo = fa.final_arrival_no || fa.arrival_no || fa.temporary_arrival_no || fa.mr_no || "";
+      const cleanToken = (v: any) => String(v || "").replace(/^#+/, "").trim();
+      const mrCandidates = [fa.mr_no, fa.final_arrival_no, fa.arrival_no, fa.temporary_arrival_no]
+        .map(cleanToken)
+        .filter(Boolean);
+      const arrNo = mrCandidates.find(v => v.toUpperCase().startsWith("MR")) || mrCandidates[0] || "";
       const isLoose = (fa.unit_name || fa.unit_code || fa.unit || "").toString().trim().toUpperCase().includes("LOOSE");
       const resolvedUnit = isLoose ? "LOOSE" : (fa.unit_name || fa.unit || "BALES");
       const resolvedArea = fa.arrival_area_name || fa.area || fa.arrival_area || "";
@@ -2224,20 +2228,49 @@ export function useInspectionLogic() {
   const totalDeductions = activeDataset.reduce((acc, r) => acc + (Number(r.deduction_amount) || 0), 0);
 
   const pendingArrivalList = useMemo(() => {
+    const normalize = (s: any) => String(s || "").trim().toLowerCase().replace(/^#+/, '').trim();
+
+    const isGenuineInspectionRecord = (r: any): boolean => {
+      if (!r) return false;
+      const st = String(r.status || "").trim().toLowerCase();
+      if (st === "cancelled" || st === "void" || st === "deleted") return false;
+
+      const hasIdentity = Boolean(
+        String(r.supplier_name || r.supplier || "").trim() ||
+        String(r.broker_name || r.broker || "").trim() ||
+        String(r.lorry_number || r.lorry_no || "").trim()
+      );
+      const hasDetails = Boolean(
+        r.grid_details ||
+        r.details ||
+        Number(r.actual_moisture || 0) > 0 ||
+        Number(r.claim_moisture || 0) > 0 ||
+        Number(r.actual_dust || 0) > 0 ||
+        Number(r.claim_dust || 0) > 0 ||
+        Number(r.actual_ncv || 0) > 0 ||
+        Number(r.claim_ncv || 0) > 0 ||
+        Number(r.final_receipt_wt || 0) > 0
+      );
+      return hasIdentity || hasDetails;
+    };
+
+    const activeInspections = records.filter(isGenuineInspectionRecord);
+
     return finalArrivalList.filter(fa => {
-      const normalize = (s: any) => String(s || "").trim().toLowerCase().replace(/^#/, '');
+      const faStatus = String(fa.status || "").trim().toLowerCase();
+      if (faStatus === "cancelled" || faStatus === "void" || (fa as any).archived_at) return false;
 
       const faNo = normalize(fa.final_arrival_no || fa.arrival_no);
       const faMrNo = normalize(fa.mr_no);
       const faId = normalize(fa.final_arrival_id);
       const faTempNo = normalize(fa.temporary_arrival_no);
-      const faLorry = String(fa.lorry_number || "").trim().toLowerCase().replace(/[^a-z0-9]/g, "");
+      const faLorry = String(fa.lorry_number || fa.lorry_no || "").trim().toLowerCase().replace(/[^a-z0-9]/g, "");
 
-      const isAlreadyInspected = records.some(r => {
+      const isAlreadyInspected = activeInspections.some(r => {
         const rMr = normalize(r.mr_no);
         const rArr = normalize(r.arrival_no);
         const rTemp = normalize((r as any).temporary_arrival_no);
-        const rLorry = String(r.lorry_number || "").trim().toLowerCase().replace(/[^a-z0-9]/g, "");
+        const rLorry = String(r.lorry_number || (r as any).lorry_no || "").trim().toLowerCase().replace(/[^a-z0-9]/g, "");
 
         if (faNo && (rMr === faNo || rArr === faNo)) return true;
         if (faMrNo && (rMr === faMrNo || rArr === faMrNo)) return true;

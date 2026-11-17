@@ -38,6 +38,14 @@ import {
   isManualLockedDeduction,
   saveDeductionRowRealtime
 } from '../services/excessShortAutoSyncService';
+import {
+  buildFinalArrivalIndex,
+  resolveRecordOfficialArrivalId,
+  resolveOfficialArrivalId,
+  getLinkedArrivalKeys,
+  normalizeArrivalToken,
+  isMrIdentifier
+} from '../utils/arrivalMrResolver';
 
 interface ExcessShortSettlementModalProps {
   po: any;
@@ -411,7 +419,8 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
           }
         }
 
-        // 4. Identify matched MR numbers for this PO first, then fetch ONLY their inspection details
+        // 4. Identify matched MR numbers (and linked temp arrival keys) for this PO first, then fetch ONLY their inspection details
+        const faIndex = buildFinalArrivalIndex(activeFinal || []);
         const matchedMrSet = new Set<string>();
         const matchesTarget = (rPo: any, rSauda: any) => {
           const cPo = clean(rPo);
@@ -424,10 +433,18 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
 
         (activeInsps || []).forEach((insp: any) => {
           if (matchesTarget(insp.po_no, insp.sauda_no || insp.contract_po_no || insp.po_contract)) {
-            const num = String(insp.mr_no || '').trim();
-            if (num && num.toUpperCase() !== 'NO' && num.toUpperCase() !== 'N/A' && num !== '-') {
-              matchedMrSet.add(num);
-            }
+            const { officialId } = resolveRecordOfficialArrivalId(insp, faIndex);
+            const candidates = [
+              officialId,
+              String(insp.mr_no || '').trim(),
+              String(insp.arrival_no || '').trim(),
+              ...getLinkedArrivalKeys(insp, faIndex),
+            ];
+            candidates.forEach((num) => {
+              if (num && num.toUpperCase() !== 'NO' && num.toUpperCase() !== 'N/A' && num !== '-') {
+                matchedMrSet.add(num);
+              }
+            });
           }
         });
 
@@ -528,6 +545,8 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
     const targetSauda = clean(saudaNo);
 
     // Find all matching inspections for this PO strictly from Mill Inspection Section
+    const activeFaList = liveFinalArrivals.length > 0 ? liveFinalArrivals : allFinalArrivals;
+    const faIndex = buildFinalArrivalIndex(activeFaList || []);
     const poolInspections = liveInspections.length > 0 ? liveInspections : allInspections;
     const matchingInsps = (poolInspections || []).filter((insp: any) => {
       const iPo = clean(insp.po_no);
@@ -543,31 +562,34 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
       return parseInt(matches[matches.length - 1], 10) || 0;
     };
 
-    const canonicalMrKey = (mrStr: string): string => {
-      const seq = extractMrSeq(mrStr);
-      if (seq > 0) return `MR_${seq}`;
-      return String(mrStr || '').trim().toUpperCase();
-    };
-
-    // Extract all unique MR numbers strictly from Mill Inspection Section using field "mr_no"
-    // Each linked MR must be counted exactly once.
+    // Extract all unique finalized MR numbers linked via final_arrival -> material_inspection
+    // Each linked MR must be counted exactly once under its official M.R. No.
     const uniqueMrMap = new Map<string, { mrNo: string; date: string; rawDate: string; source: any }>();
 
     matchingInsps.forEach((insp: any) => {
-      const num = String(insp.mr_no || '').trim();
+      const { officialId, isFinalized } = resolveRecordOfficialArrivalId(insp, faIndex);
+      const num = String(officialId || insp.mr_no || insp.arrival_no || '').trim();
       if (num && num.toUpperCase() !== 'NO' && num.toUpperCase() !== 'N/A' && num !== '-') {
         const rawD = normalizeToYMD(insp.arrival_date || insp.mr_date || insp.inspection_date || insp.date || insp.created_at || '');
-        const key = canonicalMrKey(num);
+        const key = normalizeArrivalToken(num);
         const existing = uniqueMrMap.get(key);
         const hasGrid = Boolean(insp.grid_details || insp.details);
         const existingHasGrid = Boolean(existing?.source?.grid_details || existing?.source?.details);
+        const existingIsOfficial = existing ? isMrIdentifier(existing.mrNo) : false;
+        const newIsOfficial = isFinalized || isMrIdentifier(num);
         const preferNew =
           !existing ||
-          (!existingHasGrid && hasGrid) ||
+          (!existingIsOfficial && newIsOfficial) ||
+          (existingIsOfficial === newIsOfficial && !existingHasGrid && hasGrid) ||
           (!existing.rawDate && Boolean(rawD)) ||
-          (num.length > existing.mrNo.length && hasGrid === existingHasGrid);
+          (num.length > existing.mrNo.length && hasGrid === existingHasGrid && existingIsOfficial === newIsOfficial);
         if (preferNew) {
-          uniqueMrMap.set(key, { mrNo: num, date: formatDisplayDate(rawD), rawDate: rawD, source: insp });
+          uniqueMrMap.set(key, {
+            mrNo: num,
+            date: formatDisplayDate(rawD),
+            rawDate: rawD,
+            source: { ...insp, mr_no: num }
+          });
         }
       }
     });
@@ -618,7 +640,15 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
 
     // Process each MR in sequence order
     mrEntries.forEach((mrEntry, mrIdx) => {
-      const mrKey = canonicalMrKey(mrEntry.mrNo);
+      const mrLinkedKeys = new Set(getLinkedArrivalKeys(mrEntry.source || mrEntry.mrNo, faIndex));
+      mrLinkedKeys.add(normalizeArrivalToken(mrEntry.mrNo));
+      const matchesThisMr = (val: any): boolean => {
+        const n = normalizeArrivalToken(val);
+        if (!n) return false;
+        if (mrLinkedKeys.has(n)) return true;
+        const resolved = normalizeArrivalToken(resolveOfficialArrivalId(val, faIndex));
+        return Boolean(resolved && mrLinkedKeys.has(resolved));
+      };
       const isLastLorry = mrIdx === mrEntries.length - 1;
       const src = mrEntry.source;
 
@@ -645,10 +675,10 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
         }
       }
 
-      // 2. Also check material_inspection_details rows strictly matching this MR
+      // 2. Also check material_inspection_details rows strictly matching this MR (including linked temp keys)
       const matchingDetails = (liveInspectionDetails || []).filter((d: any) => {
-        const dMr = String(d.mr_no || '').trim();
-        return dMr && canonicalMrKey(dMr) === mrKey;
+        const dMr = String(d.mr_no || d.arrival_no || '').trim();
+        return Boolean(dMr && matchesThisMr(dMr));
       });
 
       const rawDetailItems = embeddedGrid.length > 0 ? embeddedGrid : matchingDetails;
@@ -659,7 +689,7 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
       rawDetailItems.forEach((d: any, idx: number) => {
         if (!d || typeof d !== 'object') return;
         const itemMr = String(d.mr_no || '').trim();
-        if (itemMr && canonicalMrKey(itemMr) !== mrKey) return;
+        if (itemMr && !matchesThisMr(itemMr)) return;
         const gRaw = Number(d.challan_gross_wt ?? d.receipt_gross_wt ?? d.gross_weight_batch ?? d.gross_weight ?? 0);
         const nRaw = Number(d.final_receipt_wt ?? d.reduced_weight ?? d.netto_pnto ?? 0);
         if (gRaw <= 0 && nRaw <= 0) return;
