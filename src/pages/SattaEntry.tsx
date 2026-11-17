@@ -544,17 +544,29 @@ export default function SattaEntry({ initialData, onSave, onCancel }: { initialD
       delete sattaData.quality_details;
       
       let inserted;
-      let isEditMode = !!sattaData.satta_id;
+      const initialSattaNoNorm = String(initialData?.satta_no || '').trim().toUpperCase();
+      let existingSattaId = String(sattaData.satta_id || initialData?.satta_id || '').trim();
+      let isEditMode = Boolean(existingSattaId || initialData?.satta_no);
 
-      if (!sattaData.satta_id && sattaData.satta_no) {
-         // Double-check if already exists
-         const targetFYear = sattaData.financial_year || '2026-2027';
+      if (!existingSattaId && (sattaData.satta_no || initialData?.satta_no)) {
+         // Double-check if already exists (case-insensitive)
+         const targetFYear = initialData?.financial_year || sattaData.financial_year || '2026-2027';
          const allSattas = await dbModule.fetchAll('satta_master').catch(() => []);
-         const match = allSattas.find((s: any) => s.satta_no === sattaData.satta_no && s.financial_year === targetFYear);
+         const targetNoNorm = String(sattaData.satta_no || '').trim().toUpperCase();
+         const match = allSattas.find((s: any) => {
+           const sNo = String(s.satta_no || '').trim().toUpperCase();
+           const sameYear = !s.financial_year || s.financial_year === targetFYear;
+           return sameYear && ((targetNoNorm && sNo === targetNoNorm) || (initialSattaNoNorm && sNo === initialSattaNoNorm));
+         });
          if (match) {
-            sattaData.satta_id = match.satta_id;
+            existingSattaId = String(match.satta_id || '').trim();
+            if (existingSattaId) {
+              sattaData.satta_id = existingSattaId;
+            }
             isEditMode = true;
          }
+      } else if (existingSattaId) {
+         sattaData.satta_id = existingSattaId;
       }
 
       sattaData.financial_year = isEditMode
@@ -579,10 +591,15 @@ export default function SattaEntry({ initialData, onSave, onCancel }: { initialD
       const isValidUuidStr = (val: any) =>
         typeof val === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val.trim());
 
-      const targetSattaId = isValidUuidStr(sattaData.satta_id) ? String(sattaData.satta_id).trim() : generateSafeUuid();
+      const targetSattaId = existingSattaId
+        ? existingSattaId
+        : (isValidUuidStr(sattaData.satta_id) ? String(sattaData.satta_id).trim() : generateSafeUuid());
       sattaData.satta_id = targetSattaId;
 
       try {
+        if (isEditMode && !isValidUuidStr(targetSattaId)) {
+          throw new Error('Legacy non-UUID satta_id uses direct update path');
+        }
         const txQueries: string[] = [];
         const masterCols = Object.keys(sattaData);
         const masterVals = masterCols.map(k => sqlVal((sattaData as any)[k]));
@@ -590,7 +607,12 @@ export default function SattaEntry({ initialData, onSave, onCancel }: { initialD
         txQueries.push(
           `INSERT INTO satta_master (${masterCols.join(', ')}) VALUES (${masterVals.join(', ')}) ON CONFLICT (satta_id) DO UPDATE SET ${updateSet};`
         );
-        txQueries.push(`DELETE FROM satta_quality_details WHERE satta_id = ${sqlVal(targetSattaId)};`);
+        const sattaDelConds = [
+          `satta_id = ${sqlVal(targetSattaId)}`,
+          sattaData.satta_no ? `satta_no = ${sqlVal(sattaData.satta_no)}` : '',
+          initialData?.satta_no ? `satta_no = ${sqlVal(initialData.satta_no)}` : ''
+        ].filter(Boolean);
+        txQueries.push(`DELETE FROM satta_quality_details WHERE ${sattaDelConds.join(' OR ')};`);
         if (qd) {
           for (const row of qd) {
             if (row.quality || row.qty || row.rs || row.marka || row.agency) {
@@ -604,15 +626,25 @@ export default function SattaEntry({ initialData, onSave, onCancel }: { initialD
         inserted = { ...sattaData };
       } catch (_txErr) {
         if (isEditMode) {
-          inserted = await dbModule.update('satta_master', 'satta_id', sattaData.satta_id, sattaData);
+          if (existingSattaId) {
+            inserted = await dbModule.update('satta_master', 'satta_id', existingSattaId, sattaData);
+          } else {
+            inserted = await dbModule.upsert('satta_master', sattaData, 'satta_no');
+          }
         } else {
-          inserted = await dbModule.insert('satta_master', sattaData);
+          inserted = await dbModule.upsert('satta_master', sattaData, 'satta_no');
         }
 
         const resolvedSattaId = inserted?.satta_id || inserted?.id || sattaData.satta_id;
         if (qd) {
-          if (isEditMode && resolvedSattaId) {
-            await dbModule.delete('satta_quality_details', 'satta_id', resolvedSattaId);
+          if (resolvedSattaId) {
+            await dbModule.delete('satta_quality_details', 'satta_id', resolvedSattaId).catch(() => {});
+          }
+          if (sattaData.satta_no) {
+            await dbModule.delete('satta_quality_details', 'satta_no', sattaData.satta_no).catch(() => {});
+          }
+          if (initialData?.satta_no && initialData.satta_no !== sattaData.satta_no) {
+            await dbModule.delete('satta_quality_details', 'satta_no', initialData.satta_no).catch(() => {});
           }
           for (const row of qd) {
             if (row.quality || row.qty || row.rs || row.marka || row.agency) {

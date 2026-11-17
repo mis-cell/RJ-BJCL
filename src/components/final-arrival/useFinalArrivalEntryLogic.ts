@@ -1542,9 +1542,30 @@ export function useFinalArrivalEntryLogic({ initialData, onSave }: UseFinalArriv
         weight_reduced: Number(finalWeightDisplayValue) || Number(formData.weight_reduced) || 0
       };
 
+      let targetFinalArrivalId = initialData?.final_arrival_id || null;
+      if (!targetFinalArrivalId && supabase) {
+        const lookupConds = [
+          formData.arrival_no ? `final_arrival_no.eq.${formData.arrival_no}` : '',
+          initialData?.final_arrival_no ? `final_arrival_no.eq.${initialData.final_arrival_no}` : '',
+          formData.temporary_arrival_no ? `temporary_arrival_no.eq.${formData.temporary_arrival_no}` : '',
+          formData.mr_no ? `mr_no.eq.${formData.mr_no}` : ''
+        ].filter(Boolean).join(',');
+
+        if (lookupConds) {
+          const { data: existingFa } = await supabase
+            .from('final_arrival')
+            .select('final_arrival_id')
+            .or(lookupConds)
+            .limit(1);
+          if (existingFa && existingFa.length > 0 && existingFa[0].final_arrival_id) {
+            targetFinalArrivalId = existingFa[0].final_arrival_id;
+          }
+        }
+      }
+
       try {
-        if (initialData && initialData.final_arrival_id) {
-          await dbModule.update('final_arrival', 'final_arrival_id', initialData.final_arrival_id, payload);
+        if (targetFinalArrivalId) {
+          await dbModule.update('final_arrival', 'final_arrival_id', targetFinalArrivalId, payload);
           alert(`Final Arrival Voucher #${formData.arrival_no} updated successfully!`);
         } else {
           await dbModule.upsert('final_arrival', payload, 'final_arrival_no');
@@ -1559,8 +1580,8 @@ export function useFinalArrivalEntryLogic({ initialData, onSave }: UseFinalArriv
                 NOTIFY pgrst, 'reload schema';
               ` 
             });
-            if (initialData && initialData.final_arrival_id) {
-              await dbModule.update('final_arrival', 'final_arrival_id', initialData.final_arrival_id, payload);
+            if (targetFinalArrivalId) {
+              await dbModule.update('final_arrival', 'final_arrival_id', targetFinalArrivalId, payload);
               alert(`Final Arrival Voucher #${formData.arrival_no} updated successfully!`);
             } else {
               await dbModule.upsert('final_arrival', payload, 'final_arrival_no');
@@ -1568,8 +1589,8 @@ export function useFinalArrivalEntryLogic({ initialData, onSave }: UseFinalArriv
             }
           } catch (retryErr: any) {
             const { lorry_number, ...fallbackPayload } = payload as any;
-            if (initialData && initialData.final_arrival_id) {
-              await dbModule.update('final_arrival', 'final_arrival_id', initialData.final_arrival_id, fallbackPayload);
+            if (targetFinalArrivalId) {
+              await dbModule.update('final_arrival', 'final_arrival_id', targetFinalArrivalId, fallbackPayload);
               alert(`Final Arrival Voucher #${formData.arrival_no} updated successfully!`);
             } else {
               await dbModule.upsert('final_arrival', fallbackPayload, 'final_arrival_no');

@@ -45,6 +45,7 @@ export function usePaymentData(onSaveSuccess?: () => void) {
   const [activePoItems, setActivePoItems] = useState<any[]>([]);
   const [selectedMrNo, setSelectedMrNo] = useState<string>('');
   const [isEdit, setIsEdit] = useState(false);
+  const [originalVoucherNo, setOriginalVoucherNo] = useState<string>('');
 
   const [masterData, setMasterData] = useState<PaymentMaster>(initialMaster());
   const [detailCols, setDetailCols] = useState<PaymentDetailColumn[]>([
@@ -1170,6 +1171,10 @@ export function usePaymentData(onSaveSuccess?: () => void) {
         repayment_date: masterData.repayment_date || null
       };
 
+      if (isEdit && (masterData as any).payment_id) {
+        initialPayload.payment_id = (masterData as any).payment_id;
+      }
+
       const targetArrivalPaymentStatus = (payableVal > 0 && parsedPaid >= payableVal - 0.01)
         ? 'Paid'
         : (parsedPaid > 0 ? 'Partially Paid' : 'Pending');
@@ -1238,11 +1243,23 @@ export function usePaymentData(onSaveSuccess?: () => void) {
       try {
         const masterCols = Object.keys(initialPayload);
         const masterVals = masterCols.map(k => sqlVal(initialPayload[k]));
-        const updateSet = masterCols.filter(k => k !== 'voucher_no').map(k => `${k} = EXCLUDED.${k}`).join(', ');
-        const txQueries: string[] = [
-          `INSERT INTO payment_master (${masterCols.join(', ')}) VALUES (${masterVals.join(', ')}) ON CONFLICT (voucher_no) DO UPDATE SET ${updateSet};`,
-          `DELETE FROM payment_details WHERE voucher_no = ${sqlVal(masterData.voucher_no)};`
-        ];
+        const hasEditPaymentId = Boolean(isEdit && initialPayload.payment_id);
+        const conflictCol = hasEditPaymentId ? 'payment_id' : 'voucher_no';
+        const updateSet = masterCols.filter(k => k !== conflictCol).map(k => `${k} = EXCLUDED.${k}`).join(', ');
+        const detailDeleteConds = [
+          `voucher_no = ${sqlVal(masterData.voucher_no)}`,
+          originalVoucherNo ? `voucher_no = ${sqlVal(originalVoucherNo)}` : '',
+          hasEditPaymentId ? `payment_id = ${sqlVal(initialPayload.payment_id)}` : ''
+        ].filter(Boolean);
+
+        const txQueries: string[] = [];
+        if (isEdit && !hasEditPaymentId && originalVoucherNo && originalVoucherNo !== masterData.voucher_no) {
+          const updatePairs = masterCols.map(k => `${k} = ${sqlVal(initialPayload[k])}`).join(', ');
+          txQueries.push(`UPDATE payment_master SET ${updatePairs} WHERE voucher_no = ${sqlVal(originalVoucherNo)};`);
+        } else {
+          txQueries.push(`INSERT INTO payment_master (${masterCols.join(', ')}) VALUES (${masterVals.join(', ')}) ON CONFLICT (${conflictCol}) DO UPDATE SET ${updateSet};`);
+        }
+        txQueries.push(`DELETE FROM payment_details WHERE ${detailDeleteConds.join(' OR ')};`);
         for (const row of rowsToWrite) {
           const dCols = Object.keys(row);
           const dVals = dCols.map(k => sqlVal((row as any)[k]));
@@ -1256,11 +1273,21 @@ export function usePaymentData(onSaveSuccess?: () => void) {
         }
         await dbModule.executeTransaction(txQueries);
       } catch (_txErr) {
-        const savedMaster = await dbModule.upsert('payment_master', initialPayload, 'voucher_no');
+        let savedMaster: any = null;
+        if (isEdit && (masterData as any).payment_id) {
+          savedMaster = await dbModule.upsert('payment_master', initialPayload, 'payment_id');
+        } else if (isEdit && originalVoucherNo && originalVoucherNo !== masterData.voucher_no) {
+          savedMaster = await dbModule.update('payment_master', 'voucher_no', originalVoucherNo, initialPayload);
+        } else {
+          savedMaster = await dbModule.upsert('payment_master', initialPayload, 'voucher_no');
+        }
         const { error: delErr } = await supabase.from('payment_details').delete().eq('voucher_no', masterData.voucher_no);
         if (delErr) throw delErr;
+        if (originalVoucherNo && originalVoucherNo !== masterData.voucher_no) {
+          await supabase.from('payment_details').delete().eq('voucher_no', originalVoucherNo).catch(() => {});
+        }
         if (rowsToWrite.length > 0) {
-          const rowsWithId = rowsToWrite.map(r => ({ ...r, payment_id: savedMaster?.payment_id || null }));
+          const rowsWithId = rowsToWrite.map(r => ({ ...r, payment_id: savedMaster?.payment_id || (masterData as any).payment_id || null }));
           const { error: insErr } = await supabase.from('payment_details').insert(rowsWithId);
           if (insErr) {
             for (const r of rowsWithId) {
@@ -1417,6 +1444,7 @@ export function usePaymentData(onSaveSuccess?: () => void) {
 
   const handleEditPayment = async (item: PaymentMaster) => {
     setMasterData(item);
+    setOriginalVoucherNo(String(item.voucher_no || '').trim());
     setIsEdit(true);
 
     let loadedCols = [emptyDetailColumn(1), emptyDetailColumn(2), emptyDetailColumn(3), emptyDetailColumn(4)];

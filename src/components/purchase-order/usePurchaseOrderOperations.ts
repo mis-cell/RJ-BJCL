@@ -1003,13 +1003,13 @@ export function usePurchaseOrderOperations({
           }
         } catch (_ignore) {}
       } else {
-        await dbModule.insert('purchase_master', {
+        await dbModule.upsert('purchase_master', {
           ...item,
           status: 'final',
           pending: true,
           mismatch_cleared: true,
           satta_dispute_approved: true
-        }).catch(() => {});
+        }, 'po_no').catch(() => {});
         await dbModule.delete('sauda_check_point', 'po_no', item.po_no).catch(() => {
           return dbModule.update('sauda_check_point', 'po_no', item.po_no, { status: 'final', mismatch_cleared: true });
         });

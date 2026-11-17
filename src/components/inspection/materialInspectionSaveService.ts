@@ -326,43 +326,70 @@ export async function saveMaterialInspection({
     );
     const lorryNo = masterData.lorry_number || matchingVoucher?.lorry_number || matchingVoucher?.lorry_no || matchingVoucher?.vehicle_no || masterData.arrival_no || null;
 
-    await supabase
-      .from("final_arrival")
-      .upsert({
-        mr_no: masterData.mr_no,
-        mr_date: masterData.mr_date || null,
-        temporary_arrival_no: masterData.arrival_no,
-        arrival_date: masterData.arrival_date || null,
-        date: masterData.arrival_date || masterData.mr_date || null,
-        po_no: masterData.po_no,
-        po_date: masterPayload.po_date || null,
-        broker: masterData.broker_name,
-        broker_name: masterData.broker_name,
-        supplier: masterData.supplier_name,
-        supplier_name: masterData.supplier_name,
-        actual_moisture: masterData.actual_moisture ? Number(masterData.actual_moisture) : null,
-        claim_moisture: masterData.claim_moisture ? Number(masterData.claim_moisture) : null,
-        actual_dust: masterData.actual_dust ? Number(masterData.actual_dust) : null,
-        claim_dust: masterData.claim_dust ? Number(masterData.claim_dust) : null,
-        actual_ncv: masterData.actual_ncv ? Number(masterData.actual_ncv) : null,
-        claim_ncv: masterData.claim_ncv ? Number(masterData.claim_ncv) : null,
-        detention_days: masterData.detention_days ? Number(masterData.detention_days) : null,
-        unloading_date: masterData.unloading_date || null,
-        remarks: masterData.remarks,
-        lorry_number: masterData.lorry_number || lorryNo,
-        final_arrival_no: masterData.mr_no,
-        total_packets: totalPackets,
-        total_actual_weight: totalWeightKgs,
-        grid_details: JSON.stringify(validRowsToWrite.map(r => ({
-          crop: r.crop_year || '2025-26',
-          grade_name: r.arrival_grade || 'TD5',
-          marka: r.marka || 'NO MARK',
-          qty: Number(r.quantity) || 0,
-          weight_kgs: Number(r.challan_gross_wt) || 0,
-          area: r.area || '',
-          agency: r.agency || ''
-        })))
-      }, { onConflict: 'mr_no' });
+    const orConditions = [
+      masterData.mr_no ? `mr_no.eq.${masterData.mr_no}` : '',
+      masterData.mr_no ? `final_arrival_no.eq.${masterData.mr_no}` : '',
+      masterData.arrival_no ? `temporary_arrival_no.eq.${masterData.arrival_no}` : ''
+    ].filter(Boolean).join(',');
+
+    let existingFa: any = null;
+    if (orConditions) {
+      const { data: faMatches } = await supabase
+        .from("final_arrival")
+        .select("final_arrival_id, final_arrival_no")
+        .or(orConditions)
+        .limit(1);
+      if (faMatches && faMatches.length > 0) {
+        existingFa = faMatches[0];
+      }
+    }
+
+    const faSyncPayload = {
+      mr_no: masterData.mr_no,
+      mr_date: masterData.mr_date || null,
+      temporary_arrival_no: masterData.arrival_no,
+      arrival_date: masterData.arrival_date || null,
+      date: masterData.arrival_date || masterData.mr_date || null,
+      po_no: masterData.po_no,
+      po_date: masterPayload.po_date || null,
+      broker: masterData.broker_name,
+      broker_name: masterData.broker_name,
+      supplier: masterData.supplier_name,
+      supplier_name: masterData.supplier_name,
+      actual_moisture: masterData.actual_moisture ? Number(masterData.actual_moisture) : null,
+      claim_moisture: masterData.claim_moisture ? Number(masterData.claim_moisture) : null,
+      actual_dust: masterData.actual_dust ? Number(masterData.actual_dust) : null,
+      claim_dust: masterData.claim_dust ? Number(masterData.claim_dust) : null,
+      actual_ncv: masterData.actual_ncv ? Number(masterData.actual_ncv) : null,
+      claim_ncv: masterData.claim_ncv ? Number(masterData.claim_ncv) : null,
+      detention_days: masterData.detention_days ? Number(masterData.detention_days) : null,
+      unloading_date: masterData.unloading_date || null,
+      remarks: masterData.remarks,
+      lorry_number: masterData.lorry_number || lorryNo,
+      final_arrival_no: existingFa?.final_arrival_no || masterData.mr_no,
+      total_packets: totalPackets,
+      total_actual_weight: totalWeightKgs,
+      grid_details: JSON.stringify(validRowsToWrite.map(r => ({
+        crop: r.crop_year || '2025-26',
+        grade_name: r.arrival_grade || 'TD5',
+        marka: r.marka || 'NO MARK',
+        qty: Number(r.quantity) || 0,
+        weight_kgs: Number(r.challan_gross_wt) || 0,
+        area: r.area || '',
+        agency: r.agency || ''
+      })))
+    };
+
+    if (existingFa?.final_arrival_id) {
+      await supabase
+        .from("final_arrival")
+        .update(faSyncPayload)
+        .eq("final_arrival_id", existingFa.final_arrival_id);
+    } else {
+      await supabase
+        .from("final_arrival")
+        .upsert(faSyncPayload, { onConflict: 'mr_no' });
+    }
   } catch (e) {
     console.warn("Failed to sync to final_arrival table:", e);
   }
@@ -400,9 +427,10 @@ export async function saveMaterialInspection({
            delete poToInsert.po_id;
            delete poToInsert.created_at;
            
-           const { error: insPoErr } = await supabase.from('purchase_master').insert(poToInsert);
+           const { error: insPoErr } = await supabase.from('purchase_master').upsert(poToInsert, { onConflict: 'po_no' });
            if (!insPoErr) {
               if (tempPoDetails && tempPoDetails.length > 0) {
+                 await supabase.from('purchase_detail_master').delete().eq('po_no', masterData.po_no);
                  const detailsToInsert = tempPoDetails.map((d: any) => {
                      const copy = { ...d };
                      delete copy.item_id;

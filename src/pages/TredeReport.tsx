@@ -1115,10 +1115,7 @@ export default function PaymentModule({ onClose }: { onClose?: () => void }) {
               onClick={async () => {
                 setLoading(true);
                 try {
-                  if (supabase) {
-                    await supabase.from('payment_master').insert([masterData]);
-                  }
-                  await dbModule.upsert('payment_master', masterData).catch(() => {});
+                  await dbModule.upsert('payment_master', masterData, 'voucher_no');
                   setShowSuccessAnim(true);
                   setTimeout(() => {
                     setShowSuccessAnim(false);

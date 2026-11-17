@@ -749,6 +749,7 @@ export default function MismatchCase({ onClose, variant = 'satta' }: { onClose?:
       severity: targetItem?.severity || 'medium',
     };
 
+    let savedMaterialToDb = false;
     if (supabase) {
       try {
         // First check existing rows using select('*') which never fails
@@ -762,12 +763,18 @@ export default function MismatchCase({ onClose, variant = 'satta' }: { onClose?:
           const rowId = existingRows[0].id;
           const { error: updErr } = await supabase.from('material_mismatch').update(extendedMaterialRecord).eq('id', rowId);
           if (updErr) {
-            await supabase.from('material_mismatch').update(baseMaterialRecord).eq('id', rowId);
+            const { error: baseUpdErr } = await supabase.from('material_mismatch').update(baseMaterialRecord).eq('id', rowId);
+            if (!baseUpdErr) savedMaterialToDb = true;
+          } else {
+            savedMaterialToDb = true;
           }
         } else {
           const { error: insErr } = await supabase.from('material_mismatch').insert(extendedMaterialRecord);
           if (insErr) {
-            await supabase.from('material_mismatch').insert(baseMaterialRecord);
+            const { error: baseInsErr } = await supabase.from('material_mismatch').insert(baseMaterialRecord);
+            if (!baseInsErr) savedMaterialToDb = true;
+          } else {
+            savedMaterialToDb = true;
           }
         }
       } catch (e) {
@@ -810,8 +817,9 @@ export default function MismatchCase({ onClose, variant = 'satta' }: { onClose?:
       }
     }
 
-    // Direct persistence in dbModule as well
-    await dbModule.insert('material_mismatch', { ...extendedMaterialRecord, id: itemId }).catch(() => {});
+    if (!savedMaterialToDb) {
+      await dbModule.upsert('material_mismatch', { ...extendedMaterialRecord, mismatch_id: itemId }, 'mismatch_id').catch(() => {});
+    }
 
     // Optimistically update local state immediately so user sees it resolved on screen
     setMismatchList(prev => prev.map(m => {
@@ -892,6 +900,7 @@ export default function MismatchCase({ onClose, variant = 'satta' }: { onClose?:
         approval_level: approvalLevel,
       };
 
+      let savedSattaToDb = false;
       if (supabase) {
         try {
           // Query existing rows using select('*')
@@ -909,12 +918,18 @@ export default function MismatchCase({ onClose, variant = 'satta' }: { onClose?:
             if (updErr) {
               const basePayload = { ...baseSattaRecord };
               delete basePayload.id;
-              await supabase.from('satta_mismatch').update(basePayload).eq('id', rowId);
+              const { error: baseUpdErr } = await supabase.from('satta_mismatch').update(basePayload).eq('id', rowId);
+              if (!baseUpdErr) savedSattaToDb = true;
+            } else {
+              savedSattaToDb = true;
             }
           } else {
             const { error: insErr } = await supabase.from('satta_mismatch').insert(extendedSattaRecord);
             if (insErr) {
-              await supabase.from('satta_mismatch').insert(baseSattaRecord);
+              const { error: baseInsErr } = await supabase.from('satta_mismatch').insert(baseSattaRecord);
+              if (!baseInsErr) savedSattaToDb = true;
+            } else {
+              savedSattaToDb = true;
             }
           }
         } catch (e) {
@@ -969,8 +984,9 @@ export default function MismatchCase({ onClose, variant = 'satta' }: { onClose?:
         }
       }
 
-      // Direct persistence in dbModule as well
-      await dbModule.insert('satta_mismatch', { ...extendedSattaRecord, id: itemId }).catch(() => {});
+      if (!savedSattaToDb) {
+        await dbModule.upsert('satta_mismatch', { ...extendedSattaRecord, mismatch_id: itemId }, 'mismatch_id').catch(() => {});
+      }
 
       // Optimistically update local state immediately so user sees it resolved on screen
       setSattaMismatchList(prev => prev.map(s => {
@@ -1064,6 +1080,7 @@ export default function MismatchCase({ onClose, variant = 'satta' }: { onClose?:
           approval_level: approvalLevel,
         };
 
+        let savedGroupItemToDb = false;
         if (supabase) {
           try {
             const searchToken = (item.saudaNo || item.poNo).split('/').pop() || item.poNo;
@@ -1080,12 +1097,18 @@ export default function MismatchCase({ onClose, variant = 'satta' }: { onClose?:
               if (updErr) {
                 const basePayload = { ...baseSattaRecord };
                 delete basePayload.id;
-                await supabase.from('satta_mismatch').update(basePayload).eq('id', rowId);
+                const { error: baseUpdErr } = await supabase.from('satta_mismatch').update(basePayload).eq('id', rowId);
+                if (!baseUpdErr) savedGroupItemToDb = true;
+              } else {
+                savedGroupItemToDb = true;
               }
             } else {
               const { error: insErr } = await supabase.from('satta_mismatch').insert(extendedSattaRecord);
               if (insErr) {
-                await supabase.from('satta_mismatch').insert(baseSattaRecord);
+                const { error: baseInsErr } = await supabase.from('satta_mismatch').insert(baseSattaRecord);
+                if (!baseInsErr) savedGroupItemToDb = true;
+              } else {
+                savedGroupItemToDb = true;
               }
             }
           } catch (e) {
@@ -1093,7 +1116,9 @@ export default function MismatchCase({ onClose, variant = 'satta' }: { onClose?:
           }
         }
 
-        await dbModule.insert('satta_mismatch', { ...extendedSattaRecord, id: item.id }).catch(() => {});
+        if (!savedGroupItemToDb) {
+          await dbModule.upsert('satta_mismatch', { ...extendedSattaRecord, mismatch_id: item.id }, 'mismatch_id').catch(() => {});
+        }
       }
 
       if (supabase) {

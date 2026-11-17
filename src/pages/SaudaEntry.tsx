@@ -929,16 +929,21 @@ export default function SaudaEntry({
       saudaPayload.b_date = toDateOrNull(saudaData.b_date) || saudaPayload.date;
 
       let inserted;
-      let isEditMode = !!saudaPayload.sauda_id;
+      const initialSaudaNoNorm = String(initialData?.sauda_no || '').trim().toUpperCase();
+      let existingSaudaId = String(saudaPayload.sauda_id || initialData?.sauda_id || '').trim();
+      let isEditMode = Boolean(existingSaudaId || initialData?.sauda_no);
 
-      if (!saudaPayload.sauda_id && saudaPayload.sauda_no) {
+      if (!existingSaudaId && (saudaPayload.sauda_no || initialData?.sauda_no)) {
         const targetFYear = initialData?.financial_year || saudaPayload.financial_year || saudaPayload.session || '2026-2027';
         const allSaudas = await dbModule.fetchAll('sauda_master').catch(() => []);
         const normTargetNo = String(saudaPayload.sauda_no || '').trim().toUpperCase();
         const match = allSaudas.find((s: any) => {
           const sNo = String(s.sauda_no || '').trim().toUpperCase();
           const sClean = cleanSaudaNo(s.sauda_no, s.session || s.financial_year || targetFYear).toUpperCase();
-          return sNo === normTargetNo || sClean === normTargetNo;
+          return (
+            (normTargetNo && (sNo === normTargetNo || sClean === normTargetNo)) ||
+            (initialSaudaNoNorm && (sNo === initialSaudaNoNorm || sClean === initialSaudaNoNorm))
+          );
         });
         if (match) {
           if (isSaudaApproved(match)) {
@@ -946,9 +951,14 @@ export default function SaudaEntry({
             setLoading(false);
             return;
           }
-          saudaPayload.sauda_id = match.sauda_id;
+          existingSaudaId = String(match.sauda_id || '').trim();
+          if (existingSaudaId) {
+            saudaPayload.sauda_id = existingSaudaId;
+          }
           isEditMode = true;
         }
+      } else if (existingSaudaId) {
+        saudaPayload.sauda_id = existingSaudaId;
       }
 
       // Maker-Checker Workflow Status Management:
@@ -1022,10 +1032,16 @@ export default function SaudaEntry({
       const isValidUuidStr = (val: any) =>
         typeof val === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val.trim());
 
-      const targetSaudaId = isValidUuidStr(saudaPayload.sauda_id) ? String(saudaPayload.sauda_id).trim() : generateSafeUuid();
+      // Never replace an existing edit record's ID with a fresh random UUID
+      const targetSaudaId = existingSaudaId
+        ? existingSaudaId
+        : (isValidUuidStr(saudaPayload.sauda_id) ? String(saudaPayload.sauda_id).trim() : generateSafeUuid());
       saudaPayload.sauda_id = targetSaudaId;
 
       try {
+        if (isEditMode && !isValidUuidStr(targetSaudaId)) {
+          throw new Error('Legacy non-UUID sauda_id uses direct update path');
+        }
         const txQueries: string[] = [];
         const masterCols = Object.keys(saudaPayload);
         const masterVals = masterCols.map(k => sqlVal(saudaPayload[k]));
@@ -1033,7 +1049,12 @@ export default function SaudaEntry({
         txQueries.push(
           `INSERT INTO sauda_master (${masterCols.join(', ')}) VALUES (${masterVals.join(', ')}) ON CONFLICT (sauda_id) DO UPDATE SET ${updateSet};`
         );
-        txQueries.push(`DELETE FROM sauda_quality_details WHERE sauda_id = ${sqlVal(targetSaudaId)} OR sauda_no = ${sqlVal(saudaPayload.sauda_no)};`);
+        const deleteConds = [
+          `sauda_id = ${sqlVal(targetSaudaId)}`,
+          saudaPayload.sauda_no ? `sauda_no = ${sqlVal(saudaPayload.sauda_no)}` : '',
+          initialData?.sauda_no ? `sauda_no = ${sqlVal(initialData.sauda_no)}` : ''
+        ].filter(Boolean);
+        txQueries.push(`DELETE FROM sauda_quality_details WHERE ${deleteConds.join(' OR ')};`);
 
         for (const comb of flatCombinations) {
           if (comb.quality || comb.agency || comb.marka || comb.rs > 0) {
@@ -1046,17 +1067,24 @@ export default function SaudaEntry({
         inserted = { ...saudaPayload };
       } catch (_txErr) {
         if (isEditMode) {
-          inserted = await dbModule.update('sauda_master', 'sauda_id', saudaPayload.sauda_id, saudaPayload);
+          if (existingSaudaId) {
+            inserted = await dbModule.update('sauda_master', 'sauda_id', existingSaudaId, saudaPayload);
+          } else {
+            inserted = await dbModule.upsert('sauda_master', saudaPayload, 'sauda_no');
+          }
         } else {
           inserted = await dbModule.upsert('sauda_master', saudaPayload, 'sauda_no');
         }
         if (inserted && flatCombinations.length > 0) {
           await dbModule.delete('sauda_quality_details', 'sauda_id', inserted.sauda_id || targetSaudaId).catch(() => {});
           await dbModule.delete('sauda_quality_details', 'sauda_no', saudaPayload.sauda_no).catch(() => {});
+          if (initialData?.sauda_no && initialData.sauda_no !== saudaPayload.sauda_no) {
+            await dbModule.delete('sauda_quality_details', 'sauda_no', initialData.sauda_no).catch(() => {});
+          }
           for (const comb of flatCombinations) {
             if (comb.quality || comb.agency || comb.marka || comb.rs > 0) {
               await dbModule.insert('sauda_quality_details', {
-                sauda_id: inserted.sauda_id,
+                sauda_id: inserted.sauda_id || targetSaudaId,
                 sauda_no: inserted.sauda_no || saudaData.sauda_no,
                 financial_year: inserted.financial_year || saudaPayload.financial_year,
                 quality: String(comb.quality || '').trim(),

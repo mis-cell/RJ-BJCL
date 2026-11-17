@@ -654,10 +654,15 @@ export function useStockSummaryData(initialSubTab: StockSubTab = 'opening') {
         avg_weight: calculatedAvg
       };
 
-      const [opRes, gdnRes] = await Promise.all([
-        supabase.from('opening_stock').upsert(payloadOp),
-        supabase.from('godown_wise_stock').upsert(payloadGdn)
-      ]);
+      const [opRes, gdnRes] = isEditing && formState.id
+        ? await Promise.all([
+            supabase.from('opening_stock').update(payloadOp).eq('id', formState.id),
+            supabase.from('godown_wise_stock').update(payloadGdn).eq('id', formState.id)
+          ])
+        : await Promise.all([
+            supabase.from('opening_stock').upsert(payloadOp, { onConflict: 'id' }),
+            supabase.from('godown_wise_stock').upsert(payloadGdn, { onConflict: 'id' })
+          ]);
       
       if (opRes.error) throw opRes.error;
       if (gdnRes.error) throw gdnRes.error;

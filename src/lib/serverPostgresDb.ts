@@ -234,7 +234,18 @@ const TABLE_UNIQUE_KEYS: Record<string, string[]> = {
   batch_master: ['code'],
   department_master: ['dept_code'],
   financial_year_master: ['year_code'],
-  sauda_check_point_deductions: ['id', 'po_no']
+  sauda_check_point_deductions: ['id', 'po_no'],
+  opening_stock: ['id'],
+  godown_wise_stock: ['id'],
+  closing_stock: ['id'],
+  material_mismatch: ['id', 'mismatch_id'],
+  satta_mismatch: ['id', 'mismatch_id'],
+  sms_sauda: ['id', 'sms_id'],
+  requisitions: ['id', 'requisition_no'],
+  tolerance_policy: ['id', 'policy_name'],
+  tolerance_policy_master: ['id', 'policy_name'],
+  production_records: ['id'],
+  moisture_logic: ['id']
 };
 
 // Composite conflict keys for rate/matrix tables
@@ -1392,7 +1403,8 @@ async function tryUpdateExistingRowInPlace(
   if (!matchedCtid) {
     const singleCandidates = Array.from(new Set([
       ...(explicitConflictCols && explicitConflictCols.length === 1 ? explicitConflictCols : []),
-      ...(TABLE_UNIQUE_KEYS[table] || [])
+      ...(TABLE_UNIQUE_KEYS[table] || []),
+      ...Array.from(TABLE_PK_COLUMNS)
     ])).filter(c => validCols.size === 0 || validCols.has(c));
 
     for (const cand of singleCandidates) {

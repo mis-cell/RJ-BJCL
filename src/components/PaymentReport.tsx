@@ -837,16 +837,28 @@ export default function PaymentReport({ onClose }: { onClose?: () => void }) {
         repayment_date: masterData.repayment_date || ''
       };
 
+      const isEditingPaymentId = Boolean(isEdit && (masterData as any).payment_id);
+      if (isEditingPaymentId) {
+        initialPayload.payment_id = (masterData as any).payment_id;
+      }
+
       let savedMaster: any = null;
       let mErr: any = null;
       const currentPayload = { ...initialPayload };
 
       for (let attempt = 0; attempt < 8; attempt++) {
-        let res = await supabase
-          .from('payment_master')
-          .upsert(currentPayload, { onConflict: 'voucher_no' })
-          .select()
-          .single();
+        const res = isEditingPaymentId
+          ? await supabase
+              .from('payment_master')
+              .update(currentPayload)
+              .eq('payment_id', (masterData as any).payment_id)
+              .select()
+              .single()
+          : await supabase
+              .from('payment_master')
+              .upsert(currentPayload, { onConflict: 'voucher_no' })
+              .select()
+              .single();
 
         if (res.error) {
           const match = res.error.message?.match(/Could not find the '([^']+)' column/i);
@@ -863,10 +875,12 @@ export default function PaymentReport({ onClose }: { onClose?: () => void }) {
         }
       }
 
-      const recordToSave = savedMaster || currentPayload;
-      if (recordToSave && recordToSave.voucher_no) {
-        await dbModule.upsert('payment_master', recordToSave).catch(() => {});
+      if (!savedMaster) {
+        const conflictKey = isEditingPaymentId ? 'payment_id' : 'voucher_no';
+        savedMaster = await dbModule.upsert('payment_master', currentPayload, conflictKey).catch(() => null);
       }
+
+      const recordToSave = savedMaster || currentPayload;
 
       if (mErr && !savedMaster) {
         throw new Error(mErr.message || "Failed to save to Supabase payment_master.");
@@ -875,6 +889,9 @@ export default function PaymentReport({ onClose }: { onClose?: () => void }) {
       // Save detail rows into payment_details
       const masterRecord = savedMaster || recordToSave;
       if (masterRecord && detailCols.length > 0) {
+        if (masterRecord.payment_id) {
+          await supabase.from('payment_details').delete().eq('payment_id', masterRecord.payment_id).catch(() => {});
+        }
         await supabase.from('payment_details').delete().eq('voucher_no', masterData.voucher_no);
         const rowsToWrite = detailCols
           .filter(c => c.grade && c.grade.trim() !== '')
