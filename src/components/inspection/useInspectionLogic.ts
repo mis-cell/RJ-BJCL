@@ -542,9 +542,55 @@ export function useInspectionLogic() {
         }
       });
 
+      const faByMrMap = new Map<string, any>();
+      const normKey = (val: any) => String(val || "").replace(/^#+/, "").trim().toUpperCase();
+      const isValidMrLookupKey = (k: string) =>
+        Boolean(k) && !["MR", "MR0", "AR", "AR0", "DIRECT REGISTER", "DIRECT", "NA", "N/A", "NONE", "NIL", "-", "--", "NULL", "UNDEFINED"].includes(k);
+
+      // Build VLOOKUP index from final_arrival keyed by M.R. No. (primary: final_arrival_no)
+      faList.forEach(fa => {
+        const primaryMr = normKey(fa.final_arrival_no);
+        if (isValidMrLookupKey(primaryMr) && !faByMrMap.has(primaryMr)) {
+          faByMrMap.set(primaryMr, fa);
+        }
+      });
+      faList.forEach(fa => {
+        const altMr = normKey(fa.mr_no);
+        const altArr = normKey(fa.arrival_no);
+        if (isValidMrLookupKey(altMr) && /^MR0*[1-9]/i.test(altMr) && !faByMrMap.has(altMr)) {
+          faByMrMap.set(altMr, fa);
+        }
+        if (isValidMrLookupKey(altArr) && /^MR0*[1-9]/i.test(altArr) && !faByMrMap.has(altArr)) {
+          faByMrMap.set(altArr, fa);
+        }
+      });
+
+      const extractFinalArrivalNoForDisplay = (fa: any, displayMrUpper: string): string => {
+        if (!fa) return "";
+        const cleanVal = (v: any) => String(v || "").replace(/^#+/, "").trim();
+        const isGoodArrival = (val: string) => {
+          if (!val) return false;
+          const up = val.toUpperCase();
+          return !["-", "--", "NA", "N/A", "NONE", "NIL", "NULL", "UNDEFINED", "MR", "MR0", "AR", "AR0", "DIRECT REGISTER"].includes(up);
+        };
+        const rawMrNo = cleanVal(fa.mr_no);
+        const candidates = [
+          cleanVal(fa.temporary_arrival_no),
+          cleanVal(fa.amad_no),
+          cleanVal(fa.temp_arrival_no),
+          rawMrNo.toUpperCase().startsWith("AR") ? rawMrNo : "",
+          cleanVal(fa.arrival_no),
+        ];
+        const nonMrDiff = candidates.find(c => isGoodArrival(c) && c.toUpperCase() !== displayMrUpper && !c.toUpperCase().startsWith("MR"));
+        if (nonMrDiff) return nonMrDiff;
+        const diff = candidates.find(c => isGoodArrival(c) && c.toUpperCase() !== displayMrUpper);
+        if (diff) return diff;
+        return candidates.find(c => isGoodArrival(c)) || "";
+      };
+
       const displayList = Array.from(map.values()).map(rec => {
-        const mrK = (rec.mr_no || "").trim().toUpperCase();
-        const arrK = (rec.arrival_no || "").trim().toUpperCase();
+        const mrK = normKey(rec.mr_no);
+        const arrK = normKey(rec.arrival_no);
         let attachedDeductions: DeductionRow[] = [];
 
         if (mrK && dbDeductionsMap.has(mrK)) {
@@ -593,10 +639,22 @@ export function useInspectionLogic() {
             } catch (e) {}
           }
         }
-        const matchedFa = faList.find(f => {
-          const fk = String(f.final_arrival_no || f.mr_no || f.arrival_no || "").trim().toUpperCase();
-          return fk && (fk === mrK || fk === arrK);
+        const matchedFa = (isValidMrLookupKey(mrK) ? faByMrMap.get(mrK) : undefined) || faList.find(f => {
+          const fk = normKey(f.final_arrival_no || f.mr_no || f.arrival_no);
+          return isValidMrLookupKey(fk) && (fk === mrK || fk === arrK);
         });
+        const vlookupArrivalNo = isValidMrLookupKey(mrK)
+          ? extractFinalArrivalNoForDisplay(faByMrMap.get(mrK) || matchedFa, mrK)
+          : "";
+        if (vlookupArrivalNo) {
+          (rec as any).display_arrival_no = vlookupArrivalNo;
+        } else {
+          const recTemp = String((rec as any).temporary_arrival_no || "").replace(/^#+/, "").trim();
+          if (recTemp && recTemp.toUpperCase() !== mrK) {
+            (rec as any).display_arrival_no = recTemp;
+          }
+        }
+
         const wtMt = calculateInspectionWeightMt(rec, parsedGrid, matchedFa);
         (rec as any).received_weight_mt = wtMt;
         if (wtMt > 0 && wtMt < 5 && rec.po_no) {
@@ -2170,6 +2228,7 @@ export function useInspectionLogic() {
     const query = searchQuery.toLowerCase();
     const matchesQuery =
       (r.mr_no || "").toLowerCase().includes(query) ||
+      ((r as any).display_arrival_no || "").toLowerCase().includes(query) ||
       (r.arrival_no || "").toLowerCase().includes(query) ||
       (r.po_no || "").toLowerCase().includes(query) ||
       (r.supplier_name || "").toLowerCase().includes(query) ||
@@ -2204,8 +2263,8 @@ export function useInspectionLogic() {
         return sortOrder === "asc" ? dateA - dateB : dateB - dateA;
       }
     } else if (sortField === "arrival_no") {
-      const arrNoA = (a.arrival_no || a.mr_no || '').toUpperCase();
-      const arrNoB = (b.arrival_no || b.mr_no || '').toUpperCase();
+      const arrNoA = ((a as any).display_arrival_no || a.arrival_no || a.mr_no || '').toUpperCase();
+      const arrNoB = ((b as any).display_arrival_no || b.arrival_no || b.mr_no || '').toUpperCase();
       const diff = arrNoA.localeCompare(arrNoB, undefined, { numeric: true, sensitivity: 'base' });
       if (diff !== 0) {
         return sortOrder === "asc" ? diff : -diff;
