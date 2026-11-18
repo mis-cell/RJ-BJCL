@@ -708,9 +708,9 @@ export const fetchSaudaCheckpointDeduction = async (cleanPoNo: string) => {
               mrNetMt = Math.round(mrNetMt * 1000) / 1000;
 
               // Short Basis:
-              // - Single Lorry: MR Net Weight (mrNetMt)
+              // - Single Lorry: MR Gross Weight (mrGrossMt)
               // - Multiple Lorry: Earlier lorries Net Weight (mrNetMt) + Last Lorry Gross Weight (mrGrossMt)
-              const shortClaimMt = (isMultiLorry && isLast) ? mrGrossMt : mrNetMt;
+              const shortClaimMt = isMultiLorry ? (isLast ? mrGrossMt : mrNetMt) : mrGrossMt;
 
               // Excess Basis:
               // - 1 Lorry: MR Net Weight (mrNetMt)
@@ -746,7 +746,7 @@ export const fetchSaudaCheckpointDeduction = async (cleanPoNo: string) => {
 
               const shortageMt = Math.round((contractMt - roundedLiveMt) * 1000) / 1000;
 
-              if (shortageMt > 0.0001) {
+              if (!isClaimExcess && shortageMt > 0.0001) {
                 // Shortage rules
                 if (shortageMt >= 1.5) {
                   updated.variation_type = 'short';
@@ -768,7 +768,7 @@ export const fetchSaudaCheckpointDeduction = async (cleanPoNo: string) => {
                   updated.deduction_qty_mt = deductMt;
                   updated.deduction_qty_qtl = Math.round(deductMt * 10 * 100) / 100;
                 }
-              } else if (roundedLiveMt > contractMt + 0.0001) {
+              } else if (isClaimExcess && roundedLiveMt > contractMt + 0.0001) {
                 // EXCESS RULE: 3% tolerance NOT applicable for excess! Full excess is chargeable.
                 updated.variation_type = 'excess';
                 updated.tolerance_pct = 0;

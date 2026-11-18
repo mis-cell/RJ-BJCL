@@ -351,7 +351,7 @@ export function computeExcessShortPayload(
     mrGrossMt = Math.round(mrGrossMt * 1000) / 1000;
     mrNetMt = Math.round(mrNetMt * 1000) / 1000;
 
-    const shortClaimMt = isMultipleLorry && isLastLorry ? mrGrossMt : mrNetMt;
+    const shortClaimMt = isMultipleLorry ? (isLastLorry ? mrGrossMt : mrNetMt) : mrGrossMt;
     const lorryCount = mrEntries.length;
     const excessUsesGross = lorryCount === 2 ? isFirstLorry : lorryCount >= 3 ? isLastLorry : false;
     const excessClaimMt = excessUsesGross ? mrGrossMt : mrNetMt;
@@ -376,7 +376,7 @@ export function computeExcessShortPayload(
       finalReceiptWtMt: shortClaimMt,
       finalReceiptWtKg: Math.round(shortClaimMt * 1000),
       finalReceiptWtQtl: Math.round(shortClaimMt * 10 * 100) / 100,
-      weightBasis: isMultipleLorry && isLastLorry ? 'Gross (Last Lorry)' : isMultipleLorry ? 'Net' : 'Net (Single)',
+      weightBasis: isMultipleLorry && isLastLorry ? 'Gross (Last Lorry)' : isMultipleLorry ? 'Net' : 'Gross (Single)',
       isFirstLorry,
       isLastLorry,
       saudaRateQtl: saudaDateSattaRate,
@@ -407,7 +407,7 @@ export function computeExcessShortPayload(
       ? r.isLastLorry
         ? r.grossWtMt
         : r.netWtMt
-      : r.netWtMt;
+      : r.grossWtMt;
     const rowWeightBasis = isClaimExcess
       ? rowCount === 2
         ? rIdx === 0
@@ -422,7 +422,7 @@ export function computeExcessShortPayload(
       ? r.isLastLorry
         ? 'Gross (Last Lorry)'
         : 'Net'
-      : 'Net (Single)';
+      : 'Gross (Single)';
 
     return {
       ...r,
@@ -439,8 +439,8 @@ export function computeExcessShortPayload(
   });
 
   const grossVarianceMt = Math.round((contractMt - totalFinalReceiptClaimMt) * 1000) / 1000;
-  const isGrossShort = grossVarianceMt > 0.0001;
-  const isGrossExcess = grossVarianceMt < -0.0001;
+  const isGrossShort = !isClaimExcess && grossVarianceMt > 0.0001;
+  const isGrossExcess = isClaimExcess && grossVarianceMt < -0.0001;
   const shortageMt = isGrossShort ? grossVarianceMt : 0;
   const excessMt = isGrossExcess ? Math.abs(grossVarianceMt) : 0;
 

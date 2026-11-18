@@ -517,6 +517,7 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
     totalGrossClaimMt,
     totalNetClaimMt,
     isMultipleLorry,
+    isClaimExcess,
     lastMrRecord,
     lastMrNo,
     lastMrDate,
@@ -769,9 +770,9 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
       mrNetMt = Math.round(mrNetMt * 1000) / 1000;
 
       // Short Basis:
-      // - Single Lorry: MR Net Weight (mrNetMt)
+      // - Single Lorry: MR Gross Weight (mrGrossMt)
       // - Multiple Lorry: Earlier lorries Net Weight (mrNetMt) + Last Lorry Gross Weight (mrGrossMt)
-      const shortClaimMt = (isMultipleLorry && isLastLorry) ? mrGrossMt : mrNetMt;
+      const shortClaimMt = isMultipleLorry ? (isLastLorry ? mrGrossMt : mrNetMt) : mrGrossMt;
 
       const lorryCount = mrEntries.length;
       const isFirstLorry = mrIdx === 0;
@@ -807,7 +808,7 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
         finalReceiptWtMt: shortClaimMt,
         finalReceiptWtKg: Math.round(shortClaimMt * 1000),
         finalReceiptWtQtl: Math.round(shortClaimMt * 10 * 100) / 100,
-        weightBasis: (isMultipleLorry && isLastLorry) ? 'Gross (Last Lorry)' : (isMultipleLorry ? 'Net' : 'Net (Single)'),
+        weightBasis: (isMultipleLorry && isLastLorry) ? 'Gross (Last Lorry)' : (isMultipleLorry ? 'Net' : 'Gross (Single)'),
         isFirstLorry,
         isLastLorry,
         saudaRateQtl: saudaDateSattaRate,
@@ -866,14 +867,14 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
         rowCount === 2 ? (rIdx === 0) : rowCount >= 3 ? r.isLastLorry : false;
       const rowClaimMt = isClaimExcess
         ? (excessUsesGross ? r.grossWtMt : r.netWtMt)
-        : (isMultipleLorry ? (r.isLastLorry ? r.grossWtMt : r.netWtMt) : r.netWtMt);
+        : (isMultipleLorry ? (r.isLastLorry ? r.grossWtMt : r.netWtMt) : r.grossWtMt);
       const rowWeightBasis = isClaimExcess
         ? (rowCount === 2
             ? (rIdx === 0 ? 'Gross (First Lorry)' : 'Net (Last Lorry)')
             : rowCount >= 3
             ? (r.isLastLorry ? 'Gross (Last Lorry)' : 'Net')
             : 'Net (Single)')
-        : (isMultipleLorry ? (r.isLastLorry ? 'Gross (Last Lorry)' : 'Net') : 'Net (Single)');
+        : (isMultipleLorry ? (r.isLastLorry ? 'Gross (Last Lorry)' : 'Net') : 'Gross (Single)');
       return {
         ...r,
         finalReceiptWtMt: rowClaimMt,
@@ -893,6 +894,7 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
       totalGrossClaimMt: Math.round(sumGrossMt * 1000) / 1000,
       totalNetClaimMt: Math.round(sumNetMt * 1000) / 1000,
       isMultipleLorry,
+      isClaimExcess,
       lastMrRecord: latestMr,
       lastMrNo: latestMrNo,
       lastMrDate: latestMrDate,
@@ -919,8 +921,8 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
   // 3. CALCULATE GROSS SHORT / EXCESS
   // Compare: Sauda Contract Quantity - Total Received Quantity
   const grossVarianceMt = Math.round((contractMt - totalFinalReceiptClaimMt) * 1000) / 1000;
-  const isGrossShort = grossVarianceMt > 0.0001;
-  const isGrossExcess = grossVarianceMt < -0.0001;
+  const isGrossShort = !isClaimExcess && grossVarianceMt > 0.0001;
+  const isGrossExcess = isClaimExcess && grossVarianceMt < -0.0001;
   const shortageMt = isGrossShort ? grossVarianceMt : 0;
   const excessMt = isGrossExcess ? Math.abs(grossVarianceMt) : 0;
 
@@ -1639,7 +1641,9 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
                           : `(Lorries 1..${gradeWiseInspectionRows.length - 1} Net + Last Lorry Gross)`}
                       </span>
                     ) : (
-                      <span className="text-[9px] text-slate-500 font-sans block">(Single Lorry Mill Net Wt)</span>
+                      <span className="text-[9px] text-slate-500 font-sans block">
+                        {isGrossExcess ? '(Single Lorry Mill Net Wt)' : '(Single Lorry Gross Wt)'}
+                      </span>
                     )}
                   </div>
                   <span className="font-black text-indigo-950 text-right">
@@ -1835,7 +1839,11 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
                               <span className="mt-0.5 inline-block text-[8px] bg-slate-200 text-slate-800 px-1 py-0.2 rounded font-bold">Net</span>
                             )
                           )
-                        ) : null}
+                        ) : (
+                          <span className="mt-0.5 inline-block text-[8px] bg-amber-200 text-amber-950 px-1 py-0.2 rounded font-bold">
+                            {isGrossExcess ? 'Net (Single Lorry)' : 'Gross (Single Lorry)'}
+                          </span>
+                        )}
                       </td>
                       <td className="py-1.5 px-2 text-right font-bold text-slate-900">{Number(gRow.finalReceiptWtQtl).toFixed(2)} Qtl</td>
                       <td className="py-1.5 px-2 text-right text-slate-700">₹{Number(gRow.saudaRateQtl).toLocaleString()} / Qtl</td>

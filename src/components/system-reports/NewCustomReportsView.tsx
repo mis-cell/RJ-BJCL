@@ -1205,7 +1205,7 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
               mrNetMt = Math.round(mrNetMt * 1000) / 1000;
 
               const lorryCount = sortedInsps.length;
-              const shortClaimMt = isMulti && isLast ? mrGrossMt : mrNetMt;
+              const shortClaimMt = isMulti ? (isLast ? mrGrossMt : mrNetMt) : mrGrossMt;
               const excessUsesGross =
                 lorryCount === 2 ? (idx === 0) : lorryCount >= 3 ? isLast : false;
               const excessClaimMt = excessUsesGross ? mrGrossMt : mrNetMt;
@@ -1236,7 +1236,7 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
                 finalClaimMt: Number(shortClaimMt.toFixed(3)),
                 finalClaimKg: Math.round(shortClaimMt * 1000),
                 finalClaimQtl: Number((shortClaimMt * 10).toFixed(2)),
-                claimBasis: isMulti && isLast ? 'Gross (Last Lorry)' : 'Net',
+                claimBasis: isMulti ? (isLast ? 'Gross (Last Lorry)' : 'Net') : 'Gross (Single Lorry)',
                 saudaSattaRate: saudaRate,
                 mrSattaRate: mrRate,
                 rateDiff: mrRateDiff
