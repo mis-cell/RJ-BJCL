@@ -778,11 +778,11 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
       const isFirstLorry = mrIdx === 0;
 
       // Excess Basis:
-      // - 1 Lorry: MR Net Weight (mrNetMt)
+      // - 1 Lorry: MR Gross Weight (mrGrossMt)
       // - 2 Lorries: First Lorry Gross Weight (mrGrossMt) + 2nd Lorry Net Weight (mrNetMt)
       // - 3+ Lorries: First/Earlier Lorries (1..N-1) Net Weight (mrNetMt) + Last Lorry Gross Weight (mrGrossMt)
       const excessUsesGross =
-        lorryCount === 2 ? isFirstLorry : lorryCount >= 3 ? isLastLorry : false;
+        lorryCount === 1 ? true : lorryCount === 2 ? isFirstLorry : lorryCount >= 3 ? isLastLorry : false;
       const excessClaimMt = excessUsesGross ? mrGrossMt : mrNetMt;
 
       sumGrossMt += mrGrossMt;
@@ -864,16 +864,18 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
     const rowCount = rows.length;
     const adjustedRows = rows.map((r, rIdx) => {
       const excessUsesGross =
-        rowCount === 2 ? (rIdx === 0) : rowCount >= 3 ? r.isLastLorry : false;
+        rowCount === 1 ? true : rowCount === 2 ? (rIdx === 0) : rowCount >= 3 ? r.isLastLorry : false;
       const rowClaimMt = isClaimExcess
         ? (excessUsesGross ? r.grossWtMt : r.netWtMt)
         : (isMultipleLorry ? (r.isLastLorry ? r.grossWtMt : r.netWtMt) : r.grossWtMt);
       const rowWeightBasis = isClaimExcess
-        ? (rowCount === 2
+        ? (rowCount === 1
+            ? 'Gross (Single)'
+            : rowCount === 2
             ? (rIdx === 0 ? 'Gross (First Lorry)' : 'Net (Last Lorry)')
             : rowCount >= 3
             ? (r.isLastLorry ? 'Gross (Last Lorry)' : 'Net')
-            : 'Net (Single)')
+            : 'Gross (Single)')
         : (isMultipleLorry ? (r.isLastLorry ? 'Gross (Last Lorry)' : 'Net') : 'Gross (Single)');
       return {
         ...r,
@@ -926,22 +928,23 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
   const shortageMt = isGrossShort ? grossVarianceMt : 0;
   const excessMt = isGrossExcess ? Math.abs(grossVarianceMt) : 0;
 
-  // 4. SHORTAGE AND TOLERANCE RULES:
-  // - Tolerance of 3% of the Sauda/P.O. quantity applies ONLY to shortages under/up to 1.5 MT.
-  // - For EXCESS calculations, the 3% tolerance policy must NOT be applied.
+  // 4. SHORTAGE AND EXCESS TOLERANCE RULES:
+  // - Tolerance of 3% of the Sauda/P.O. quantity applies to shortages under 1.5 MT.
+  // - For Single Lorry EXCESS: if excess is less than 1.5 MT (1,500 kg), apply 3% tolerance.
+  // - For Multi-Lorry EXCESS or Single Lorry EXCESS >= 1.5 MT: NO 3% tolerance applied.
   const tolerance3PctMt = Math.round((contractMt * 0.03) * 1000) / 1000;
   const tolerance3PctQtl = Math.round((tolerance3PctMt * 10) * 100) / 100;
   const tolerance3PctKg = Math.round(tolerance3PctMt * 1000);
 
-  const exemptionPct = isGrossExcess ? 0 : 3;
-  const exemptionMt = isGrossExcess ? 0 : tolerance3PctMt;
-  const exemptionQtl = isGrossExcess ? 0 : tolerance3PctQtl;
-  const exemptionKg = isGrossExcess ? 0 : tolerance3PctKg;
+  const isSingleLorryExcess3PctEligible = isGrossExcess && !isMultipleLorry && excessMt < 1.5;
 
-  // - If the shortage is more than 1.5 MT (1,500 kg), do not apply the 3% tolerance. The full shortage is chargeable.
-  // - If the shortage is under/up to 1.5 MT, apply a tolerance of 3% of the Sauda/P.O. quantity. Deduct only the shortage amount that exceeds this tolerance. If the shortage is within the tolerance, no shortage deduction is due.
-  // - If excess: do NOT apply the 3% tolerance. Full excess weight is chargeable.
+  const exemptionPct = isGrossExcess ? (isSingleLorryExcess3PctEligible ? 3 : 0) : 3;
+  const exemptionMt = isGrossExcess ? (isSingleLorryExcess3PctEligible ? tolerance3PctMt : 0) : tolerance3PctMt;
+  const exemptionQtl = isGrossExcess ? (isSingleLorryExcess3PctEligible ? tolerance3PctQtl : 0) : tolerance3PctQtl;
+  const exemptionKg = isGrossExcess ? (isSingleLorryExcess3PctEligible ? tolerance3PctKg : 0) : tolerance3PctKg;
+
   let finalDeductibleShortMt = 0;
+  let finalDeductibleExcessMt = 0;
   let toleranceAppliedMt = 0;
   let isWithinTolerance = false;
 
@@ -960,17 +963,27 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
       isWithinTolerance = false;
     }
   } else if (isGrossExcess) {
-    toleranceAppliedMt = 0;
-    isWithinTolerance = false;
+    if (!isMultipleLorry && excessMt < 1.5) {
+      if (excessMt <= tolerance3PctMt) {
+        toleranceAppliedMt = excessMt;
+        finalDeductibleExcessMt = 0;
+        isWithinTolerance = true;
+      } else {
+        toleranceAppliedMt = tolerance3PctMt;
+        finalDeductibleExcessMt = Math.max(0, Math.round((excessMt - tolerance3PctMt) * 1000) / 1000);
+        isWithinTolerance = false;
+      }
+    } else {
+      toleranceAppliedMt = 0;
+      finalDeductibleExcessMt = Math.max(0, Math.round(excessMt * 1000) / 1000);
+      isWithinTolerance = false;
+    }
   } else {
     isWithinTolerance = true;
     toleranceAppliedMt = 0;
   }
 
   const finalDeductibleShortQtl = Math.round(finalDeductibleShortMt * 10 * 100) / 100;
-
-  // Excess deductible: 3% tolerance policy is NOT applied to excess
-  const finalDeductibleExcessMt = isGrossExcess ? Math.max(0, Math.round(excessMt * 1000) / 1000) : 0;
   const finalDeductibleExcessQtl = Math.round(finalDeductibleExcessMt * 10 * 100) / 100;
   const finalDeductibleExcessKg = Math.round(finalDeductibleExcessMt * 1000);
 
@@ -996,7 +1009,15 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
   if (isWithin3PctExemption) {
     policyStatusText = 'Within 3% Exemption – No Deduction';
   } else if (isGrossExcess) {
-    policyStatusText = isExcessApplicableForSauda ? 'Applicable for Sauda – No Deduction' : 'Excess Weight Deduction';
+    if (isExcessApplicableForSauda) {
+      policyStatusText = 'Applicable for Sauda – No Deduction';
+    } else if (isSingleLorryExcess3PctEligible) {
+      policyStatusText = 'Excess Weight Deduction (Exceeding 3% Tolerance)';
+    } else if (!isMultipleLorry && excessMt >= 1.5) {
+      policyStatusText = 'Excess Weight Deduction (Full Excess ≥ 1.5 MT Chargeable)';
+    } else {
+      policyStatusText = 'Excess Weight Deduction';
+    }
   } else if (isGrossShort) {
     if (selectedRateMode === 'rate_difference' && isShortRateLowerOrEqual) {
       policyStatusText = 'Final MR Rate ≤ Sauda Rate – No Deduction';
@@ -1139,9 +1160,15 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
           contract_weight_mt: Number(contractMt.toFixed(3)),
           tolerance_pct: exemptionPct,
           tolerance_mt: Number(exemptionMt.toFixed(3)),
-          tolerance_type: isGrossExcess ? 'No Tolerance on Excess Weight' : '3% Sauda Total Contract Execution Exemption',
+          tolerance_type: isGrossExcess
+            ? (isSingleLorryExcess3PctEligible
+                ? '3% Single Lorry Excess Execution Exemption'
+                : (!isMultipleLorry && excessMt >= 1.5
+                    ? 'Single Lorry Excess ≥ 1.5 MT (Full Chargeable)'
+                    : 'No Tolerance on Excess Weight'))
+            : '3% Sauda Total Contract Execution Exemption',
           min_acceptable_mt: Number(Math.max(0, contractMt - tolerance3PctMt).toFixed(3)),
-          max_acceptable_mt: Number(contractMt.toFixed(3)),
+          max_acceptable_mt: Number((isSingleLorryExcess3PctEligible ? contractMt + tolerance3PctMt : contractMt).toFixed(3)),
           total_received_mt: Number(totalFinalReceiptClaimMt.toFixed(3)),
           variation_type: variationType,
           variation_mt: Number(grossVarianceMt.toFixed(3)),
@@ -1223,6 +1250,9 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
     isWithin3PctExemption,
     isExcessApplicableForSauda,
     isGrossExcess,
+    isSingleLorryExcess3PctEligible,
+    isMultipleLorry,
+    excessMt,
     isSettled,
     settledBy,
     settledAt,
@@ -1253,9 +1283,15 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
       contract_weight_mt: Number(contractMt.toFixed(3)),
       tolerance_pct: exemptionPct,
       tolerance_mt: Number(exemptionMt.toFixed(3)),
-      tolerance_type: isGrossExcess ? 'No Tolerance on Excess Weight' : '3% Sauda Total Contract Execution Exemption',
+      tolerance_type: isGrossExcess
+        ? (isSingleLorryExcess3PctEligible
+            ? '3% Single Lorry Excess Execution Exemption'
+            : (!isMultipleLorry && excessMt >= 1.5
+                ? 'Single Lorry Excess ≥ 1.5 MT (Full Chargeable)'
+                : 'No Tolerance on Excess Weight'))
+        : '3% Sauda Total Contract Execution Exemption',
       min_acceptable_mt: Number(Math.max(0, contractMt - tolerance3PctMt).toFixed(3)),
-      max_acceptable_mt: Number(contractMt.toFixed(3)),
+      max_acceptable_mt: Number((isSingleLorryExcess3PctEligible ? contractMt + tolerance3PctMt : contractMt).toFixed(3)),
       total_received_mt: Number(totalFinalReceiptClaimMt.toFixed(3)),
       variation_type: isWithin3PctExemption ? 'within_tolerance' : (isGrossExcess ? 'excess' : 'short'),
       variation_mt: Number(grossVarianceMt.toFixed(3)),
@@ -1384,13 +1420,13 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
             <p><strong>Sauda Date Satta Rate:</strong> ₹{saudaDateSattaRate.toLocaleString()} / Quintal</p>
           </div>
           <div>
-            <p><strong>Total Final Receipt Claim (Mill Inspection):</strong> {Math.round(totalFinalReceiptClaimMt * 1000).toLocaleString()} kg ({totalFinalReceiptClaimMt.toFixed(3)} MT / {totalFinalReceiptClaimQtl.toFixed(2)} Qtl) {isMultipleLorry ? (isGrossExcess ? (gradeWiseInspectionRows.length === 2 ? '(First Lorry Gross + 2nd Lorry Net)' : `(Lorries 1..${gradeWiseInspectionRows.length - 1} Net + Last Lorry Gross)`) : '(Lorries 1..N-1 Net + Last Lorry Gross)') : '(Net Weight)'}</p>
+            <p><strong>Total Final Receipt Claim (Mill Inspection):</strong> {Math.round(totalFinalReceiptClaimMt * 1000).toLocaleString()} kg ({totalFinalReceiptClaimMt.toFixed(3)} MT / {totalFinalReceiptClaimQtl.toFixed(2)} Qtl) {isMultipleLorry ? (isGrossExcess ? (gradeWiseInspectionRows.length === 2 ? '(First Lorry Gross + 2nd Lorry Net)' : `(Lorries 1..${gradeWiseInspectionRows.length - 1} Net + Last Lorry Gross)`) : '(Lorries 1..N-1 Net + Last Lorry Gross)') : '(Single Lorry Gross Weight)'}</p>
             <p><strong>Last MR No:</strong> {lastMrNo}</p>
             <p><strong>Last MR Date:</strong> {formatDisplayDate(lastMrDate)}</p>
             <p><strong>Last MR Date Satta Rate:</strong> ₹{lastMrDateSattaRate.toLocaleString()} / Quintal</p>
             <p><strong>Rate Difference:</strong> ₹{rateDifference.toLocaleString()} {isGrossShort && isShortRateLowerOrEqual ? '(Final Rate ≤ Sauda Rate - No Deduction)' : ''}</p>
-            <p><strong>3% Execution Exemption:</strong> {isGrossExcess ? '0 kg (Not Applicable for Excess)' : (isGrossShort && shortageMt >= 1.5 ? '0.00 MT (Not Applicable – Shortage ≥ 1.5 MT)' : `${exemptionMt.toFixed(2)} MT (${exemptionQtl.toFixed(2)} Qtl / ${exemptionKg} KG)`)}</p>
-            <p><strong>Final Chargeable Short / Excess:</strong> {finalDeductibleQtyKg.toLocaleString()} kg ({finalDeductibleQtyMt.toFixed(3)} MT / {finalDeductibleQtyQtl.toFixed(2)} Qtl) {isGrossShort && shortageMt >= 1.5 ? '(Full Shortage Chargeable)' : ''}</p>
+            <p><strong>3% Execution Exemption:</strong> {isGrossExcess ? (isSingleLorryExcess3PctEligible ? `${exemptionMt.toFixed(3)} MT (${exemptionQtl.toFixed(2)} Qtl / ${exemptionKg} KG)` : (!isMultipleLorry && excessMt >= 1.5 ? '0.00 MT (Not Applicable – Single Lorry Excess ≥ 1.5 MT)' : '0 kg (Not Applicable for Multi-Lorry Excess)')) : (isGrossShort && shortageMt >= 1.5 ? '0.00 MT (Not Applicable – Shortage ≥ 1.5 MT)' : `${exemptionMt.toFixed(2)} MT (${exemptionQtl.toFixed(2)} Qtl / ${exemptionKg} KG)`)}</p>
+            <p><strong>Final Chargeable Short / Excess:</strong> {finalDeductibleQtyKg.toLocaleString()} kg ({finalDeductibleQtyMt.toFixed(3)} MT / {finalDeductibleQtyQtl.toFixed(2)} Qtl) {isGrossShort && shortageMt >= 1.5 ? '(Full Shortage Chargeable)' : (isGrossExcess && !isMultipleLorry && excessMt >= 1.5 ? '(Full Excess Chargeable)' : '')}</p>
           </div>
         </div>
 
@@ -1506,7 +1542,7 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
                 <span>Broker: <strong className="text-slate-300">{brokerName}</strong></span>
                 <span className="text-slate-600">•</span>
                 <span className="text-emerald-300">
-                  Policy: <strong>{isGrossExcess ? 'No 3% Tolerance on Excess' : (isGrossShort && shortageMt >= 1.5 ? 'Shortage ≥ 1.5 MT (Full Chargeable)' : '3% Sauda Execution Exemption')}</strong>
+                  Policy: <strong>{isGrossExcess ? (isSingleLorryExcess3PctEligible ? '3% Single Lorry Excess Exemption (< 1.5 MT)' : (!isMultipleLorry && excessMt >= 1.5 ? 'Excess ≥ 1.5 MT (Full Chargeable)' : 'No 3% Tolerance on Excess')) : (isGrossShort && shortageMt >= 1.5 ? 'Shortage ≥ 1.5 MT (Full Chargeable)' : '3% Sauda Execution Exemption')}</strong>
                 </span>
               </p>
             </div>
@@ -1590,9 +1626,25 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
                   </span>
                 )
               ) : isGrossExcess ? (
-                <span className="text-[9px] font-mono font-bold text-purple-900 bg-purple-50 border border-purple-300 px-2.5 py-0.5 rounded-full">
-                  Excess Over Contract – No 3% Tolerance Applied ({finalDeductibleQtyKg.toLocaleString()} kg / {finalDeductibleQtyMt.toFixed(3)} MT)
-                </span>
+                isSingleLorryExcess3PctEligible ? (
+                  isWithin3PctExemption ? (
+                    <span className="text-[9px] font-mono font-bold text-emerald-900 bg-emerald-50 border border-emerald-300 px-2.5 py-0.5 rounded-full">
+                      3% Single Lorry Excess Exemption Applied ({exemptionMt.toFixed(3)} MT / {exemptionKg} KG) – No Deduction
+                    </span>
+                  ) : (
+                    <span className="text-[9px] font-mono font-bold text-purple-900 bg-purple-50 border border-purple-300 px-2.5 py-0.5 rounded-full">
+                      3% Single Lorry Excess Exemption ({exemptionMt.toFixed(3)} MT / {exemptionKg} KG) Applied – Deducting Excess Over Tolerance ({finalDeductibleQtyKg.toLocaleString()} kg)
+                    </span>
+                  )
+                ) : !isMultipleLorry && excessMt >= 1.5 ? (
+                  <span className="text-[9px] font-mono font-bold text-rose-900 bg-rose-50 border border-rose-300 px-2.5 py-0.5 rounded-full">
+                    Single Lorry Excess &ge; 1.5 MT – Full Excess Chargeable (No 3% Tolerance)
+                  </span>
+                ) : (
+                  <span className="text-[9px] font-mono font-bold text-purple-900 bg-purple-50 border border-purple-300 px-2.5 py-0.5 rounded-full">
+                    Excess Over Contract – No 3% Tolerance Applied ({finalDeductibleQtyKg.toLocaleString()} kg / {finalDeductibleQtyMt.toFixed(3)} MT)
+                  </span>
+                )
               ) : (
                 <span className="text-[9px] font-mono font-bold text-emerald-900 bg-emerald-50 border border-emerald-300 px-2.5 py-0.5 rounded-full">
                   Exact Weight – No Deduction
@@ -1642,7 +1694,7 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
                       </span>
                     ) : (
                       <span className="text-[9px] text-slate-500 font-sans block">
-                        {isGrossExcess ? '(Single Lorry Mill Net Wt)' : '(Single Lorry Gross Wt)'}
+                        (Single Lorry Gross Wt)
                       </span>
                     )}
                   </div>
@@ -1664,9 +1716,19 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
                 <div className="flex justify-between items-center py-1 border-b border-slate-200/70 bg-emerald-50/60 px-1.5 rounded">
                   <span className="text-emerald-900 font-bold">3% Execution Exemption:</span>
                   {isGrossExcess ? (
-                    <span className="font-black text-slate-700">
-                      0 kg <span className="text-[9px] text-slate-600 font-normal">(Not Applied – Excess Policy)</span>
-                    </span>
+                    isSingleLorryExcess3PctEligible ? (
+                      <span className="font-black text-emerald-900">
+                        {exemptionMt.toFixed(3)} MT <span className="text-[9px] text-emerald-700 font-normal">({exemptionQtl.toFixed(2)} Qtl / {exemptionKg} KG)</span>
+                      </span>
+                    ) : !isMultipleLorry && excessMt >= 1.5 ? (
+                      <span className="font-black text-rose-800">
+                        0.00 MT <span className="text-[9px] text-rose-700 font-normal">(Not Applied – Excess &ge; 1.5 MT)</span>
+                      </span>
+                    ) : (
+                      <span className="font-black text-slate-700">
+                        0 kg <span className="text-[9px] text-slate-600 font-normal">(Not Applied – Excess Policy)</span>
+                      </span>
+                    )
                   ) : isGrossShort && shortageMt >= 1.5 ? (
                     <span className="font-black text-rose-800">
                       0.00 MT <span className="text-[9px] text-rose-700 font-normal">(Not Applied – Shortage &ge; 1.5 MT)</span>
@@ -1691,6 +1753,11 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
                     {isGrossShort && (
                       <span className="text-[9px] font-normal block">
                         {shortageMt >= 1.5 ? '(Full Shortage Chargeable)' : (finalDeductibleQtyMt > 0 ? '(Shortage Exceeding 3% Tolerance)' : '(Within 3% Tolerance)')}
+                      </span>
+                    )}
+                    {isGrossExcess && !isMultipleLorry && (
+                      <span className="text-[9px] font-normal block">
+                        {excessMt >= 1.5 ? '(Full Excess Chargeable ≥ 1.5 MT)' : (finalDeductibleQtyMt > 0 ? '(Excess Exceeding 3% Tolerance)' : '(Within 3% Tolerance)')}
                       </span>
                     )}
                   </div>
@@ -1841,7 +1908,7 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
                           )
                         ) : (
                           <span className="mt-0.5 inline-block text-[8px] bg-amber-200 text-amber-950 px-1 py-0.2 rounded font-bold">
-                            {isGrossExcess ? 'Net (Single Lorry)' : 'Gross (Single Lorry)'}
+                            Gross (Single Lorry)
                           </span>
                         )}
                       </td>

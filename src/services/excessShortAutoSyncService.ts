@@ -353,7 +353,8 @@ export function computeExcessShortPayload(
 
     const shortClaimMt = isMultipleLorry ? (isLastLorry ? mrGrossMt : mrNetMt) : mrGrossMt;
     const lorryCount = mrEntries.length;
-    const excessUsesGross = lorryCount === 2 ? isFirstLorry : lorryCount >= 3 ? isLastLorry : false;
+    const excessUsesGross =
+      lorryCount === 1 ? true : lorryCount === 2 ? isFirstLorry : lorryCount >= 3 ? isLastLorry : false;
     const excessClaimMt = excessUsesGross ? mrGrossMt : mrNetMt;
 
     sumShortClaimMt += shortClaimMt;
@@ -398,7 +399,8 @@ export function computeExcessShortPayload(
 
   const rowCount = rows.length;
   const adjustedRows = rows.map((r, rIdx) => {
-    const excessUsesGross = rowCount === 2 ? rIdx === 0 : rowCount >= 3 ? r.isLastLorry : false;
+    const excessUsesGross =
+      rowCount === 1 ? true : rowCount === 2 ? rIdx === 0 : rowCount >= 3 ? r.isLastLorry : false;
     const rowClaimMt = isClaimExcess
       ? excessUsesGross
         ? r.grossWtMt
@@ -409,7 +411,9 @@ export function computeExcessShortPayload(
         : r.netWtMt
       : r.grossWtMt;
     const rowWeightBasis = isClaimExcess
-      ? rowCount === 2
+      ? rowCount === 1
+        ? 'Gross (Single)'
+        : rowCount === 2
         ? rIdx === 0
           ? 'Gross (First Lorry)'
           : 'Net (Last Lorry)'
@@ -417,7 +421,7 @@ export function computeExcessShortPayload(
         ? r.isLastLorry
           ? 'Gross (Last Lorry)'
           : 'Net'
-        : 'Net (Single)'
+        : 'Gross (Single)'
       : isMultipleLorry
       ? r.isLastLorry
         ? 'Gross (Last Lorry)'
@@ -445,10 +449,12 @@ export function computeExcessShortPayload(
   const excessMt = isGrossExcess ? Math.abs(grossVarianceMt) : 0;
 
   const tolerance3PctMt = Math.round(contractMt * 0.03 * 1000) / 1000;
-  const exemptionPct = isGrossExcess ? 0 : 3;
-  const exemptionMt = isGrossExcess ? 0 : tolerance3PctMt;
+  const isSingleLorryExcess3PctEligible = isGrossExcess && !isMultipleLorry && excessMt < 1.5;
+  const exemptionPct = isGrossExcess ? (isSingleLorryExcess3PctEligible ? 3 : 0) : 3;
+  const exemptionMt = isGrossExcess ? (isSingleLorryExcess3PctEligible ? tolerance3PctMt : 0) : tolerance3PctMt;
 
   let finalDeductibleShortMt = 0;
+  let finalDeductibleExcessMt = 0;
   let isWithin3PctExemption = false;
 
   if (isGrossShort) {
@@ -463,12 +469,23 @@ export function computeExcessShortPayload(
       isWithin3PctExemption = false;
     }
   } else if (isGrossExcess) {
-    isWithin3PctExemption = false;
+    if (!isMultipleLorry && excessMt < 1.5) {
+      if (excessMt <= tolerance3PctMt) {
+        finalDeductibleExcessMt = 0;
+        isWithin3PctExemption = true;
+      } else {
+        finalDeductibleExcessMt = Math.max(0, Math.round((excessMt - tolerance3PctMt) * 1000) / 1000);
+        isWithin3PctExemption = false;
+      }
+    } else {
+      finalDeductibleExcessMt = Math.max(0, Math.round(excessMt * 1000) / 1000);
+      isWithin3PctExemption = false;
+    }
   } else {
     isWithin3PctExemption = true;
   }
 
-  const finalDeductibleQtyMt = isGrossExcess ? Math.max(0, Math.round(excessMt * 1000) / 1000) : finalDeductibleShortMt;
+  const finalDeductibleQtyMt = isGrossExcess ? finalDeductibleExcessMt : finalDeductibleShortMt;
   const finalDeductibleQtyQtl = Math.round(finalDeductibleQtyMt * 10 * 100) / 100;
 
   const isShortRateLowerOrEqual = isGrossShort && lastMrDateSattaRate <= saudaDateSattaRate;
@@ -494,7 +511,15 @@ export function computeExcessShortPayload(
   if (isWithin3PctExemption) {
     policyStatusText = 'Within 3% Exemption – No Deduction';
   } else if (isGrossExcess) {
-    policyStatusText = isExcessApplicableForSauda ? 'Applicable for Sauda – No Deduction' : 'Excess Weight Deduction';
+    if (isExcessApplicableForSauda) {
+      policyStatusText = 'Applicable for Sauda – No Deduction';
+    } else if (isSingleLorryExcess3PctEligible) {
+      policyStatusText = 'Excess Weight Deduction (Exceeding 3% Tolerance)';
+    } else if (!isMultipleLorry && excessMt >= 1.5) {
+      policyStatusText = 'Excess Weight Deduction (Full Excess ≥ 1.5 MT Chargeable)';
+    } else {
+      policyStatusText = 'Excess Weight Deduction';
+    }
   } else if (isGrossShort) {
     if (selectedRateMode === 'rate_difference' && isShortRateLowerOrEqual) {
       policyStatusText = 'Final MR Rate ≤ Sauda Rate – No Deduction';
@@ -557,10 +582,14 @@ export function computeExcessShortPayload(
     tolerance_pct: exemptionPct,
     tolerance_mt: Number(exemptionMt.toFixed(3)),
     tolerance_type: isGrossExcess
-      ? 'No Tolerance on Excess Weight'
+      ? isSingleLorryExcess3PctEligible
+        ? '3% Single Lorry Excess Execution Exemption'
+        : !isMultipleLorry && excessMt >= 1.5
+        ? 'Single Lorry Excess ≥ 1.5 MT (Full Chargeable)'
+        : 'No Tolerance on Excess Weight'
       : '3% Sauda Total Contract Execution Exemption',
     min_acceptable_mt: Number(Math.max(0, contractMt - tolerance3PctMt).toFixed(3)),
-    max_acceptable_mt: Number(contractMt.toFixed(3)),
+    max_acceptable_mt: Number((isSingleLorryExcess3PctEligible ? contractMt + tolerance3PctMt : contractMt).toFixed(3)),
     total_received_mt: Number(totalFinalReceiptClaimMt.toFixed(3)),
     variation_type: isWithin3PctExemption ? 'within_tolerance' : isGrossExcess ? 'excess' : 'short',
     variation_mt: Number(grossVarianceMt.toFixed(3)),

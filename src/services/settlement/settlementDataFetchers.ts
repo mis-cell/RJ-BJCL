@@ -713,11 +713,11 @@ export const fetchSaudaCheckpointDeduction = async (cleanPoNo: string) => {
               const shortClaimMt = isMultiLorry ? (isLast ? mrGrossMt : mrNetMt) : mrGrossMt;
 
               // Excess Basis:
-              // - 1 Lorry: MR Net Weight (mrNetMt)
+              // - 1 Lorry: MR Gross Weight (mrGrossMt)
               // - 2 Lorries: First Lorry Gross Weight (mrGrossMt) + 2nd Lorry Net Weight (mrNetMt)
               // - 3+ Lorries: Lorries 1..N-1 Net Weight (mrNetMt) + Last Lorry Gross Weight (mrGrossMt)
               const excessUsesGross =
-                mrEntries.length === 2 ? (idx === 0) : mrEntries.length >= 3 ? isLast : false;
+                mrEntries.length === 1 ? true : mrEntries.length === 2 ? (idx === 0) : mrEntries.length >= 3 ? isLast : false;
               const excessClaimMt = excessUsesGross ? mrGrossMt : mrNetMt;
 
               sumShortClaimMt += shortClaimMt;
@@ -769,14 +769,54 @@ export const fetchSaudaCheckpointDeduction = async (cleanPoNo: string) => {
                   updated.deduction_qty_qtl = Math.round(deductMt * 10 * 100) / 100;
                 }
               } else if (isClaimExcess && roundedLiveMt > contractMt + 0.0001) {
-                // EXCESS RULE: 3% tolerance NOT applicable for excess! Full excess is chargeable.
-                updated.variation_type = 'excess';
-                updated.tolerance_pct = 0;
-                updated.tolerance_mt = 0;
-                const exMt = Math.max(0, Math.round((roundedLiveMt - contractMt) * 1000) / 1000);
-                const exQtl = Math.round(exMt * 10 * 100) / 100;
-                updated.deduction_qty_mt = exMt;
-                updated.deduction_qty_qtl = exQtl;
+                // Single Lorry Excess < 1.5 MT: Apply 3% tolerance.
+                // Multi-lorry Excess or Single Lorry Excess >= 1.5 MT: 3% tolerance NOT applicable, full excess is chargeable.
+                const exMtRaw = Math.max(0, Math.round((roundedLiveMt - contractMt) * 1000) / 1000);
+                if (!isMultiLorry && exMtRaw < 1.5) {
+                  if (exMtRaw <= tolMt) {
+                    if (updated.variation_type !== 'within_tolerance' || Number(updated.deduction_amount || 0) !== 0) {
+                      changed = true;
+                    }
+                    updated.variation_type = 'within_tolerance';
+                    updated.tolerance_pct = 3;
+                    updated.tolerance_mt = tolMt;
+                    updated.deduction_qty_mt = 0;
+                    updated.deduction_qty_qtl = 0;
+                    updated.deduction_amount = 0;
+                    updated.rate_difference = 0;
+                    updated.applicable_rate = 0;
+                    updated.remarks = 'Within 3% Exemption – No Deduction';
+                  } else {
+                    const deductExMt = Math.max(0, Math.round((exMtRaw - tolMt) * 1000) / 1000);
+                    const deductExQtl = Math.round(deductExMt * 10 * 100) / 100;
+                    if (
+                      updated.variation_type !== 'excess' ||
+                      Math.abs(Number(updated.deduction_qty_mt || 0) - deductExMt) > 0.0005 ||
+                      Number(updated.tolerance_pct || 0) !== 3
+                    ) {
+                      changed = true;
+                    }
+                    updated.variation_type = 'excess';
+                    updated.tolerance_pct = 3;
+                    updated.tolerance_mt = tolMt;
+                    updated.deduction_qty_mt = deductExMt;
+                    updated.deduction_qty_qtl = deductExQtl;
+                  }
+                } else {
+                  const exQtl = Math.round(exMtRaw * 10 * 100) / 100;
+                  if (
+                    updated.variation_type !== 'excess' ||
+                    Math.abs(Number(updated.deduction_qty_mt || 0) - exMtRaw) > 0.0005 ||
+                    Number(updated.tolerance_pct || 0) !== 0
+                  ) {
+                    changed = true;
+                  }
+                  updated.variation_type = 'excess';
+                  updated.tolerance_pct = 0;
+                  updated.tolerance_mt = 0;
+                  updated.deduction_qty_mt = exMtRaw;
+                  updated.deduction_qty_qtl = exQtl;
+                }
               } else {
                 updated.variation_type = 'within_tolerance';
                 updated.deduction_qty_mt = 0;
@@ -850,6 +890,8 @@ export const fetchSaudaCheckpointDeduction = async (cleanPoNo: string) => {
                 total_received_mt: updated.total_received_mt,
                 variation_mt: updated.variation_mt,
                 variation_type: updated.variation_type,
+                tolerance_pct: updated.tolerance_pct,
+                tolerance_mt: updated.tolerance_mt,
                 deduction_qty_mt: updated.deduction_qty_mt,
                 deduction_qty_qtl: updated.deduction_qty_qtl,
                 rate_difference: updated.rate_difference,

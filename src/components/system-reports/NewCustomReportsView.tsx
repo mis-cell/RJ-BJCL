@@ -1207,7 +1207,7 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
               const lorryCount = sortedInsps.length;
               const shortClaimMt = isMulti ? (isLast ? mrGrossMt : mrNetMt) : mrGrossMt;
               const excessUsesGross =
-                lorryCount === 2 ? (idx === 0) : lorryCount >= 3 ? isLast : false;
+                lorryCount === 1 ? true : lorryCount === 2 ? (idx === 0) : lorryCount >= 3 ? isLast : false;
               const excessClaimMt = excessUsesGross ? mrGrossMt : mrNetMt;
               sumShortClaimMt += shortClaimMt;
               sumExcessClaimMt += excessClaimMt;
@@ -1254,17 +1254,19 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
             const breakdownLen = mrBreakdown.length;
             mrBreakdown.forEach((item, bIdx) => {
               const useGross =
-                breakdownLen === 2 ? (bIdx === 0) : breakdownLen >= 3 ? item.isLast : false;
+                breakdownLen === 1 ? true : breakdownLen === 2 ? (bIdx === 0) : breakdownLen >= 3 ? item.isLast : false;
               const cMt = useGross ? item.grossMt : item.netMt;
               item.finalClaimMt = Number(cMt.toFixed(3));
               item.finalClaimKg = Math.round(cMt * 1000);
               item.finalClaimQtl = Number((cMt * 10).toFixed(2));
               item.claimBasis =
-                breakdownLen === 2
+                breakdownLen === 1
+                  ? 'Gross (Single Lorry)'
+                  : breakdownLen === 2
                   ? (bIdx === 0 ? 'Gross (First Lorry)' : 'Net (Last Lorry)')
                   : breakdownLen >= 3
                   ? (item.isLast ? 'Gross (Last Lorry)' : 'Net')
-                  : 'Net';
+                  : 'Gross (Single Lorry)';
             });
           }
 
@@ -1305,11 +1307,33 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
           let variationType: 'excess' | 'short' | 'within_tolerance' = 'within_tolerance';
           let policyLabel = 'Within 3% Tolerance';
 
+          const isSingleLorry =
+            mrBreakdown.length > 0
+              ? mrBreakdown.length === 1
+              : String(savedDed?.arrival_numbers || '')
+                  .split(',')
+                  .map(s => s.trim())
+                  .filter(Boolean).length <= 1;
+
           if (isGrossExcess) {
-            variationType = 'excess';
-            deductionQtyMt = Math.max(0, Math.round(excessMt * 1000) / 1000);
-            isWithinTolerance = false;
-            policyLabel = 'No 3% Tolerance on Excess';
+            if (isSingleLorry && excessMt < 1.5) {
+              if (excessMt <= tolerance3PctMt) {
+                variationType = 'within_tolerance';
+                deductionQtyMt = 0;
+                isWithinTolerance = true;
+                policyLabel = 'Within 3% Exemption (Single Lorry Excess)';
+              } else {
+                variationType = 'excess';
+                deductionQtyMt = Math.max(0, Math.round((excessMt - tolerance3PctMt) * 1000) / 1000);
+                isWithinTolerance = false;
+                policyLabel = '3% Excess Exemption (Single Lorry < 1.5 MT)';
+              }
+            } else {
+              variationType = 'excess';
+              deductionQtyMt = Math.max(0, Math.round(excessMt * 1000) / 1000);
+              isWithinTolerance = false;
+              policyLabel = isSingleLorry ? 'Excess ≥ 1.5 MT (Full Excess)' : 'No 3% Tolerance on Excess';
+            }
           } else if (isGrossShort) {
             if (shortageMt >= 1.5) {
               variationType = 'short';
