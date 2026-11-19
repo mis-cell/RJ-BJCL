@@ -410,6 +410,7 @@ export default function PurchaseOrder({
             sattaBaseRates={sattaBases && sattaBases.length > 0 ? sattaBases : sattaBaseRates}
             allTempArrivals={allTempArrivals}
             allInspections={allInspections}
+            settledDeductions={settledDeductions}
           />
         </LegacyLayout>
       )}

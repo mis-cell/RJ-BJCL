@@ -96,6 +96,7 @@ export interface PurchaseOrderRegisterViewProps {
   sattaBaseRates?: any[];
   allTempArrivals?: any[];
   allInspections?: any[];
+  settledDeductions?: Record<string, any>;
 }
 
 export const PurchaseOrderRegisterView: React.FC<PurchaseOrderRegisterViewProps> = ({
@@ -159,7 +160,8 @@ export const PurchaseOrderRegisterView: React.FC<PurchaseOrderRegisterViewProps>
   canEditOrDelete,
   sattaBaseRates = [],
   allTempArrivals = [],
-  allInspections = []
+  allInspections = [],
+  settledDeductions = {}
 }) => {
   const [histogramModalPo, setHistogramModalPo] = useState<any | null>(null);
   const [localLorryFilter, setLocalLorryFilter] = useState<'all' | 'open' | 'closed'>('all');
@@ -924,6 +926,14 @@ export const PurchaseOrderRegisterView: React.FC<PurchaseOrderRegisterViewProps>
                         );
                       }
 
+                      const poUpper = String(item.po_no || '').trim().toUpperCase();
+                      const poClean = poUpper.replace(/[^A-Z0-9]/g, '');
+                      const dedSummary =
+                        item.excess_short_summary ||
+                        settledDeductions?.[poUpper] ||
+                        settledDeductions?.[poClean] ||
+                        null;
+
                       const diffStr = `${tol.diffMt >= 0 ? '+' : ''}${tol.diffMt.toFixed(3)} MT`;
 
                       if (tol.isWithinTolerance) {
@@ -954,19 +964,28 @@ export const PurchaseOrderRegisterView: React.FC<PurchaseOrderRegisterViewProps>
                         item.arrival_date ||
                         saudaDateStr;
 
+                      const sattaFromDate = getTd5BaseRateForDate(saudaDateStr);
                       const saudaTd5Rate =
-                        parseFloat(item.b_rate || 0) > 0 ? parseFloat(item.b_rate) : getTd5BaseRateForDate(saudaDateStr);
+                        sattaFromDate > 0 ? sattaFromDate : (parseFloat(item.b_rate || 0) > 0 ? parseFloat(item.b_rate) : 0);
                       const arrivalTd5Rate = getTd5BaseRateForDate(arrivalDateStr);
-                      const td5RateDiff = Math.abs((arrivalTd5Rate || 0) - (saudaTd5Rate || 0));
 
                       if (tol.isOverDelivery) {
-                        const excessMt = Math.max(0, tol.excessOverToleranceMt || 0);
-                        const excessQtl = Math.round(excessMt * 10 * 100) / 100;
-                        const excessRateDiff = (saudaTd5Rate || 0) > (arrivalTd5Rate || 0)
-                          ? ((saudaTd5Rate || 0) - (arrivalTd5Rate || 0))
-                          : 0;
-                        const rawPenalty = excessRateDiff * excessQtl;
-                        const penaltyAmount = isNaN(rawPenalty) || rawPenalty < 0 ? 0 : Math.round(rawPenalty * 100) / 100;
+                        const excessMt = dedSummary && String(dedSummary.variation_type || '').toLowerCase() === 'excess'
+                          ? Math.max(0, Number(dedSummary.deduction_qty_mt || 0))
+                          : Math.max(0, tol.excessOverToleranceMt || 0);
+                        const excessQtl = dedSummary && String(dedSummary.variation_type || '').toLowerCase() === 'excess'
+                          ? Math.max(0, Number(dedSummary.deduction_qty_qtl || Math.round(excessMt * 10 * 100) / 100))
+                          : Math.round(excessMt * 10 * 100) / 100;
+                        const penaltyAmount =
+                          dedSummary && String(dedSummary.variation_type || '').toLowerCase() === 'excess' && dedSummary.deduction_amount !== undefined && dedSummary.deduction_amount !== null
+                            ? Math.max(0, Math.round(Number(dedSummary.deduction_amount || 0) * 100) / 100)
+                            : (() => {
+                                const excessRateDiff = (saudaTd5Rate || 0) > (arrivalTd5Rate || 0)
+                                  ? ((saudaTd5Rate || 0) - (arrivalTd5Rate || 0))
+                                  : 0;
+                                const rawPenalty = excessRateDiff * excessQtl;
+                                return isNaN(rawPenalty) || rawPenalty < 0 ? 0 : Math.round(rawPenalty * 100) / 100;
+                              })();
 
                         return (
                           <button
@@ -976,7 +995,7 @@ export const PurchaseOrderRegisterView: React.FC<PurchaseOrderRegisterViewProps>
                               setExcessShortModalPo(item);
                             }}
                             className="inline-flex flex-col items-center justify-center leading-tight cursor-pointer"
-                            title={`Excess Weight: +${excessMt.toFixed(3)} MT | Diff: ${diffStr} | ${penaltyAmount > 0 ? `Penalty: ₹${penaltyAmount.toLocaleString()}` : 'Applicable for Sauda (₹0 Deduction)'}`}
+                            title={`Deductible Excess: +${excessMt.toFixed(3)} MT | Gross Diff: ${diffStr} | ${penaltyAmount > 0 ? `Penalty: ₹${penaltyAmount.toLocaleString()}` : 'Applicable for Sauda (₹0 Deduction)'}`}
                           >
                             <span className="px-1.5 py-0.5 rounded text-[9px] font-mono tabular-nums font-bold bg-purple-50 text-purple-900 border border-purple-300">
                               +{excessMt.toFixed(2)} MT Excess
@@ -992,7 +1011,13 @@ export const PurchaseOrderRegisterView: React.FC<PurchaseOrderRegisterViewProps>
                       }
 
                       if (tol.isUnderDelivery) {
-                        const shortMt = Math.max(0, tol.shortUnderToleranceMt || 0);
+                        const shortMt = dedSummary && String(dedSummary.variation_type || '').toLowerCase() === 'short'
+                          ? Math.max(0, Number(dedSummary.deduction_qty_mt || 0))
+                          : Math.max(0, tol.shortUnderToleranceMt || 0);
+                        const shortPenalty =
+                          dedSummary && String(dedSummary.variation_type || '').toLowerCase() === 'short' && dedSummary.deduction_amount !== undefined && dedSummary.deduction_amount !== null
+                            ? Math.max(0, Math.round(Number(dedSummary.deduction_amount || 0) * 100) / 100)
+                            : 0;
                         return (
                           <button
                             type="button"
@@ -1001,13 +1026,16 @@ export const PurchaseOrderRegisterView: React.FC<PurchaseOrderRegisterViewProps>
                               setExcessShortModalPo(item);
                             }}
                             className="inline-flex flex-col items-center justify-center leading-tight cursor-pointer"
-                            title={`Short Weight: -${shortMt.toFixed(3)} MT | Diff: ${diffStr}`}
+                            title={`Short Weight: -${shortMt.toFixed(3)} MT | Diff: ${diffStr}${shortPenalty > 0 ? ` | Deduction: ₹${shortPenalty.toLocaleString()}` : ''}`}
                           >
                             <span className="px-1.5 py-0.5 rounded text-[9px] font-mono tabular-nums font-bold bg-amber-50 text-amber-900 border border-amber-300">
                               -{shortMt.toFixed(2)} MT Short
                             </span>
-                            <span className="text-[8px] font-mono tabular-nums text-amber-700 mt-0.5">
-                              Diff: {diffStr}
+                            <span className={cn(
+                              "text-[8px] font-mono tabular-nums mt-0.5",
+                              shortPenalty > 0 ? "text-rose-700 font-semibold" : "text-amber-700"
+                            )}>
+                              {shortPenalty > 0 ? `Pen: ₹${shortPenalty.toLocaleString()}` : `Diff: ${diffStr}`}
                             </span>
                           </button>
                         );

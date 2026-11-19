@@ -7,7 +7,12 @@ import { calculateWeightTolerance } from '../../lib/weightTolerance';
 import { comparePoInspection, compareSaudaTempArrival, PoMatchResult } from '../../lib/poMatch';
 import { useLiveAutoRefresh } from '../../hooks/useLiveAutoRefresh';
 import { isInvalidAgency } from '../../services/systemReportEngine';
-import { syncExcessShortDeductionsBatch } from '../../services/excessShortAutoSyncService';
+import {
+  syncExcessShortDeductionsBatch,
+  computeExcessShortPayload,
+  normalizeSattaBaseRates,
+  isManualLockedDeduction
+} from '../../services/excessShortAutoSyncService';
 
 interface UsePurchaseOrderDataOptions {
   isTempPo: boolean;
@@ -554,6 +559,7 @@ export function usePurchaseOrderData({
         return 0;
       };
 
+      const normalizedBaseRatesForPo = normalizeSattaBaseRates(sBasesList);
       const nextMatchResults: Record<string, PoMatchResult> = {};
 
       const mappedPoList = pos.map((p: any) => {
@@ -614,9 +620,9 @@ export function usePurchaseOrderData({
         let totalReceivedMt = totalFinalMt + totalTempMt;
 
         // If material_inspection records exist for this PO, compute received weight using
-        // Single lorry -> Net weight (final_receipt_wt)
-        // Multiple lorries -> Net weight (final_receipt_wt) for 1st..N-1 lorries + Gross weight (challan_gross_wt) for Last lorry (by MR sequence)
+        // the exact Short/Excess lorry weight rules (matching Extra & Short Settlement Modal)
         const matchingMatReceipts = queryRecordIndex(matInspectionsIndex, poKeys);
+        let sortedInspsForPo: any[] = [];
         let lastInspMrNo = '';
         let lastInspMrDate = '';
         if (matchingMatReceipts.length > 0) {
@@ -647,11 +653,15 @@ export function usePurchaseOrderData({
             return String(a.arrival_date || a.mr_date || a.date || '').localeCompare(String(b.arrival_date || b.mr_date || b.date || ''));
           });
 
+          sortedInspsForPo = sortedInsps;
           if (sortedInsps.length > 0) {
             const isMulti = sortedInsps.length > 1;
-            let inspSumMt = 0;
+            const lorryCount = sortedInsps.length;
+            let sumShortClaimMt = 0;
+            let sumExcessClaimMt = 0;
             sortedInsps.forEach((insp: any, idx: number) => {
               const isLast = idx === sortedInsps.length - 1;
+              const isFirst = idx === 0;
               const mrKey = canonicalKey(insp.mr_no || insp.arrival_no || '');
               let gMt = 0;
               let nMt = 0;
@@ -701,25 +711,99 @@ export function usePurchaseOrderData({
               if (gMt > 0 && nMt > gMt + 0.001) nMt = gMt;
               if (gMt <= 0) gMt = nMt;
               if (nMt <= 0) nMt = gMt;
-              inspSumMt += (isMulti && isLast) ? gMt : nMt;
+              const shortClaimMt = isMulti ? (isLast ? gMt : nMt) : gMt;
+              const excessUsesGross =
+                lorryCount === 1 ? true : lorryCount === 2 ? isFirst : lorryCount >= 3 ? isLast : false;
+              const excessClaimMt = excessUsesGross ? gMt : nMt;
+              sumShortClaimMt += shortClaimMt;
+              sumExcessClaimMt += excessClaimMt;
               if (isLast) {
                 lastInspMrNo = String(insp.mr_no || insp.arrival_no || '').trim();
                 lastInspMrDate = String(insp.arrival_date || insp.mr_date || insp.date || '').trim();
               }
             });
+            const roundedShortClaimMt = Math.round(sumShortClaimMt * 1000) / 1000;
+            const roundedExcessClaimMt = Math.round(sumExcessClaimMt * 1000) / 1000;
+            const isClaimExcess =
+              (contractWeight - roundedExcessClaimMt) < -0.0001 &&
+              (roundedShortClaimMt >= contractWeight - 0.0001 ||
+                (roundedExcessClaimMt - contractWeight) >= (contractWeight - roundedShortClaimMt));
+            const inspSumMt = isClaimExcess ? roundedExcessClaimMt : roundedShortClaimMt;
             if (inspSumMt > 0) {
               totalReceivedMt = Math.round(inspSumMt * 1000) / 1000;
             }
           }
         }
 
+        const poNoStr = String(p.po_no || p.contract_po_no || '').trim();
+        const saudaNoStr = String(p.sauda_no || p.sauda_ref || p.contract_po_no || p.po_no || '').trim();
+        const targetPoClean = cleanKeyFormat(poNoStr);
+        const existingDed = poNoStr
+          ? (dedMap[poNoStr.toUpperCase()] ||
+              dedMap[targetPoClean] ||
+              (saudaNoStr ? (dedMap[saudaNoStr.toUpperCase()] || dedMap[cleanKeyFormat(saudaNoStr)]) : null))
+          : null;
+
+        const liveExcessShort =
+          contractWeight > 0 && sortedInspsForPo.length > 0
+            ? computeExcessShortPayload({
+                po: { ...p, total_contract_mt: contractWeight },
+                inspections: sortedInspsForPo,
+                normalizedBaseRates: normalizedBaseRatesForPo,
+                existingDed: existingDed || null,
+                isLocked: existingDed ? isManualLockedDeduction(existingDed) : false
+              })
+            : null;
+
+        const effectiveDedSummary = liveExcessShort?.payload || existingDed || null;
+        if (liveExcessShort?.payload && Number(liveExcessShort.payload.total_received_mt || 0) > 0) {
+          totalReceivedMt = Number(liveExcessShort.payload.total_received_mt);
+        }
+
         const unit = p.purchase_unit_name || p.unit_type || p.unit || 'BALES';
-        const tol = calculateWeightTolerance(contractWeight, totalReceivedMt, unit);
+        const baseTol = calculateWeightTolerance(contractWeight, totalReceivedMt, unit);
+        const tol = (() => {
+          if (!effectiveDedSummary || contractWeight <= 0 || totalReceivedMt <= 0) return baseTol;
+          const vType = String(effectiveDedSummary.variation_type || '').toLowerCase();
+          if (vType !== 'within_tolerance' && vType !== 'excess' && vType !== 'short') return baseTol;
+          const dedQtyMt = Math.max(0, Number(effectiveDedSummary.deduction_qty_mt || 0));
+          const dedQtyQtl = Math.max(0, Number(effectiveDedSummary.deduction_qty_qtl || Math.round(dedQtyMt * 10 * 100) / 100));
+          const tolMt = Math.max(0, Number(effectiveDedSummary.tolerance_mt || 0));
+          const tolQtl = Math.round(tolMt * 10 * 100) / 100;
+          const tolPct = Number(effectiveDedSummary.tolerance_pct || 0);
+          const isWithin = vType === 'within_tolerance';
+          const isOver = vType === 'excess';
+          const isUnder = vType === 'short';
+          return {
+            ...baseTol,
+            toleranceMt: tolMt,
+            toleranceQtl: tolQtl,
+            tolerableLimitMt: tolMt,
+            tolerableLimitQtl: tolQtl,
+            tolerancePct: tolPct,
+            isWithinTolerance: isWithin,
+            isAcceptable: isWithin,
+            isCompleted: isWithin,
+            isOverDelivery: isOver,
+            isUnderDelivery: isUnder,
+            excessOverToleranceMt: isOver ? dedQtyMt : 0,
+            excessOverToleranceQtl: isOver ? dedQtyQtl : 0,
+            excessMt: isOver ? dedQtyMt : 0,
+            excessQtl: isOver ? dedQtyQtl : 0,
+            shortUnderToleranceMt: isUnder ? dedQtyMt : 0,
+            shortUnderToleranceQtl: isUnder ? dedQtyQtl : 0,
+            shortMt: isUnder ? dedQtyMt : 0,
+            shortQtl: isUnder ? dedQtyQtl : 0,
+            deductibleQtyMt: dedQtyMt,
+            deductibleQtyQtl: dedQtyQtl,
+            status: (isWithin ? 'completed' : isOver ? 'mismatch' : 'partial') as 'completed' | 'partial' | 'pending' | 'mismatch',
+            statusLabel: (isWithin ? 'COMPLETED' : isOver ? 'WEIGHT MISMATCH' : 'PARTIAL') as 'COMPLETED' | 'PARTIAL' | 'PENDING' | 'WEIGHT MISMATCH'
+          };
+        })();
+
         const isExplicitCompleted = p.status === 'completed' || p.status === 'settled';
         const isWeightCompleted = tol.isCompleted;
 
-        const poNoStr = String(p.po_no || p.contract_po_no || '').trim();
-        const saudaNoStr = String(p.sauda_no || p.sauda_ref || p.contract_po_no || p.po_no || '').trim();
         const allMatchedArrivalsSorted = [...matchingFinal, ...matchingTempArrivals].sort((a: any, b: any) => {
           const dA = normalizeDateYMD(a?.date || a?.arrival_date || a?.created_at || '');
           const dB = normalizeDateYMD(b?.date || b?.arrival_date || b?.created_at || '');
@@ -730,19 +814,12 @@ export function usePurchaseOrderData({
         const arrivalDateStr = lastInspMrDate || matchedArrivalForWt?.date || matchedArrivalForWt?.arrival_date || p.last_arrival_date || p.arrival_date || saudaDateStr;
         const normalizedArrivalDate = normalizeDateYMD(arrivalDateStr) || null;
 
-        if (poNoStr && contractWeight > 0) {
-          const targetPoClean = cleanKeyFormat(poNoStr);
-          const existingDed = dedMap[poNoStr.toUpperCase()] ||
-                              dedMap[targetPoClean] ||
-                              (saudaNoStr ? (dedMap[saudaNoStr.toUpperCase()] || dedMap[cleanKeyFormat(saudaNoStr)]) : null);
-
-          if (existingDed) {
-            dedMap[poNoStr.toUpperCase()] = {
-              ...existingDed,
-              contract_weight_mt: Number(contractWeight.toFixed(3))
-            };
-            dedMap[targetPoClean] = dedMap[poNoStr.toUpperCase()];
-          }
+        if (poNoStr && contractWeight > 0 && effectiveDedSummary) {
+          dedMap[poNoStr.toUpperCase()] = {
+            ...effectiveDedSummary,
+            contract_weight_mt: Number(contractWeight.toFixed(3))
+          };
+          dedMap[targetPoClean] = dedMap[poNoStr.toUpperCase()];
         }
 
         // 1. Check Temporary Arrival Dashboard
@@ -883,6 +960,7 @@ export function usePurchaseOrderData({
           pending: computedPending,
           received_weight_mt: totalReceivedMt,
           weight_tolerance: tol,
+          excess_short_summary: effectiveDedSummary,
           contract_lorries: contractLorries,
           received_lorries: receivedLorries,
           is_closed: isClosed,
@@ -955,20 +1033,76 @@ export function usePurchaseOrderData({
           existingDeductions: scpDeductions || [],
           onSynced: (savedRows) => {
             if (!savedRows || savedRows.length === 0) return;
+            const syncedByKey = new Map<string, any>();
+            savedRows.forEach((d: any) => {
+              if (d?.po_no) {
+                syncedByKey.set(String(d.po_no).trim().toUpperCase(), d);
+                syncedByKey.set(cleanKeyFormat(d.po_no), d);
+              }
+              if (d?.sauda_no) {
+                syncedByKey.set(String(d.sauda_no).trim().toUpperCase(), d);
+                syncedByKey.set(cleanKeyFormat(d.sauda_no), d);
+              }
+            });
             setSettledDeductions((prev) => {
               const next = { ...prev };
-              savedRows.forEach((d: any) => {
-                if (d?.po_no) {
-                  next[String(d.po_no).trim().toUpperCase()] = d;
-                  next[cleanKeyFormat(d.po_no)] = d;
-                }
-                if (d?.sauda_no) {
-                  next[String(d.sauda_no).trim().toUpperCase()] = d;
-                  next[cleanKeyFormat(d.sauda_no)] = d;
-                }
+              syncedByKey.forEach((d, k) => {
+                next[k] = d;
               });
               return next;
             });
+            setPoList((prev) =>
+              prev.map((row: any) => {
+                const k1 = String(row.po_no || '').trim().toUpperCase();
+                const k2 = cleanKeyFormat(row.po_no || '');
+                const k3 = cleanKeyFormat(row.sauda_no || row.contract_po_no || '');
+                const synced = syncedByKey.get(k1) || syncedByKey.get(k2) || (k3 ? syncedByKey.get(k3) : null);
+                if (!synced) return row;
+                const cWt = parseFloat(row.total_contract_mt || synced.contract_weight_mt || 0) || 0;
+                const rWt = Number(synced.total_received_mt || row.received_weight_mt || 0);
+                const u = row.purchase_unit_name || row.unit_type || row.unit || 'BALES';
+                const baseTol = calculateWeightTolerance(cWt, rWt, u);
+                const vType = String(synced.variation_type || '').toLowerCase();
+                const dedQtyMt = Math.max(0, Number(synced.deduction_qty_mt || 0));
+                const dedQtyQtl = Math.max(0, Number(synced.deduction_qty_qtl || Math.round(dedQtyMt * 10 * 100) / 100));
+                const tolMt = Math.max(0, Number(synced.tolerance_mt || 0));
+                const isWithin = vType === 'within_tolerance';
+                const isOver = vType === 'excess';
+                const isUnder = vType === 'short';
+                return {
+                  ...row,
+                  received_weight_mt: rWt,
+                  excess_short_summary: synced,
+                  weight_tolerance: (vType === 'within_tolerance' || vType === 'excess' || vType === 'short')
+                    ? {
+                        ...baseTol,
+                        toleranceMt: tolMt,
+                        toleranceQtl: Math.round(tolMt * 10 * 100) / 100,
+                        tolerableLimitMt: tolMt,
+                        tolerableLimitQtl: Math.round(tolMt * 10 * 100) / 100,
+                        tolerancePct: Number(synced.tolerance_pct || 0),
+                        isWithinTolerance: isWithin,
+                        isAcceptable: isWithin,
+                        isCompleted: isWithin,
+                        isOverDelivery: isOver,
+                        isUnderDelivery: isUnder,
+                        excessOverToleranceMt: isOver ? dedQtyMt : 0,
+                        excessOverToleranceQtl: isOver ? dedQtyQtl : 0,
+                        excessMt: isOver ? dedQtyMt : 0,
+                        excessQtl: isOver ? dedQtyQtl : 0,
+                        shortUnderToleranceMt: isUnder ? dedQtyMt : 0,
+                        shortUnderToleranceQtl: isUnder ? dedQtyQtl : 0,
+                        shortMt: isUnder ? dedQtyMt : 0,
+                        shortQtl: isUnder ? dedQtyQtl : 0,
+                        deductibleQtyMt: dedQtyMt,
+                        deductibleQtyQtl: dedQtyQtl,
+                        status: (isWithin ? 'completed' : isOver ? 'mismatch' : 'partial') as 'completed' | 'partial' | 'pending' | 'mismatch',
+                        statusLabel: (isWithin ? 'COMPLETED' : isOver ? 'WEIGHT MISMATCH' : 'PARTIAL') as 'COMPLETED' | 'PARTIAL' | 'PENDING' | 'WEIGHT MISMATCH'
+                      }
+                    : baseTol
+                };
+              })
+            );
           }
         }).catch(() => {});
       }
@@ -986,6 +1120,7 @@ export function usePurchaseOrderData({
       'purchase_detail_master',
       'sauda_check_point',
       'sauda_check_point_details',
+      'sauda_check_point_deductions',
       'p.o_archive',
       'po_archive',
       'temporary_material_received',
