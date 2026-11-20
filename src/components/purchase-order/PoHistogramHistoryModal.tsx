@@ -440,6 +440,41 @@ export const PoHistogramHistoryModal: React.FC<PoHistogramHistoryModalProps> = (
   return Array.from(mrSet);
 }, [dbArrivals, dbInspections, dbSettlements, dbPayments, po]);
 
+  // Temporary Arrival Linked MRs using the same identifier logic as the Temporary Arrival section (supports both AR & MR numbers)
+  const tempArrivalLinkedMrs = useMemo(() => {
+    const seen = new Set<string>();
+    const list: string[] = [];
+
+    dbArrivals.forEach((a: any) => {
+      if (!a) return;
+      const rawNo =
+        a.temporary_arrival_no ||
+        a.amad_no ||
+        a.arrival_no ||
+        a.mr_no ||
+        a.final_arrival_no ||
+        a.mr_number ||
+        '';
+      const cleaned = String(rawNo).replace(/^#+/, '').trim().toUpperCase();
+      if (
+        !cleaned ||
+        cleaned.startsWith('MRRC-') ||
+        cleaned.startsWith('INSP-') ||
+        cleaned.startsWith('CERT-') ||
+        cleaned.startsWith('TEST-') ||
+        cleaned.startsWith('SETTLEMENT-')
+      ) {
+        return;
+      }
+      if (!seen.has(cleaned)) {
+        seen.add(cleaned);
+        list.push(cleaned);
+      }
+    });
+
+    return list.length > 0 ? list : linkedMrs;
+  }, [dbArrivals, linkedMrs]);
+
   // Comprehensive Comparison Engine
   const comparisonResults = useMemo(() => {
     if (!po) return { sections: [], summary: { totalSections: 0, mismatchSections: 0, totalMismatches: 0, mrComparisons: [] } };
@@ -686,8 +721,8 @@ export const PoHistogramHistoryModal: React.FC<PoHistogramHistoryModalProps> = (
       {
         name: 'Linked Arrival MRs',
         referenceValue: `${poLorries} Expected`,
-        actualValue: linkedMrs.length > 0 ? `${linkedMrs.length} MR (${linkedMrs.join(', ')})` : 'Not Arrived',
-        status: linkedMrs.length === 0 ? 'not_available' : 'match',
+        actualValue: tempArrivalLinkedMrs.length > 0 ? `${tempArrivalLinkedMrs.length} MR (${tempArrivalLinkedMrs.join(', ')})` : 'Not Arrived',
+        status: tempArrivalLinkedMrs.length === 0 ? 'not_available' : 'match',
         isCritical: false
       },
       {
@@ -937,7 +972,7 @@ export const PoHistogramHistoryModal: React.FC<PoHistogramHistoryModalProps> = (
       },
       {
         id: 'temporary_arrival',
-        title: `Temporary Arrival (${linkedMrs.length} MR)`,
+        title: `Temporary Arrival (${tempArrivalLinkedMrs.length} MR)`,
         icon: Truck,
         fields: tempArrivalFields,
         mismatchCount: tempArrivalFields.filter(f => f.status === 'mismatch').length,
@@ -1134,7 +1169,7 @@ export const PoHistogramHistoryModal: React.FC<PoHistogramHistoryModalProps> = (
         mrComparisons
       }
     };
-  }, [po, dbArrivals, dbInspections, dbPayments, dbSettlements, dbMismatches, dbSattaMismatches, dbSattaRate, linkedMrs]);
+  }, [po, dbArrivals, dbInspections, dbPayments, dbSettlements, dbMismatches, dbSattaMismatches, dbSattaRate, linkedMrs, tempArrivalLinkedMrs]);
 
   // Toggle Section Accordion
   const toggleSection = (id: string) => {
