@@ -643,9 +643,9 @@ export function useFinalArrivalEntryLogic({ initialData, onSave }: UseFinalArriv
             const isLoose = rowUnit.includes('LOOSE') || rowUnit === 'LOOSE';
             const rawNetto = Number(row.netto_pnto) || Number(row.quantity_mt) || Number(row.challan_gross_wt) || Number(row.net_weight) || 0;
             const hasChln = row.quantity_chln !== undefined && row.quantity_chln !== null && row.quantity_chln !== '';
-            const hasRcpt = row.quantity_rcpt !== undefined && row.quantity_rcpt !== null && row.quantity_rcpt !== '';
             const qChln = isLoose ? 0 : (hasChln ? (Number(row.quantity_chln) || 0) : 0);
-            const qRcpt = isLoose ? 0 : (hasRcpt ? (Number(row.quantity_rcpt) || 0) : 0);
+            const rawRcpt = Number(row.quantity_rcpt) || 0;
+            const qRcpt = isLoose ? 0 : (rawRcpt > 0 ? rawRcpt : qChln);
 
             // Receipt Grade Name from Temporary Arrival's Arrival Item Details Grid table
             const rGradeCode = row.receipt_grade_code || row.grade_code || row.stock_grade_code || '';
@@ -727,7 +727,7 @@ export function useFinalArrivalEntryLogic({ initialData, onSave }: UseFinalArriv
             challan_marka_name: matchedAmad.marka_name || matchedAmad.marka || 'NO MARK',
             netto_pnto: Number(matchedAmad.weight_qtl ? matchedAmad.weight_qtl / 10 : matchedAmad.net_weight || 0),
             quantity_chln: Number(matchedAmad.total_packets || matchedAmad.packets || 0),
-            quantity_rcpt: Number(matchedAmad.quantity_rcpt || 0),
+            quantity_rcpt: Number(matchedAmad.quantity_rcpt) > 0 ? Number(matchedAmad.quantity_rcpt) : Number(matchedAmad.total_packets || matchedAmad.packets || 0),
             unit: amadUnit,
             remarks: matchedAmad.remarks || '',
             marks_phota: formatPhotaVal(matchedAmad?.marks_phota) || formatPhotaVal(matchedAmad?.phota)
@@ -905,9 +905,9 @@ export function useFinalArrivalEntryLogic({ initialData, onSave }: UseFinalArriv
             const isLoose = rowUnit.includes('LOOSE') || rowUnit === 'LOOSE';
             const rawNetto = Number(row.netto_pnto) || Number(row.quantity_mt) || Number(row.challan_gross_wt) || Number(row.net_weight) || 0;
             const hasChln = row.quantity_chln !== undefined && row.quantity_chln !== null && row.quantity_chln !== '';
-            const hasRcpt = row.quantity_rcpt !== undefined && row.quantity_rcpt !== null && row.quantity_rcpt !== '';
             const qChln = isLoose ? 0 : (hasChln ? (Number(row.quantity_chln) || 0) : 0);
-            const qRcpt = isLoose ? 0 : (hasRcpt ? (Number(row.quantity_rcpt) || 0) : 0);
+            const rawRcpt = Number(row.quantity_rcpt) || 0;
+            const qRcpt = isLoose ? 0 : (rawRcpt > 0 ? rawRcpt : qChln);
 
             const rGradeCode = row.receipt_grade_code || row.grade_code || row.stock_grade_code || '';
             let rGradeName = row.receipt_grade_name || row.receipt_grade || row.grade_name || row.stock_grade_name || row.arrival_grade || '';
