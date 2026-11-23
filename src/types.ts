@@ -30,6 +30,7 @@ export interface ArrivalDetailRow {
   netto_pnto: number;
   quantity_chln: number;
   quantity_rcpt: number;
+  percent?: number | string;
   unit?: string;
   phota?: string;
   remarks: string;

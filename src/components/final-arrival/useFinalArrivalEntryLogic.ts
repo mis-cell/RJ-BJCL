@@ -127,6 +127,7 @@ export function useFinalArrivalEntryLogic({ initialData, onSave }: UseFinalArriv
         netto_pnto: rawNetto,
         quantity_chln: qChln,
         quantity_rcpt: qRcpt,
+        percent: d.percent ?? '',
         unit: u,
         remarks: d.remarks || '',
         marks_phota: resolveRowPhota(d, idx, initialFA)
@@ -164,6 +165,7 @@ export function useFinalArrivalEntryLogic({ initialData, onSave }: UseFinalArriv
         netto_pnto: 0,
         quantity_chln: 0,
         quantity_rcpt: 0,
+        percent: '',
         unit: initialFA?.unit_name || 'BALES',
         remarks: '',
         marks_phota: formatPhotaVal(initialFA?.marks_phota) || formatPhotaVal(initialFA?.phota)
@@ -690,6 +692,7 @@ export function useFinalArrivalEntryLogic({ initialData, onSave }: UseFinalArriv
               netto_pnto: rawNetto,
               quantity_chln: qChln,
               quantity_rcpt: qRcpt,
+              percent: row.percent ?? '',
               unit: rowUnit,
               remarks: row.remarks || '',
               marks_phota: resolveRowPhota(row, idx, matchedAmad)
@@ -951,6 +954,7 @@ export function useFinalArrivalEntryLogic({ initialData, onSave }: UseFinalArriv
               netto_pnto: rawNetto,
               quantity_chln: qChln,
               quantity_rcpt: qRcpt,
+              percent: row.percent ?? '',
               unit: rowUnit,
               remarks: row.remarks || '',
               marks_phota: resolveRowPhota(row, idx, amadData)
@@ -1239,6 +1243,7 @@ export function useFinalArrivalEntryLogic({ initialData, onSave }: UseFinalArriv
         netto_pnto: 0,
         quantity_chln: 0,
         quantity_rcpt: 0,
+        percent: '',
         unit: formData.unit_name || 'BALES',
         remarks: '',
         marks_phota: ''
@@ -1256,8 +1261,38 @@ export function useFinalArrivalEntryLogic({ initialData, onSave }: UseFinalArriv
     });
   };
 
+  const calculatedLowestNetWeight = useMemo(() => {
+    const elecNet = (Number(formData.electronic_gross_weight) || Number(formData.actual_gross_weight) || 0) - (Number(formData.electronic_tare_weight) || Number(formData.actual_tare_weight) || 0);
+    const suppNet = (Number(formData.supplier_challan_gross) || 0) - (Number(formData.supplier_tare_weight) || 0);
+    const nets = [
+      Number(formData.electronic_net_weight),
+      elecNet > 0 ? elecNet : 0,
+      Number(formData.supplier_net_weight),
+      suppNet > 0 ? suppNet : 0,
+      Number(formData.challan_material_weight),
+      Number(formData.weight_reduced)
+    ].filter(v => typeof v === 'number' && !isNaN(v) && v > 0);
+    return nets.length > 0 ? Math.min(...nets) : '';
+  }, [
+    formData.electronic_net_weight,
+    formData.electronic_gross_weight,
+    formData.electronic_tare_weight,
+    formData.actual_gross_weight,
+    formData.actual_tare_weight,
+    formData.supplier_net_weight,
+    formData.supplier_challan_gross,
+    formData.supplier_tare_weight,
+    formData.challan_material_weight,
+    formData.weight_reduced
+  ]);
+
+  const finalWeightDisplayValue = (formData.weight_reduced !== undefined && formData.weight_reduced !== null && Number(formData.weight_reduced) !== 0)
+    ? formData.weight_reduced
+    : calculatedLowestNetWeight;
+
   const handleRowChange = (index: number, field: keyof ArrivalDetailRow, val: any) => {
     const updatedDetails = [...details];
+    const isHeaderLoose = (formData.unit_name || '').toString().trim().toUpperCase().includes('LOOSE');
     
     if (field === 'unit') {
       const uUpper = String(val || '').trim().toUpperCase();
@@ -1266,6 +1301,34 @@ export function useFinalArrivalEntryLogic({ initialData, onSave }: UseFinalArriv
         ...updatedDetails[index],
         unit: uUpper,
         ...(isLoose ? { quantity_chln: 0, quantity_rcpt: 0 } : {})
+      };
+    } else if (field === 'percent') {
+      const rawStr = val === undefined || val === null ? '' : String(val);
+      const finalWeight = Number(finalWeightDisplayValue) || 0;
+      if (rawStr.trim() === '') {
+        updatedDetails[index] = {
+          ...updatedDetails[index],
+          percent: '',
+          netto_pnto: 0
+        };
+      } else {
+        const pct = Number(rawStr);
+        const calculatedNetto = !isNaN(pct) && finalWeight > 0
+          ? Math.max(0, Math.round((finalWeight * (pct / 100)) * 1000) / 1000)
+          : 0;
+        updatedDetails[index] = {
+          ...updatedDetails[index],
+          percent: rawStr,
+          netto_pnto: calculatedNetto
+        };
+      }
+    } else if (field === 'netto_pnto') {
+      const rowUnit = (updatedDetails[index]?.unit || formData.unit_name || '').toString().trim().toUpperCase();
+      const isLooseRow = isHeaderLoose || rowUnit.includes('LOOSE') || rowUnit === 'LOOSE';
+      updatedDetails[index] = {
+        ...updatedDetails[index],
+        netto_pnto: val,
+        ...(isLooseRow ? { percent: '' } : {})
       };
     } else if (field === 'receipt_grade_name' || field === 'receipt_grade_code') {
       const valStr = String(val || '').trim();
@@ -1314,45 +1377,20 @@ export function useFinalArrivalEntryLogic({ initialData, onSave }: UseFinalArriv
     setDetails(updatedDetails);
   };
 
-  const calculatedLowestNetWeight = useMemo(() => {
-    const elecNet = (Number(formData.electronic_gross_weight) || Number(formData.actual_gross_weight) || 0) - (Number(formData.electronic_tare_weight) || Number(formData.actual_tare_weight) || 0);
-    const suppNet = (Number(formData.supplier_challan_gross) || 0) - (Number(formData.supplier_tare_weight) || 0);
-    const nets = [
-      Number(formData.electronic_net_weight),
-      elecNet > 0 ? elecNet : 0,
-      Number(formData.supplier_net_weight),
-      suppNet > 0 ? suppNet : 0,
-      Number(formData.challan_material_weight),
-      Number(formData.weight_reduced)
-    ].filter(v => typeof v === 'number' && !isNaN(v) && v > 0);
-    return nets.length > 0 ? Math.min(...nets) : '';
-  }, [
-    formData.electronic_net_weight,
-    formData.electronic_gross_weight,
-    formData.electronic_tare_weight,
-    formData.actual_gross_weight,
-    formData.actual_tare_weight,
-    formData.supplier_net_weight,
-    formData.supplier_challan_gross,
-    formData.supplier_tare_weight,
-    formData.challan_material_weight,
-    formData.weight_reduced
-  ]);
-
-  const finalWeightDisplayValue = (formData.weight_reduced !== undefined && formData.weight_reduced !== null && Number(formData.weight_reduced) !== 0)
-    ? formData.weight_reduced
-    : calculatedLowestNetWeight;
-
   // Auto-calculate NETTO (M.T) for rows where UNIT is BALES (not LOOSE): (RCPT / Total RCPT) * Final Weight (M.TON)
+  // And for rows where UNIT is LOOSE and Percent% is entered: (Percent% / 100) * Final Weight (M.TON)
   useEffect(() => {
     const finalWeight = Number(finalWeightDisplayValue) || 0;
+    const isHeaderLoose = (formData.unit_name || '').toString().trim().toUpperCase().includes('LOOSE');
 
     const isBalesRow = (row: ArrivalDetailRow) => {
+      if (isHeaderLoose) return false;
       const u = (row.unit || formData.unit_name || 'BALES').toString().trim().toUpperCase();
       return u.includes('BALE') || u === 'BALES' || (!u.includes('LOOSE') && u !== 'LOOSE');
     };
 
     const getRowRcpt = (r: ArrivalDetailRow) => {
+      if (isHeaderLoose) return 0;
       const u = (r.unit || formData.unit_name || 'BALES').toString().trim().toUpperCase();
       if (u.includes('LOOSE') || u === 'LOOSE') return 0;
       return Number(r.quantity_rcpt) || Number(r.quantity_chln) || 0;
@@ -1369,12 +1407,27 @@ export function useFinalArrivalEntryLogic({ initialData, onSave }: UseFinalArriv
 
     const updated = details.map((row, index) => {
       const u = (row.unit || formData.unit_name || 'BALES').toString().trim().toUpperCase();
-      const isLoose = u.includes('LOOSE') || u === 'LOOSE';
+      const isLoose = isHeaderLoose || u.includes('LOOSE') || u === 'LOOSE';
 
       if (isLoose) {
-        if (row.quantity_chln !== 0 || row.quantity_rcpt !== 0) {
+        const hasPercent = row.percent !== undefined && row.percent !== null && String(row.percent).trim() !== '';
+        const pct = hasPercent ? Number(row.percent) : NaN;
+        const calculatedNetto = hasPercent && !isNaN(pct)
+          ? (finalWeight > 0 ? Math.max(0, Math.round((finalWeight * (pct / 100)) * 1000) / 1000) : 0)
+          : row.netto_pnto;
+
+        if (
+          row.quantity_chln !== 0 ||
+          row.quantity_rcpt !== 0 ||
+          (hasPercent && !isNaN(pct) && Number(row.netto_pnto) !== calculatedNetto)
+        ) {
           needsUpdate = true;
-          return { ...row, quantity_chln: 0, quantity_rcpt: 0 };
+          return {
+            ...row,
+            quantity_chln: 0,
+            quantity_rcpt: 0,
+            ...(hasPercent && !isNaN(pct) ? { netto_pnto: calculatedNetto } : {})
+          };
         }
         return row;
       }
@@ -1529,8 +1582,13 @@ export function useFinalArrivalEntryLogic({ initialData, onSave }: UseFinalArriv
         grid_details: activeRows.map(row => {
           const u = (row.unit || formData.unit_name || '').toString().trim().toUpperCase();
           const isLoose = u.includes('LOOSE') || u === 'LOOSE' || isHeaderLoose;
+          const cleanPercent = isLoose && row.percent !== undefined && row.percent !== null && String(row.percent).trim() !== ''
+            ? Number(row.percent)
+            : undefined;
+          const { percent: _ignoredPercent, ...restRow } = row;
           return {
-            ...row,
+            ...restRow,
+            ...(cleanPercent !== undefined && !isNaN(cleanPercent) ? { percent: cleanPercent } : {}),
             unit: row.unit || formData.unit_name || 'BALES',
             quantity_chln: isLoose ? 0 : Math.round(Number(row.quantity_chln) || 0),
             quantity_rcpt: isLoose ? 0 : Math.round(Number(row.quantity_rcpt) || 0)

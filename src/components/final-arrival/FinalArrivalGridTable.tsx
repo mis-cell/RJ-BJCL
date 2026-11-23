@@ -12,6 +12,7 @@ interface FinalArrivalGridTableProps {
   agencies: any[];
   markas: any[];
   formDataArea?: string;
+  unitName?: string;
   unitList: string[];
   totalChallanQuantity: number;
   totalReceiptQuantity: number;
@@ -27,11 +28,13 @@ export function FinalArrivalGridTable({
   agencies,
   markas,
   formDataArea,
+  unitName,
   unitList,
   totalChallanQuantity,
   totalReceiptQuantity,
   totalNettoWeight
 }: FinalArrivalGridTableProps) {
+  const isHeaderLoose = (unitName || '').toString().trim().toUpperCase().includes('LOOSE');
   return (
     <div className="bg-white rounded-xl border border-[#FBCFCB] shadow-xs p-4 space-y-3 text-xs">
       <div className="flex items-center justify-between pb-1 border-b border-[#FBCFCB]">
@@ -72,6 +75,9 @@ export function FinalArrivalGridTable({
               <th className="px-2 border-r border-[#D94B5A] font-bold text-left w-32">Marka Name</th>
               <th className="px-2 border-r border-[#D94B5A] font-bold text-right w-24">Challan Qty</th>
               <th className="px-2 border-r border-[#D94B5A] font-bold text-right w-24">Receipt Qty</th>
+              {isHeaderLoose && (
+                <th className="px-2 border-r border-[#D94B5A] font-bold text-right w-24">Percent%</th>
+              )}
               <th className="px-2 border-r border-[#D94B5A] font-bold text-right w-28 text-amber-200">Netto (M.T)</th>
               <th className="px-2 border-r border-[#D94B5A] font-bold text-center w-24">Unit</th>
               <th className="px-2 border-r border-[#D94B5A] font-bold text-left w-32">Marks / Phota</th>
@@ -220,6 +226,25 @@ export function FinalArrivalGridTable({
                     />
                   </td>
 
+                  {/* Percent% (Shown only when Unit * is Loose) */}
+                  {isHeaderLoose && (
+                    <td className="p-1 border-r border-slate-200">
+                      <input
+                        type="number"
+                        step="any"
+                        min="0"
+                        max="100"
+                        placeholder="0"
+                        value={row.percent ?? ''}
+                        onChange={(e) => {
+                          const raw = e.target.value;
+                          handleRowChange(idx, 'percent', raw === '' ? '' : raw);
+                        }}
+                        className="w-full h-6 px-1.5 text-right bg-white text-slate-800 border border-slate-200 focus:border-[#D94B5A] rounded text-xs font-bold outline-none"
+                      />
+                    </td>
+                  )}
+
                   {/* Netto (M.T) */}
                   <td className="p-1 border-r border-slate-200">
                     <input
@@ -292,6 +317,14 @@ export function FinalArrivalGridTable({
               <td className="px-2 text-right font-black text-blue-900 border-r border-slate-300">
                 {totalReceiptQuantity.toLocaleString()}
               </td>
+              {isHeaderLoose && (
+                <td className="px-2 text-right font-black text-slate-700 border-r border-slate-300">
+                  {(() => {
+                    const totalPct = details.reduce((s, r) => s + (Number(r.percent) || 0), 0);
+                    return totalPct > 0 ? `${Number(totalPct.toFixed(2))}%` : '';
+                  })()}
+                </td>
+              )}
               <td className="px-2 text-right font-black text-rose-700 border-r border-slate-300">
                 {totalNettoWeight.toFixed(3)}
               </td>
