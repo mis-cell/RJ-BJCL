@@ -424,16 +424,24 @@ export const SettlementValuationCard: React.FC<SettlementValuationCardProps> = (
               {saudaDeductionRecord && (
                 <span className={cn(
                   "text-[7.5px] font-black px-1.5 py-0.2 rounded uppercase border shrink-0",
-                  saudaDeductionRecord.variation_type === "excess"
+                  saudaDeductionRecord.variation_type === "within_tolerance"
+                    ? "bg-emerald-100 text-emerald-900 border-emerald-300"
+                    : saudaDeductionRecord.variation_type === "excess"
                     ? Number(saudaDeductionRecord.deduction_amount || 0) === 0
                       ? "bg-emerald-100 text-emerald-900 border-emerald-300"
                       : "bg-amber-100 text-amber-900 border-amber-300"
+                    : Number(saudaDeductionRecord.deduction_amount || 0) === 0
+                    ? "bg-emerald-100 text-emerald-900 border-emerald-300"
                     : "bg-rose-100 text-rose-900 border-rose-300"
                 )}>
-                  {saudaDeductionRecord.variation_type === "excess"
+                  {saudaDeductionRecord.variation_type === "within_tolerance"
+                    ? "Within 3% Exemption"
+                    : saudaDeductionRecord.variation_type === "excess"
                     ? Number(saudaDeductionRecord.deduction_amount || 0) === 0
                       ? "Excess Wt (Sauda Rate)"
                       : "Excess Wt Deduction"
+                    : Number(saudaDeductionRecord.deduction_amount || 0) === 0
+                    ? "Short Wt (No Deduction)"
                     : "Short Wt Deduction"}
                 </span>
               )}

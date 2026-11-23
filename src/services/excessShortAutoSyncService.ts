@@ -766,7 +766,18 @@ export async function syncExcessShortDeductionForSinglePo(poNo: string): Promise
 
       const scpRow = pickExact(scpRes as any[]);
       const pmRow = pickExact(pmRes as any[]);
-      const sRow = (saudaRes as any[])[0];
+      let sRow = (saudaRes as any[])[0];
+
+      const linkedSaudaNo = String(scpRow?.sauda_no || pmRow?.sauda_no || '').trim();
+      if (!sRow && linkedSaudaNo && cleanAlnumUpper(linkedSaudaNo) !== targetNorm) {
+        const extraSauda = await supabase
+          .from('sauda_master')
+          .select('*')
+          .ilike('sauda_no', `%${linkedSaudaNo}%`)
+          .limit(5)
+          .then((r) => r.data || [], () => []);
+        sRow = (extraSauda as any[])[0];
+      }
 
       const mergedPo = scpRow || pmRow || sRow
         ? {
@@ -774,6 +785,16 @@ export async function syncExcessShortDeductionForSinglePo(poNo: string): Promise
             ...(pmRow || {}),
             ...(scpRow || {}),
             po_no: scpRow?.po_no || pmRow?.po_no || cleanTarget,
+            sauda_date:
+              sRow?.sauda_date ||
+              sRow?.date ||
+              scpRow?.sauda_date ||
+              pmRow?.sauda_date ||
+              scpRow?.s_date ||
+              pmRow?.s_date ||
+              scpRow?.po_date ||
+              pmRow?.po_date ||
+              '',
             total_contract_mt:
               Number(scpRow?.total_contract_mt || 0) > 0
                 ? Number(scpRow.total_contract_mt)
@@ -791,8 +812,17 @@ export async function syncExcessShortDeductionForSinglePo(poNo: string): Promise
       const mrArray = Array.from(
         new Set(
           combinedInsps
-            .map((i: any) => String(i.mr_no || '').trim())
-            .filter((m) => m && m.toUpperCase() !== 'NO' && m.toUpperCase() !== 'N/A' && m !== '-')
+            .flatMap((i: any) => {
+              const raw = String(i.mr_no || '').trim();
+              if (!raw || raw.toUpperCase() === 'NO' || raw.toUpperCase() === 'N/A' || raw === '-') return [];
+              const seq = extractMrSeq(raw);
+              return [
+                raw,
+                seq > 0 ? `MR${seq}` : '',
+                seq > 0 ? `MR0${seq}` : '',
+                seq > 0 ? `MR00${seq}` : '',
+              ].filter(Boolean);
+            })
         )
       );
 
@@ -809,6 +839,11 @@ export async function syncExcessShortDeductionForSinglePo(poNo: string): Promise
         (dedRes as any[]).find(
           (d) => cleanAlnumUpper(d.po_no) === targetNorm || cleanAlnumUpper(d.sauda_no) === targetNorm
         ) || null;
+
+      // Preserve manually locked custom rate overrides untouched
+      if (existingDed && isManualLockedDeduction(existingDed) && String(existingDed.rate_basis || '') === 'custom') {
+        return existingDed;
+      }
 
       const normalizedRates = normalizeSattaBaseRates(sBasesRes as any[]);
       const computed = computeExcessShortPayload({
@@ -828,14 +863,15 @@ export async function syncExcessShortDeductionForSinglePo(poNo: string): Promise
 
       const fp = buildPayloadFingerprint(computed.payload);
       if (existingDed && lastSyncedFingerprintByPo.get(targetNorm) === fp) {
-        return existingDed;
+        return { ...existingDed, ...computed.payload };
       }
 
       const saved = await saveDeductionRowRealtime(computed.payload, existingDed?.id || null);
       if (saved) {
         lastSyncedFingerprintByPo.set(targetNorm, fp);
+        return saved;
       }
-      return saved || existingDed;
+      return { ...(existingDed || {}), ...computed.payload };
     } finally {
       inFlightPoSyncs.delete(targetNorm);
     }
