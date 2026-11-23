@@ -7,7 +7,7 @@ interface FinalArrivalGridTableProps {
   details: ArrivalDetailRow[];
   handleRowChange: (index: number, field: keyof ArrivalDetailRow, val: any) => void;
   handleAddRow: () => void;
-  handleDeleteRow: () => void;
+  handleDeleteRow: (index?: number) => void;
   grades: any[];
   agencies: any[];
   markas: any[];
@@ -50,7 +50,7 @@ export function FinalArrivalGridTable({
           </button>
           <button
             type="button"
-            onClick={handleDeleteRow}
+            onClick={() => handleDeleteRow()}
             disabled={details.length <= 1}
             className="px-2.5 py-1 bg-rose-600 hover:bg-rose-700 disabled:opacity-50 text-white rounded text-xs font-bold flex items-center gap-1 transition-colors cursor-pointer shadow-2xs"
           >
@@ -75,7 +75,8 @@ export function FinalArrivalGridTable({
               <th className="px-2 border-r border-[#D94B5A] font-bold text-right w-28 text-amber-200">Netto (M.T)</th>
               <th className="px-2 border-r border-[#D94B5A] font-bold text-center w-24">Unit</th>
               <th className="px-2 border-r border-[#D94B5A] font-bold text-left w-32">Marks / Phota</th>
-              <th className="px-2 font-bold text-left">Remarks</th>
+              <th className="px-2 border-r border-[#D94B5A] font-bold text-left">Remarks</th>
+              <th className="px-2 font-bold text-center w-28">Action</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-200 font-mono text-xs bg-white">
@@ -254,13 +255,27 @@ export function FinalArrivalGridTable({
                   </td>
 
                   {/* Remarks */}
-                  <td className="p-1">
+                  <td className="p-1 border-r border-slate-200">
                     <input
                       type="text"
                       value={row.remarks || ''}
                       onChange={(e) => handleRowChange(idx, 'remarks', e.target.value)}
                       className="w-full h-6 px-1.5 bg-white border border-slate-200 rounded text-xs outline-none focus:border-[#D94B5A]"
                     />
+                  </td>
+
+                  {/* Action - Individual Remove Row */}
+                  <td className="p-1 text-center">
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteRow(idx)}
+                      disabled={details.length <= 1}
+                      title={details.length <= 1 ? "At least 1 row is required" : `Remove Row ${idx + 1}`}
+                      className="px-2 py-0.5 bg-rose-600 hover:bg-rose-700 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded text-[11px] font-bold inline-flex items-center gap-1 transition-colors cursor-pointer shadow-2xs"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                      <span>Remove Row</span>
+                    </button>
                   </td>
                 </tr>
               );
@@ -280,7 +295,7 @@ export function FinalArrivalGridTable({
               <td className="px-2 text-right font-black text-rose-700 border-r border-slate-300">
                 {totalNettoWeight.toFixed(3)}
               </td>
-              <td colSpan={3} className="px-2 text-slate-500 text-[10px]">
+              <td colSpan={4} className="px-2 text-slate-500 text-[10px]">
                 
               </td>
             </tr>

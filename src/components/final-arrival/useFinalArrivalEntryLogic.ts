@@ -1246,10 +1246,12 @@ export function useFinalArrivalEntryLogic({ initialData, onSave }: UseFinalArriv
     ]);
   };
 
-  const handleDeleteRow = () => {
+  const handleDeleteRow = (index?: number) => {
     setDetails(prev => {
       if (prev.length <= 1) return prev;
-      const copy = prev.slice(0, -1);
+      const copy = typeof index === 'number'
+        ? prev.filter((_, i) => i !== index)
+        : prev.slice(0, -1);
       return copy.map((row, idx) => ({ ...row, srl_no: idx + 1 }));
     });
   };
