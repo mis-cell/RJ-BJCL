@@ -42,6 +42,7 @@ export function useMaterialInspectionLogic(onLogEvent?: (event: string, details:
   const [viewMode, setViewMode] = useState<"dashboard" | "entry">("dashboard");
   const [isEditMode, setIsEditMode] = useState(true);
   const [loading, setLoading] = useState(false);
+  const editingOriginalMrNoRef = useRef<string>("");
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
   const [currentTab, setCurrentTab] = useState<"inspections" | "pending_mr">("inspections");
@@ -997,6 +998,7 @@ export function useMaterialInspectionLogic(onLogEvent?: (event: string, details:
 
   const loadInspectionIntoForm = async (insp: InspectionMaster) => {
     if (!supabase) return;
+    editingOriginalMrNoRef.current = String(insp.mr_no || "").trim();
     setLoading(true);
     setErrorMessage("");
     setSuccessMessage("");
@@ -1663,6 +1665,7 @@ export function useMaterialInspectionLogic(onLogEvent?: (event: string, details:
     } catch (e) {
       console.warn(e);
     }
+    editingOriginalMrNoRef.current = "";
     setMasterData(initialMasterState());
     setDetailsList([1, 2, 3, 4, 5].map(createEmptyRow));
     setOverriddenFields({ claim_moisture: false, claim_dust: false, claim_ncv: false });
@@ -1688,7 +1691,8 @@ export function useMaterialInspectionLogic(onLogEvent?: (event: string, details:
         qualityMatrix,
         selectedDeductionTypes,
         arrivalVouchers,
-        onLogEvent
+        onLogEvent,
+        originalMrNo: editingOriginalMrNoRef.current,
       });
 
       if (!res.success) {
@@ -1698,6 +1702,8 @@ export function useMaterialInspectionLogic(onLogEvent?: (event: string, details:
         }
         return;
       }
+
+      editingOriginalMrNoRef.current = "";
 
       if (res.errorMessage) {
         setErrorMessage(res.errorMessage);

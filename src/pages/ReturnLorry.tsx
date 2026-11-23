@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   Truck,
   RefreshCw,
@@ -17,10 +17,25 @@ import LegacyLayout, { LegacyFieldset } from '../components/LegacyLayout';
 import {
   ReturnLorryRecord,
   ReturnLorryItemRow,
+  canonicalMrKey,
   fetchAllReturnLorries,
   syncAllReturnLorriesFromInspections,
   saveReturnLorryToSaudaCheckPoint,
 } from '../services/returnLorryService';
+import {
+  SattaBaseRate,
+  SattaDifferential,
+  SattaCalculatedRate,
+  fetchSattaBaseRates,
+  fetchSattaDifferentials,
+  fetchSattaCalculatedRates,
+  getCachedSattaBaseRates,
+  getCachedSattaDifferentials,
+  getCandidateAreas,
+  normalizeGrade,
+  resolveSattaDifferential,
+  resolveSattaRate,
+} from '../services/sattaRateService';
 import { useLiveAutoRefresh } from '../hooks/useLiveAutoRefresh';
 
 interface ReturnLorryProps {
@@ -40,6 +55,10 @@ export default function ReturnLorry({ onClose }: ReturnLorryProps) {
   const [poContractInput, setPoContractInput] = useState<string>('');
   const [bRateInput, setBRateInput] = useState<string>('');
   const [itemRates, setItemRates] = useState<Record<number, string>>({});
+  const [sattaBaseRates, setSattaBaseRates] = useState<SattaBaseRate[]>(() => getCachedSattaBaseRates());
+  const [sattaDifferentials, setSattaDifferentials] = useState<SattaDifferential[]>(() => getCachedSattaDifferentials());
+  const [sattaCalculatedRates, setSattaCalculatedRates] = useState<SattaCalculatedRate[]>([]);
+  const userEditedRatesRef = useRef<boolean>(false);
   const [toast, setToast] = useState<{ type: 'success' | 'info' | 'error'; message: string } | null>(null);
 
   const showToast = (type: 'success' | 'info' | 'error', message: string) => {
@@ -49,13 +68,159 @@ export default function ReturnLorry({ onClose }: ReturnLorryProps) {
     }, 5000);
   };
 
+  const normalizeToIsoDate = (raw?: string | null): string => {
+    const s = String(raw || '').trim();
+    if (!s) return new Date().toISOString().split('T')[0];
+    const isoMatch = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (isoMatch) return `${isoMatch[1]}-${isoMatch[2]}-${isoMatch[3]}`;
+    const dmyMatch = s.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})$/);
+    if (dmyMatch) {
+      return `${dmyMatch[3]}-${dmyMatch[2].padStart(2, '0')}-${dmyMatch[1].padStart(2, '0')}`;
+    }
+    return s.slice(0, 10);
+  };
+
+  const lookupSattaBaseRateForDate = (
+    dateStr?: string | null,
+    bases: SattaBaseRate[] = sattaBaseRates
+  ): string => {
+    if (!bases || bases.length === 0) return '';
+    const targetDate = normalizeToIsoDate(dateStr);
+    const validBases = [...bases]
+      .filter((b) => b.start_date && normalizeToIsoDate(b.start_date) <= targetDate && Number(b.base_rate) > 0)
+      .sort((a, b) => {
+        const dCmp = normalizeToIsoDate(b.start_date).localeCompare(normalizeToIsoDate(a.start_date));
+        if (dCmp !== 0) return dCmp;
+        return String(b.updated_at || b.created_at || '').localeCompare(String(a.updated_at || a.created_at || ''));
+      });
+
+    if (validBases.length > 0 && Number(validBases[0].base_rate) > 0) {
+      return String(validBases[0].base_rate);
+    }
+
+    const fallbackSorted = [...bases]
+      .filter((b) => Number(b.base_rate) > 0)
+      .sort((a, b) => normalizeToIsoDate(b.start_date).localeCompare(normalizeToIsoDate(a.start_date)));
+    if (fallbackSorted.length > 0) {
+      return String(fallbackSorted[0].base_rate);
+    }
+    return '';
+  };
+
+  const computeGradeRateForItem = (
+    item: Partial<ReturnLorryItemRow>,
+    fallbackArea: string,
+    poDateStr: string,
+    bRateStr: string,
+    bases: SattaBaseRate[] = sattaBaseRates,
+    diffs: SattaDifferential[] = sattaDifferentials,
+    calcs: SattaCalculatedRate[] = sattaCalculatedRates,
+    isManualBaseOverride = false
+  ): string => {
+    const numericBase = parseFloat(bRateStr);
+    if (!isFinite(numericBase) || numericBase <= 0) return '';
+
+    const grade = String(item.grade_name || item.arrival_grade || item.stock_grade_name || item.grade_code || '').trim();
+    const area = String(item.area || fallbackArea || '').trim();
+    const agency = String(item.agency_name || item.agency_code || '').trim();
+    const targetDate = normalizeToIsoDate(poDateStr);
+
+    if (grade && (area || agency)) {
+      // 1. Apply Satta Chart grade differential directly onto the active B Rate
+      const diffRes = resolveSattaDifferential(area, grade, agency, diffs);
+      if (diffRes.found && diffRes.differential !== null && isFinite(diffRes.differential)) {
+        return String(Math.round((numericBase + diffRes.differential) * 100) / 100);
+      }
+
+      // 2. Fallback to resolveSattaRate (avoid stale precomputed final_rate when user overrides B Rate)
+      const rateRes = resolveSattaRate({
+        area,
+        agency,
+        grade,
+        date: targetDate,
+        customBaseRate: numericBase,
+        baseRates: bases,
+        differentials: diffs,
+        calculatedRates: isManualBaseOverride ? [] : calcs,
+      });
+      if (rateRes.found && rateRes.finalRate !== null && isFinite(rateRes.finalRate)) {
+        return String(Math.round(rateRes.finalRate * 100) / 100);
+      }
+
+      // 3. Fallback: extract differential from satta_calculated_rates if differentials table had no match
+      if (calcs && calcs.length > 0) {
+        const normG = normalizeGrade(grade);
+        const candAreas = getCandidateAreas(area, agency);
+        for (const candArea of candAreas) {
+          const calcMatch = calcs.find(
+            (c) =>
+              String(c.area || '').trim().toUpperCase() === candArea &&
+              normalizeGrade(c.grade) === normG &&
+              c.differential !== undefined &&
+              c.differential !== null &&
+              isFinite(Number(c.differential))
+          );
+          if (calcMatch) {
+            return String(Math.round((numericBase + Number(calcMatch.differential)) * 100) / 100);
+          }
+        }
+      }
+    }
+
+    return bRateStr;
+  };
+
+  const getItemsForRecord = (rec: ReturnLorryRecord): ReturnLorryItemRow[] => {
+    if (rec.items && rec.items.length > 0) return rec.items;
+    return [
+      {
+        return_po_no: rec.new_po_no,
+        reference_po_no: rec.reference_po_no,
+        mr_no: rec.mr_no,
+        srl_no: 1,
+        crop_year: '2026-27',
+        grade_code: 'TD5',
+        grade_name: 'TD5',
+        area: rec.area || '',
+        agency_code: '',
+        agency_name: '',
+        marka_code: '',
+        marka_name: '',
+        quantity: rec.total_units || 0,
+        weight_mt: rec.received_weight_mt || 0,
+        rate_qntl: Number(rec.b_rate) || 0,
+        premium: 0,
+      },
+    ];
+  };
+
+  const loadSattaChartData = async () => {
+    try {
+      const [bases, diffs, calcs] = await Promise.all([
+        fetchSattaBaseRates().catch(() => getCachedSattaBaseRates()),
+        fetchSattaDifferentials().catch(() => getCachedSattaDifferentials()),
+        fetchSattaCalculatedRates().catch(() => [] as SattaCalculatedRate[]),
+      ]);
+      if (Array.isArray(bases)) setSattaBaseRates(bases);
+      if (Array.isArray(diffs)) setSattaDifferentials(diffs);
+      if (Array.isArray(calcs)) setSattaCalculatedRates(calcs);
+    } catch (err) {
+      console.warn('Failed to load Satta Chart rates for Return Lorry Desk:', err);
+    }
+  };
+
   const loadRecords = async (showSpinner = false) => {
     if (showSpinner) setLoading(true);
     try {
       const list = await fetchAllReturnLorries();
       setRecords(list);
       if (activeRecord) {
-        const updatedActive = list.find((r) => r.mr_no === activeRecord.mr_no);
+        const activeCanon = canonicalMrKey(activeRecord.mr_no);
+        const updatedActive = list.find(
+          (r) =>
+            r.mr_no === activeRecord.mr_no ||
+            (activeCanon && canonicalMrKey(r.mr_no) === activeCanon)
+        );
         if (updatedActive) {
           setActiveRecord(updatedActive);
         }
@@ -69,16 +234,21 @@ export default function ReturnLorry({ onClose }: ReturnLorryProps) {
 
   useEffect(() => {
     loadRecords(true);
+    loadSattaChartData();
   }, []);
 
   useLiveAutoRefresh(() => {
     loadRecords(false);
-  }, ['return_lorry', 'material_inspection', 'sauda_check_point']);
+    loadSattaChartData();
+  }, ['return_lorry', 'material_inspection', 'sauda_check_point', 'satta_base_rates', 'satta_differentials', 'satta_calculated_rates']);
 
   const handleManualSync = async () => {
     setSyncing(true);
     try {
-      const synced = await syncAllReturnLorriesFromInspections();
+      const [synced] = await Promise.all([
+        syncAllReturnLorriesFromInspections(),
+        loadSattaChartData(),
+      ]);
       setRecords(synced);
       showToast(
         'success',
@@ -92,38 +262,112 @@ export default function ReturnLorry({ onClose }: ReturnLorryProps) {
   };
 
   const handleOpenRecordInForm = (rec: ReturnLorryRecord) => {
+    userEditedRatesRef.current = false;
     setActiveRecord(rec);
     setPoContractInput(String(rec.new_po_no || rec.po_no || '').trim());
-    const initialBRate = Number(rec.b_rate) > 0 ? String(rec.b_rate) : '';
+
+    const poDate = rec.po_date || rec.mr_date || rec.s_date || '';
+    const isSavedWithRate = Boolean(rec.saved_to_sauda_checkpoint && Number(rec.b_rate) > 0);
+    const autoBRate = lookupSattaBaseRateForDate(poDate, sattaBaseRates);
+    const initialBRate = isSavedWithRate
+      ? String(rec.b_rate)
+      : (Number(rec.b_rate) > 0 ? String(rec.b_rate) : autoBRate);
+
     setBRateInput(initialBRate);
 
+    const recItems = getItemsForRecord(rec);
+    const fallbackArea = rec.area || recItems[0]?.area || '';
     const initialRowRates: Record<number, string> = {};
-    (rec.items || []).forEach((it, idx) => {
+    recItems.forEach((it, idx) => {
       const srl = it.srl_no || idx + 1;
-      const rVal = Number(it.rate_qntl) > 0 ? String(it.rate_qntl) : initialBRate;
-      initialRowRates[srl] = rVal;
+      if (isSavedWithRate && Number(it.rate_qntl) > 0) {
+        initialRowRates[srl] = String(it.rate_qntl);
+      } else {
+        initialRowRates[srl] = computeGradeRateForItem(
+          it,
+          fallbackArea,
+          poDate,
+          initialBRate,
+          sattaBaseRates,
+          sattaDifferentials,
+          sattaCalculatedRates,
+          false
+        );
+      }
     });
     setItemRates(initialRowRates);
     setViewMode('form');
   };
 
+  // Auto-populate B Rate (from Satta Chart Base Rate by P.O Date) and grade-wise Rate/Qntl
+  // once Satta Chart data finishes loading if the user hasn't manually edited rates yet
+  useEffect(() => {
+    if (viewMode !== 'form' || !activeRecord || userEditedRatesRef.current) return;
+    const isSavedWithRate = Boolean(activeRecord.saved_to_sauda_checkpoint && Number(activeRecord.b_rate) > 0);
+    if (isSavedWithRate) return;
+    if (sattaBaseRates.length === 0) return;
+
+    const poDate = activeRecord.po_date || activeRecord.mr_date || activeRecord.s_date || '';
+    const autoBRate = lookupSattaBaseRateForDate(poDate, sattaBaseRates);
+    if (!autoBRate) return;
+
+    const effectiveBase = bRateInput && Number(bRateInput) > 0 ? bRateInput : autoBRate;
+    if (!bRateInput || Number(bRateInput) <= 0) {
+      setBRateInput(effectiveBase);
+    }
+
+    const recItems = getItemsForRecord(activeRecord);
+    const fallbackArea = activeRecord.area || recItems[0]?.area || '';
+    const computedRowRates: Record<number, string> = {};
+    recItems.forEach((it, idx) => {
+      const srl = it.srl_no || idx + 1;
+      computedRowRates[srl] = computeGradeRateForItem(
+        it,
+        fallbackArea,
+        poDate,
+        effectiveBase,
+        sattaBaseRates,
+        sattaDifferentials,
+        sattaCalculatedRates,
+        false
+      );
+    });
+    setItemRates(computedRowRates);
+  }, [sattaBaseRates, sattaDifferentials, sattaCalculatedRates, activeRecord?.mr_no, viewMode]);
+
   const handleBRateChange = (val: string) => {
+    userEditedRatesRef.current = true;
     setBRateInput(val);
     if (!activeRecord) return;
+    const poDate = activeRecord.po_date || activeRecord.mr_date || activeRecord.s_date || '';
+    const recItems = getItemsForRecord(activeRecord);
+    const fallbackArea = activeRecord.area || recItems[0]?.area || '';
     const nextRowRates: Record<number, string> = {};
-    (activeRecord.items || []).forEach((it, idx) => {
+    recItems.forEach((it, idx) => {
       const srl = it.srl_no || idx + 1;
-      nextRowRates[srl] = val;
+      nextRowRates[srl] = val
+        ? computeGradeRateForItem(
+            it,
+            fallbackArea,
+            poDate,
+            val,
+            sattaBaseRates,
+            sattaDifferentials,
+            sattaCalculatedRates,
+            true
+          )
+        : '';
     });
     setItemRates(nextRowRates);
   };
 
-  const handleItemRateChange = (srl: number, val: string, isFirstRow: boolean) => {
+  const handleItemRateChange = (srl: number, val: string, _isFirstRow: boolean) => {
+    userEditedRatesRef.current = true;
     setItemRates((prev) => ({
       ...prev,
       [srl]: val,
     }));
-    if (isFirstRow || !bRateInput) {
+    if (!bRateInput) {
       setBRateInput(val);
     }
   };
@@ -1004,7 +1248,7 @@ export default function ReturnLorry({ onClose }: ReturnLorryProps) {
                 <span>
                   {saving
                     ? 'Saving & Moving to Sauda Check Point...'
-                    : `Save P.O (${activeRecord.new_po_no}) & Move to Sauda Check Point`}
+                    : `Save P.O (${poContractInput.trim() || activeRecord.new_po_no}) & Move to Sauda Check Point`}
                 </span>
               </button>
 

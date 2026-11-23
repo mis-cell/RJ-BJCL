@@ -11,6 +11,7 @@ export interface SaveInspectionParams {
   selectedDeductionTypes: string[];
   arrivalVouchers: any[];
   onLogEvent?: (event: string, details: string) => void;
+  originalMrNo?: string;
 }
 
 export interface SaveInspectionResult {
@@ -25,7 +26,8 @@ export async function saveMaterialInspection({
   qualityMatrix,
   selectedDeductionTypes,
   arrivalVouchers,
-  onLogEvent
+  onLogEvent,
+  originalMrNo
 }: SaveInspectionParams): Promise<SaveInspectionResult> {
   if (!supabase) {
     return {
@@ -317,6 +319,35 @@ export async function saveMaterialInspection({
     }
   }
 
+  const prevMrNo = String(originalMrNo || "").trim();
+  const cleanMrNo = String(masterData.mr_no || "").trim();
+  const isMrRenamed = Boolean(prevMrNo && cleanMrNo && prevMrNo.toUpperCase() !== cleanMrNo.toUpperCase());
+
+  if (isMrRenamed) {
+    try {
+      await Promise.all([
+        Promise.resolve(supabase.from("return_lorry").update({ mr_no: cleanMrNo, final_arrival_no: cleanMrNo }).eq("mr_no", prevMrNo)).catch(() => {}),
+        Promise.resolve(supabase.from("return_lorry_details").update({ mr_no: cleanMrNo }).eq("mr_no", prevMrNo)).catch(() => {}),
+      ]);
+
+      const cleanupTables = [
+        "inspection_details",
+        "inspection_checklist_details",
+        "mill_inspection_detail",
+        "material_inspection_details",
+        "material_inspection",
+        "mill_inspection_master",
+      ];
+      await Promise.all(
+        cleanupTables.map((tbl) =>
+          Promise.resolve(supabase!.from(tbl).delete().eq("mr_no", prevMrNo)).catch(() => {})
+        )
+      );
+    } catch (renameErr) {
+      console.warn("[materialInspectionSaveService] Failed to clean up renamed M.R. No.:", renameErr);
+    }
+  }
+
   try {
     const totalPackets = validRowsToWrite.reduce((sum, row) => sum + (Number(row.quantity) || 0), 0);
     const totalWeightKgs = validRowsToWrite.reduce((sum, row) => sum + (Number(row.challan_gross_wt) || 0), 0);
@@ -467,6 +498,7 @@ export async function saveMaterialInspection({
   // Auto-check Return Lorry (< 5 MT) and copy Sauda Check Point P.O. to Return Lorry (4000 series)
   const returnCheck = await checkAndProcessReturnLorryOnInspection({
     mrNo: masterData.mr_no,
+    originalMrNo: isMrRenamed ? prevMrNo : undefined,
     poNo: masterData.po_no || "",
     arrivalNo: masterData.arrival_no || masterData.mr_no,
     lorryNo: masterData.lorry_number || "",

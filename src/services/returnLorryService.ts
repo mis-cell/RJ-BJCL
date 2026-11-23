@@ -345,6 +345,18 @@ export function normalizeStr(v: any): string {
   return String(v || '').trim().toUpperCase();
 }
 
+/**
+ * Normalizes padded M.R. numbers so variants like "MR01624" and "MR001624"
+ * resolve to the same canonical key ("MR1624") without colliding with other M.R.s.
+ */
+export function canonicalMrKey(v: any): string {
+  const s = normalizeStr(v).replace(/^#+/, '');
+  if (!s) return '';
+  const m = s.match(/^([A-Z]+)0*([0-9]+)$/);
+  if (m) return `${m[1]}${m[2]}`;
+  return s;
+}
+
 export function extractCanonicalPoSerial(raw: any): string {
   const str = normalizeStr(raw);
   if (!str || str === 'NO' || str === 'N/A' || str === 'NONE') return '';
@@ -590,6 +602,8 @@ export function buildCombinedReturnLorryRecord(params: {
   const areaVal = String(
     inspDetails?.[0]?.area ||
     insp?.area ||
+    insp?.arrival_area ||
+    insp?.arrival_area_name ||
     ''
   ).trim().toUpperCase();
 
@@ -701,6 +715,7 @@ export function buildCombinedReturnLorryRecord(params: {
   const savedBaseRate = isSavedToScp ? Number(existingSavedRl?.b_rate || combinedItems?.[0]?.rate_qntl || 0) : 0;
 
   return {
+    id: existingSavedRl?.id,
     new_po_no: newPoNo,
     po_no: newPoNo,
     reference_po_no: referencePoNo,
@@ -860,15 +875,49 @@ export async function saveReturnLorryToSaudaCheckPoint(
       delete dbRecordPayload.raw_inspection;
       delete dbRecordPayload.raw_sauda_check_point;
 
-      if (savedRecord.id) {
-        await dbModule.update('return_lorry', 'id', savedRecord.id, dbRecordPayload).catch(async () => {
-          await supabase!.from('return_lorry').update(dbRecordPayload).eq('id', savedRecord.id).then(() => {}, () => {});
+      // Resolve existing row in return_lorry by id, new_po_no, exact mr_no, or canonical mr_no
+      // so editing/saving always updates the existing record instead of inserting duplicates
+      let targetExistingId: string | undefined = savedRecord.id;
+      const staleDuplicateIds: string[] = [];
+      const canonTargetMr = canonicalMrKey(savedRecord.mr_no);
+
+      try {
+        const { data: allRlRows } = await supabase
+          .from('return_lorry')
+          .select('id, mr_no, new_po_no, po_no');
+        const matches = (allRlRows || []).filter((r: any) => {
+          if (targetExistingId && r.id === targetExistingId) return true;
+          if (normalizeStr(r.new_po_no) === normalizeStr(finalPoNo)) return true;
+          if (savedRecord.mr_no && normalizeStr(r.mr_no) === normalizeStr(savedRecord.mr_no)) return true;
+          if (canonTargetMr && canonicalMrKey(r.mr_no) === canonTargetMr) return true;
+          return false;
         });
-      } else if (savedRecord.mr_no) {
-        await dbModule.upsert('return_lorry', dbRecordPayload, 'mr_no').catch(async () => {
-          await supabase!.from('return_lorry').upsert(dbRecordPayload, { onConflict: 'new_po_no' }).then(() => {}, () => {});
+        if (matches.length > 0) {
+          const primary =
+            matches.find((r: any) => targetExistingId && r.id === targetExistingId) ||
+            matches.find((r: any) => normalizeStr(r.new_po_no) === normalizeStr(finalPoNo)) ||
+            matches.find((r: any) => normalizeStr(r.mr_no) === normalizeStr(savedRecord.mr_no)) ||
+            matches[0];
+          targetExistingId = primary.id;
+          matches.forEach((m: any) => {
+            if (m.id && m.id !== targetExistingId) {
+              staleDuplicateIds.push(m.id);
+            }
+          });
+        }
+      } catch {}
+
+      if (targetExistingId) {
+        savedRecord.id = targetExistingId;
+        dbRecordPayload.id = targetExistingId;
+        await dbModule.update('return_lorry', 'id', targetExistingId, dbRecordPayload).catch(async () => {
+          await supabase!.from('return_lorry').update(dbRecordPayload).eq('id', targetExistingId).then(() => {}, () => {});
         });
+        for (const dupId of staleDuplicateIds) {
+          await supabase.from('return_lorry').delete().eq('id', dupId).then(() => {}, () => {});
+        }
       } else {
+        delete dbRecordPayload.id;
         await dbModule.upsert('return_lorry', dbRecordPayload, 'new_po_no').catch(async () => {
           await supabase!.from('return_lorry').upsert(dbRecordPayload, { onConflict: 'new_po_no' }).then(() => {}, () => {});
         });
@@ -976,6 +1025,7 @@ export async function saveReturnLorryToSaudaCheckPoint(
  */
 export async function checkAndProcessReturnLorryOnInspection(params: {
   mrNo: string;
+  originalMrNo?: string;
   poNo: string;
   arrivalNo?: string;
   lorryNo?: string;
@@ -990,7 +1040,7 @@ export async function checkAndProcessReturnLorryOnInspection(params: {
   referencePoNo?: string;
   record?: ReturnLorryRecord;
 }> {
-  const { mrNo, poNo, arrivalNo, lorryNo, headerForm, detailRows } = params;
+  const { mrNo, originalMrNo, poNo, arrivalNo, lorryNo, headerForm, detailRows } = params;
   const weightMt = calculateInspectionWeightMt(headerForm, detailRows);
 
   if (weightMt <= 0 || weightMt >= 5) {
@@ -1000,6 +1050,8 @@ export async function checkAndProcessReturnLorryOnInspection(params: {
   ensureReturnLorryTablesExist();
 
   const cleanMr = normalizeStr(mrNo);
+  const cleanOrigMr = normalizeStr(originalMrNo);
+  const canonMr = canonicalMrKey(mrNo);
   const cleanPo = normalizeStr(poNo);
   if (!cleanMr) {
     return { isReturnLorry: true, weightMt };
@@ -1009,7 +1061,17 @@ export async function checkAndProcessReturnLorryOnInspection(params: {
   if (supabase) {
     try {
       const { data } = await supabase.from('return_lorry').select('*').eq('mr_no', mrNo).limit(1);
-      if (data && data.length > 0) existingSaved = data[0];
+      if (data && data.length > 0) {
+        existingSaved = data[0];
+      } else if (cleanOrigMr && cleanOrigMr !== cleanMr) {
+        const { data: origData } = await supabase.from('return_lorry').select('*').eq('mr_no', originalMrNo).limit(1);
+        if (origData && origData.length > 0) existingSaved = origData[0];
+      }
+      if (!existingSaved && canonMr) {
+        const { data: allRl } = await supabase.from('return_lorry').select('*');
+        const canonMatch = (allRl || []).find((r: any) => canonicalMrKey(r.mr_no) === canonMr);
+        if (canonMatch) existingSaved = canonMatch;
+      }
     } catch {}
   }
 
@@ -1085,8 +1147,9 @@ export async function syncAllReturnLorriesFromInspections(): Promise<ReturnLorry
     const existingDbRlDetails: any[] = (rlDetRes as any)?.data || [];
     const existingScp4000: any[] = (scp4000Res as any)?.data || [];
 
-    // Group Mill Inspection details by MR No
+    // Group Mill Inspection details by exact MR No and canonical MR key
     const detailsByMr = new Map<string, any[]>();
+    const detailsByCanonMr = new Map<string, any[]>();
     for (const d of allInspDetails) {
       const k = normalizeStr(d.mr_no);
       if (!k) continue;
@@ -1096,10 +1159,20 @@ export async function syncAllReturnLorriesFromInspections(): Promise<ReturnLorry
       if (!list.some((existing) => Number(existing.srl_no || 0) === srl)) {
         list.push(d);
       }
+
+      const ck = canonicalMrKey(d.mr_no);
+      if (ck) {
+        if (!detailsByCanonMr.has(ck)) detailsByCanonMr.set(ck, []);
+        const cList = detailsByCanonMr.get(ck)!;
+        if (!cList.some((existing) => Number(existing.srl_no || 0) === srl)) {
+          cList.push(d);
+        }
+      }
     }
 
     // Track existing user-saved Return Lorry records and used 4000-series numbers
     const existingByMr = new Map<string, any>();
+    const existingByCanonMr = new Map<string, any>();
     const used4000Numbers = new Set<number>();
 
     const register4000No = (poStr: any) => {
@@ -1113,10 +1186,22 @@ export async function syncAllReturnLorriesFromInspections(): Promise<ReturnLorry
       }
     };
 
+    const isRlSaved = (rl: any) => Boolean(rl?.saved_to_sauda_checkpoint === true && Number(rl?.b_rate || 0) > 0);
+
     for (const rl of existingDbReturnLorries) {
       const mKey = normalizeStr(rl.mr_no || rl.final_arrival_no);
-      if (mKey && !existingByMr.has(mKey)) {
-        existingByMr.set(mKey, rl);
+      if (mKey) {
+        const prev = existingByMr.get(mKey);
+        if (!prev || (!isRlSaved(prev) && isRlSaved(rl))) {
+          existingByMr.set(mKey, rl);
+        }
+      }
+      const cKey = canonicalMrKey(rl.mr_no || rl.final_arrival_no);
+      if (cKey) {
+        const prevC = existingByCanonMr.get(cKey);
+        if (!prevC || (!isRlSaved(prevC) && isRlSaved(rl))) {
+          existingByCanonMr.set(cKey, rl);
+        }
       }
       register4000No(rl.new_po_no);
       register4000No(rl.po_no);
@@ -1125,12 +1210,16 @@ export async function syncAllReturnLorriesFromInspections(): Promise<ReturnLorry
       register4000No(scp.po_no);
     }
 
-    const resultRecords: ReturnLorryRecord[] = [];
-    const processedMrSet = new Set<string>();
+    // Collect < 5 MT inspection candidates and deduplicate padded MR variants (e.g. MR01624 vs MR001624)
+    // Preferring: (1) saved in return_lorry/Sauda Check Point, (2) mr_no matching arrival_no, (3) newest timestamp, (4) longer padded mr_no
+    type CandidateEntry = { insp: any; mrKey: string; canonKey: string; detailRows: any[]; wtMt: number; orderIdx: number };
+    const candidatesByCanon = new Map<string, CandidateEntry[]>();
 
-    for (const insp of rawInspections) {
+    for (let idx = 0; idx < rawInspections.length; idx++) {
+      const insp = rawInspections[idx];
       const mrKey = normalizeStr(insp.mr_no);
-      if (!mrKey || processedMrSet.has(mrKey)) continue;
+      if (!mrKey) continue;
+      const canonKey = canonicalMrKey(insp.mr_no) || mrKey;
 
       let detailRows = detailsByMr.get(mrKey) || [];
       if (detailRows.length === 0 && insp.grid_details) {
@@ -1142,16 +1231,51 @@ export async function syncAllReturnLorriesFromInspections(): Promise<ReturnLorry
           } catch {}
         }
       }
+      if (detailRows.length === 0) {
+        detailRows = detailsByCanonMr.get(canonKey) || [];
+      }
 
       const wtMt = calculateInspectionWeightMt(insp, detailRows);
-
       // Strictly check Mill Inspection weight < 5 MT (> 0 and < 5 MT)
       if (wtMt <= 0 || wtMt >= 5) {
         continue;
       }
 
-      processedMrSet.add(mrKey);
-      const existingRl = existingByMr.get(mrKey);
+      if (!candidatesByCanon.has(canonKey)) candidatesByCanon.set(canonKey, []);
+      candidatesByCanon.get(canonKey)!.push({ insp, mrKey, canonKey, detailRows, wtMt, orderIdx: idx });
+    }
+
+    const scoreCandidate = (c: CandidateEntry): number => {
+      let score = 0;
+      const exactRl = existingByMr.get(c.mrKey);
+      if (isRlSaved(exactRl)) score += 1000;
+      else if (exactRl) score += 200;
+
+      const arrNo = normalizeStr(c.insp.arrival_no || c.insp.temporary_arrival_no);
+      if (arrNo && arrNo === c.mrKey) score += 100;
+
+      // Slightly favor longer normalized MR No (e.g. MR001624 over MR01624) when edited to add leading zero
+      score += Math.min(c.mrKey.length, 20);
+      return score;
+    };
+
+    const winningCandidates: CandidateEntry[] = [];
+    for (const group of candidatesByCanon.values()) {
+      group.sort((a, b) => {
+        const diff = scoreCandidate(b) - scoreCandidate(a);
+        if (diff !== 0) return diff;
+        return a.orderIdx - b.orderIdx;
+      });
+      winningCandidates.push(group[0]);
+    }
+    // Preserve original newest-first ordering
+    winningCandidates.sort((a, b) => a.orderIdx - b.orderIdx);
+
+    const resultRecords: ReturnLorryRecord[] = [];
+
+    for (const winner of winningCandidates) {
+      const { insp, mrKey, canonKey, detailRows, wtMt } = winner;
+      const existingRl = existingByMr.get(mrKey) || existingByCanonMr.get(canonKey);
 
       const isBlankPo = (v: any) => {
         const s = normalizeStr(v);

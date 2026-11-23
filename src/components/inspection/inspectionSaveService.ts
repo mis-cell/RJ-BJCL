@@ -20,9 +20,12 @@ export interface SaveInspectionResult {
 export async function saveInspectionRecordToDb(
   headerForm: InspectionMasterRecord,
   detailRows: InspectionDetailRow[],
-  deductionRows: DeductionRow[]
+  deductionRows: DeductionRow[],
+  originalMrNo?: string
 ): Promise<SaveInspectionResult> {
   const cleanMrNo = headerForm.mr_no.trim();
+  const prevMrNo = String(originalMrNo || "").trim();
+  const isMrRenamed = Boolean(prevMrNo && prevMrNo.toUpperCase() !== cleanMrNo.toUpperCase());
   const validDetails = detailRows.filter(
     (r) =>
       r.arrival_grade ||
@@ -464,6 +467,36 @@ export async function saveInspectionRecordToDb(
     }
   }
 
+  // If user edited M.R. No. (e.g. MR01624 -> MR001624), migrate Return Lorry links and remove old duplicate M.R. No. rows
+  if (isMrRenamed && supabase) {
+    try {
+      await Promise.all([
+        Promise.resolve(supabase.from("return_lorry").update({ mr_no: cleanMrNo, final_arrival_no: cleanMrNo }).eq("mr_no", prevMrNo)).catch(() => {}),
+        Promise.resolve(supabase.from("return_lorry_details").update({ mr_no: cleanMrNo }).eq("mr_no", prevMrNo)).catch(() => {}),
+      ]);
+
+      const cleanupTables = [
+        "material_inspection_details",
+        "mill_inspection_detail",
+        "material_inspection_deductions",
+        "mill_inspection_deduction",
+        "inspection_details",
+        "inspection_checklist_details",
+        "material_inspection",
+        "mill_inspection_master",
+      ];
+      await Promise.all(
+        cleanupTables.map((tbl) =>
+          Promise.resolve(supabase!.from(tbl).delete().eq("mr_no", prevMrNo)).catch(() => {})
+        )
+      );
+      notifyDataChanged("material_inspection");
+      notifyDataChanged("return_lorry");
+    } catch (renameErr) {
+      console.warn("[inspectionSaveService] Failed to clean up renamed M.R. No.:", renameErr);
+    }
+  }
+
   // Record in Universal Change Log
   const currentUser = getCurrentUserContext();
   const userName =
@@ -475,7 +508,7 @@ export async function saveInspectionRecordToDb(
     action: "UPDATE",
     field_name: "deduction_amount",
     field_label: `Inspection Deductions (${cleanMrNo})`,
-    old_value: "Draft",
+    old_value: isMrRenamed ? `Renamed from ${prevMrNo}` : "Draft",
     new_value: `₹${Number(headerForm.deduction_amount || 0).toLocaleString("en-IN")}`,
     user_name: userName,
     remarks: `Mill Inspection for PO ${headerForm.po_no || "N/A"}, Supplier: ${headerForm.supplier_name || "N/A"}, Total Bales: ${totalBalesCount}, Gross: ${totalReceiptGrossMt.toFixed(3)} MT`,
@@ -484,6 +517,7 @@ export async function saveInspectionRecordToDb(
   // Check if this Mill Inspection record is a Return Lorry (< 5 MT)
   const returnCheck = await checkAndProcessReturnLorryOnInspection({
     mrNo: cleanMrNo,
+    originalMrNo: isMrRenamed ? prevMrNo : undefined,
     poNo: headerForm.po_no || "",
     arrivalNo: headerForm.arrival_no || cleanMrNo,
     lorryNo: headerForm.lorry_number || "",

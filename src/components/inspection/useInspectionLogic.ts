@@ -44,6 +44,7 @@ export function useInspectionLogic() {
   const [viewMode, setViewMode] = useState<"dashboard" | "form">("dashboard");
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState<boolean>(false);
+  const editingOriginalMrNoRef = useRef<string>("");
 
   // Sorting state for arrival date, arrival no, status
   const [sortField, setSortField] = useState<"arrival_date" | "arrival_no" | "status">("arrival_date");
@@ -1588,6 +1589,7 @@ export function useInspectionLogic() {
   };
 
   const handleOpenNewForm = () => {
+    editingOriginalMrNoRef.current = "";
     setHeaderForm({
       mr_no: "",
       mr_date: new Date().toISOString().split("T")[0],
@@ -1630,6 +1632,7 @@ export function useInspectionLogic() {
   const handleCreateNewInspection = handleOpenNewForm;
 
   const handleEditRecord = async (record: InspectionMasterRecord) => {
+    editingOriginalMrNoRef.current = String(record.mr_no || "").trim();
     const actMoist = Number(record.actual_moisture) || 0;
     const clmMoist = Number(record.claim_moisture) || 0;
     const actDust = Number(record.actual_dust) || 0;
@@ -2174,7 +2177,13 @@ export function useInspectionLogic() {
 
     setIsSaving(true);
     try {
-      const res = await saveInspectionRecordToDb(headerForm, detailRows, deductionRows);
+      const res = await saveInspectionRecordToDb(
+        headerForm,
+        detailRows,
+        deductionRows,
+        editingOriginalMrNoRef.current
+      );
+      editingOriginalMrNoRef.current = "";
       if (res.returnCheck?.isReturnLorry && res.returnCheck?.newPoNo) {
         alert(
           `Data Saved Successfully.\n\n[RETURN LORRY DETECTED: ${res.returnCheck.weightMt.toFixed(3)} MT (< 5 MT)]\nReference P.O.: ${res.returnCheck.referencePoNo}\nNew Return Lorry P.O. (4000 Series): ${res.returnCheck.newPoNo}`
