@@ -1324,7 +1324,6 @@ export function useInspectionLogic() {
             ncv_claim: rowNcvClaim,
             grade_down_act: rowGradeDownAct,
             grade_down_claim: rowGradeDownClaim,
-            tot_wt_grd: Number(item.tot_wt_grd || 0),
             final_receipt_wt: Number(item.final_receipt_wt || nettoVal),
             settlement_moisture: Number(item.settlement_moisture !== undefined ? item.settlement_moisture : rowMoistureAct),
             settlement_grade_down: Number(item.settlement_grade_down !== undefined ? item.settlement_grade_down : rowGradeDownAct),
@@ -1684,18 +1683,13 @@ export function useInspectionLogic() {
               ? millDetailRes.data
               : (inspDetailRes.data || []));
 
-        let parsedGridDetails: any[] = [];
-        if (record.grid_details) {
+        if (rawDetails.length === 0 && record.grid_details) {
           try {
             const parsed = typeof record.grid_details === 'string' ? JSON.parse(record.grid_details) : record.grid_details;
             if (Array.isArray(parsed) && parsed.length > 0) {
-              parsedGridDetails = parsed;
+              rawDetails = parsed;
             }
           } catch (e) {}
-        }
-
-        if (rawDetails.length === 0 && parsedGridDetails.length > 0) {
-          rawDetails = parsedGridDetails;
         }
 
         if (rawDetails.length > 0) {
@@ -1759,7 +1753,6 @@ export function useInspectionLogic() {
               actual_grade_down: rowGradeDownAct,
               grade_down_claim: rowGradeDownClaim,
               claim_grade_down: rowGradeDownClaim,
-              tot_wt_grd: Number(d.tot_wt_grd ?? parsedGridDetails[idx]?.tot_wt_grd ?? 0),
               final_receipt_wt: Number(d.final_receipt_wt || netto),
               settlement_moisture: Number(d.settlement_moisture !== undefined ? d.settlement_moisture : rowMoistureAct),
               settlement_grade_down: Number(d.settlement_grade_down !== undefined ? d.settlement_grade_down : rowGradeDownAct),

@@ -144,7 +144,6 @@ export interface InspectionDetailRow {
   insp_read_min?: number;
   insp_read_max?: number;
   insp_read_avg?: number;
-  tot_wt_grd?: number | string;
   final_receipt_wt?: number;
   ropes_weight?: number;
   ropes_tot_wt_grd?: number;
@@ -202,7 +201,6 @@ export const detailFieldsConfig: DetailFieldConfig[] = [
   { name: "claim_ncv", key: "claim_ncv", label: "Claim NCV %", type: "number", step: "0.1" },
   { name: "actual_grade_down", key: "actual_grade_down", label: "Actual Grade Down %", type: "number", step: "0.1" },
   { name: "claim_grade_down", key: "claim_grade_down", label: "Claim Grade Down %", type: "number", step: "0.1" },
-  { name: "tot_wt_grd", key: "tot_wt_grd", label: "Tot. Wt. Grd%", type: "number", step: "0.01" },
   { name: "final_receipt_wt", key: "final_receipt_wt", label: "Final Receipt Wt (MT)", type: "number", step: "0.001" },
   { name: "ropes_weight", key: "ropes_weight", label: "Ropes Weight (Kg)", type: "number", step: "0.01" },
   { name: "ropes_grade", key: "ropes_grade", label: "Ropes Grade", type: "text" },
