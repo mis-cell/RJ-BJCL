@@ -1233,7 +1233,7 @@ async function startServer() {
       const { data, error } = await supabase
         .from('payment_master')
         .select('voucher_no, mr_no, arrival_no, po_no, supplier, party_name, status, payment_date')
-        .or(`mr_no.ilike.%${cleanMr}%,arrival_no.ilike.%${cleanMr}%`);
+        .or(`mr_no.eq.${cleanMr},mr_no.ilike.${cleanMr}`);
 
       if (error) {
         console.warn("[Backend Payment Check] Supabase query error:", error);
@@ -1248,7 +1248,7 @@ async function startServer() {
           const pStatus = String(p.status || '').toLowerCase().trim();
           if (pStatus === 'cancelled' || pStatus === 'rejected') return false;
 
-          const pMr = String(p.mr_no || p.arrival_no || '').trim().toUpperCase();
+          const pMr = String(p.mr_no || '').trim().toUpperCase();
           const targetMr = cleanMr.toUpperCase();
           return pMr === targetMr;
         });

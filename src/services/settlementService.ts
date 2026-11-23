@@ -903,8 +903,8 @@ export const getUniquePoLorryGroups = (
   const cleanAlphaTargetPo = cleanTargetPo.replace(/[^A-Z0-9]/g, '');
 
   const matched = (inspections || []).filter((insp: any) => {
-    const mrVal = insp.mr_no || insp.final_arrival_no || insp.arrival_no || insp.temporary_arrival_no;
-    if (!mrVal) return false;
+    const mrVal = String(insp.mr_no || insp.final_arrival_no || '').trim();
+    if (!mrVal || mrVal.toUpperCase().startsWith('AR')) return false;
 
     const inspPoCands = [
       insp.po_no,
@@ -942,13 +942,11 @@ export const getUniquePoLorryGroups = (
 
   for (const insp of matched) {
     const idCandidates = [
-      insp.final_arrival_no,
       insp.mr_no,
-      insp.arrival_no,
-      insp.temporary_arrival_no
+      insp.final_arrival_no
     ]
       .map((v: any) => String(v || '').trim().toUpperCase())
-      .filter((v: string) => v && v !== 'NO' && v !== 'N/A' && v !== 'NONE');
+      .filter((v: string) => v && v !== 'NO' && v !== 'N/A' && v !== 'NONE' && !v.startsWith('AR'));
 
     if (idCandidates.length === 0) continue;
 

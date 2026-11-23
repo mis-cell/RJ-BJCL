@@ -69,7 +69,7 @@ export function usePaymentData(onSaveSuccess?: () => void) {
       const st = String(p.status || '').toLowerCase().trim();
       if (st === 'cancelled' || st === 'rejected') continue;
 
-      const pMr = String(p.mr_no || p.arrival_no || '').trim().toUpperCase();
+      const pMr = String(p.mr_no || '').trim().toUpperCase();
       if (pMr && pMr !== 'N/A') {
         mrSet.add(pMr);
       }
@@ -157,7 +157,7 @@ export function usePaymentData(onSaveSuccess?: () => void) {
 
     if (linkedMrs.length > 0) {
       return linkedMrs.some((mr: any) => {
-        const mrKey = String(mr.mr_no || mr.final_arrival_no || mr.arrival_no || mr.temporary_arrival_no || '').trim().toUpperCase();
+        const mrKey = String(mr.mr_no || mr.final_arrival_no || '').trim().toUpperCase();
         return mrKey && !paidMrSet.has(mrKey);
       });
     }
@@ -193,7 +193,7 @@ export function usePaymentData(onSaveSuccess?: () => void) {
 
   const availableArrivals = useMemo(() => {
     return verifiedArrivals.filter(arr => {
-      const mrKey = String(arr.mr_no || arr.final_arrival_no || arr.arrival_no || arr.temporary_arrival_no || '').trim().toUpperCase();
+      const mrKey = String(arr.mr_no || arr.final_arrival_no || '').trim().toUpperCase();
       if (!mrKey || mrKey === 'N/A') return true;
       return !paidMrSet.has(mrKey);
     });
@@ -232,7 +232,6 @@ export function usePaymentData(onSaveSuccess?: () => void) {
           faRes,
           miRes,
           mimRes,
-          tmrRes,
           rlRes
         ] = await Promise.all([
           supabase.from('grade_master').select('*').then(r => r.data || [], () => []),
@@ -247,7 +246,6 @@ export function usePaymentData(onSaveSuccess?: () => void) {
           supabase.from('final_arrival').select('*').order('created_at', { ascending: false }).then(r => r.data || [], () => []),
           supabase.from('material_inspection').select('*').order('created_at', { ascending: false }).then(r => r.data || [], () => []),
           supabase.from('mill_inspection_master').select('*').order('created_at', { ascending: false }).then(r => r.data || [], () => []),
-          supabase.from('temporary_material_received').select('*').order('created_at', { ascending: false }).then(r => r.data || [], () => []),
           supabase.from('return_lorry').select('*').then(r => r.data || [], () => [])
         ]);
 
@@ -272,8 +270,7 @@ export function usePaymentData(onSaveSuccess?: () => void) {
               d.voucher_no,
               d.payment_id,
               d.master_id,
-              d.mr_no,
-              d.arrival_no
+              d.mr_no
             ]
               .map(k => String(k || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, ''))
               .filter(Boolean);
@@ -288,7 +285,7 @@ export function usePaymentData(onSaveSuccess?: () => void) {
           payData = payData.map((p: any) => {
             const vKey = String(p.voucher_no || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
             const idKey = String(p.payment_id || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
-            const mrKey = String(p.mr_no || p.arrival_no || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+            const mrKey = String(p.mr_no || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
 
             let details: any[] = p.details || [];
             if (details.length === 0) {
@@ -306,30 +303,16 @@ export function usePaymentData(onSaveSuccess?: () => void) {
 
         const combinedMap = new Map<string, any>();
 
-        (tmrRes || []).forEach((t: any) => {
-          const key = t.temporary_arrival_no || t.amad_no || t.arrival_no || t.mr_no;
-          if (key) {
-            combinedMap.set(key, {
-              ...t,
-              mr_no: key,
-              arrival_no: key,
-              supplier: t.supplier || t.supplier_name || t.party_name,
-              broker: t.broker || t.broker_name,
-              po_no: t.po_no || t.mill_po_no,
-              source_module: 'temporary_material_received'
-            });
-          }
-        });
-
+        // Strictly key verified arrivals by M.R. No. (never Arrival No. / AR...)
         (faRes || []).forEach((item: any) => {
-          const key = item.mr_no || item.final_arrival_no || item.arrival_no || item.temporary_arrival_no;
-          if (key) {
+          const key = String(item.mr_no || item.final_arrival_no || '').trim();
+          if (key && !key.toUpperCase().startsWith('AR')) {
             const existing = combinedMap.get(key) || {};
             combinedMap.set(key, {
               ...existing,
               ...item,
               mr_no: key,
-              arrival_no: key,
+              arrival_no: item.arrival_no || item.temporary_arrival_no || existing.arrival_no || '',
               supplier: item.supplier || item.supplier_name || item.party_name || existing.supplier,
               broker: item.broker || item.broker_name || existing.broker,
               po_no: item.po_no || item.mill_po_no || existing.po_no,
@@ -339,14 +322,14 @@ export function usePaymentData(onSaveSuccess?: () => void) {
         });
 
         (mimRes || []).forEach((item: any) => {
-          const key = item.mr_no || item.arrival_no;
-          if (key) {
+          const key = String(item.mr_no || '').trim();
+          if (key && !key.toUpperCase().startsWith('AR')) {
             const existing = combinedMap.get(key) || {};
             combinedMap.set(key, {
               ...existing,
               ...item,
               mr_no: key,
-              arrival_no: key,
+              arrival_no: item.arrival_no || existing.arrival_no || '',
               supplier: item.supplier_name || item.supplier || existing.supplier,
               broker: item.broker_name || item.broker || existing.broker,
               po_no: item.po_no || item.mill_po_no || existing.po_no,
@@ -356,14 +339,14 @@ export function usePaymentData(onSaveSuccess?: () => void) {
         });
 
         (miRes || []).forEach((item: any) => {
-          const key = item.mr_no || item.arrival_no || item.final_arrival_no;
-          if (key) {
+          const key = String(item.mr_no || '').trim();
+          if (key && !key.toUpperCase().startsWith('AR')) {
             const existing = combinedMap.get(key) || {};
             combinedMap.set(key, {
               ...existing,
               ...item,
               mr_no: key,
-              arrival_no: key,
+              arrival_no: item.arrival_no || existing.arrival_no || '',
               supplier: item.supplier_name || item.supplier || existing.supplier,
               broker: item.broker_name || item.broker || existing.broker,
               po_no: item.po_no || item.mill_po_no || existing.po_no,
@@ -417,7 +400,7 @@ export function usePaymentData(onSaveSuccess?: () => void) {
           return status !== 'cancelled' && status !== 'rejected';
         })
         .map(item => {
-          const mrKey = String(item.mr_no || item.final_arrival_no || item.arrival_no || '').trim().toUpperCase();
+          const mrKey = String(item.mr_no || item.final_arrival_no || '').trim().toUpperCase();
           const matchedRl = mrKey ? rlByMrMap.get(mrKey) : null;
           if (matchedRl) {
             return {
@@ -730,24 +713,27 @@ export function usePaymentData(onSaveSuccess?: () => void) {
       }) || linkedMrs[0];
 
       if (matchingArrival && !selectedMrNo) {
-        handleMrSelection(matchingArrival.mr_no || matchingArrival.final_arrival_no || matchingArrival.arrival_no || matchingArrival.temporary_arrival_no, po);
+        const nextMr = matchingArrival.mr_no || matchingArrival.final_arrival_no || '';
+        if (nextMr) handleMrSelection(nextMr, po);
       } else if (selectedMrNo) {
         const isCurrentPaid = isMrAlreadyProcessed(selectedMrNo, paymentList, isEdit ? masterData.voucher_no : undefined, poNo).isPaid;
         const isCurrentLinked = linkedMrs.some(a => {
-          const arrMr = String(a.mr_no || a.final_arrival_no || a.arrival_no || a.temporary_arrival_no || '').trim().toUpperCase();
+          const arrMr = String(a.mr_no || a.final_arrival_no || '').trim().toUpperCase();
           const target = String(selectedMrNo).trim().toUpperCase();
-          return arrMr === target || arrMr.replace(/^MR0*/, '') === target.replace(/^MR0*/, '');
+          return arrMr === target || (arrMr.startsWith('MR') && target.startsWith('MR') && arrMr.replace(/^MR0*/, '') === target.replace(/^MR0*/, ''));
         });
         if (isCurrentPaid || !isCurrentLinked) {
           if (matchingArrival) {
-            handleMrSelection(matchingArrival.mr_no || matchingArrival.final_arrival_no || matchingArrival.arrival_no || matchingArrival.temporary_arrival_no, po);
+            const nextMr = matchingArrival.mr_no || matchingArrival.final_arrival_no || '';
+            if (nextMr) handleMrSelection(nextMr, po);
           } else {
             setSelectedMrNo('');
             setMasterData(prev => ({ ...prev, mr_no: '', arrival_no: '' }));
           }
         }
       } else if (matchingArrival) {
-        handleMrSelection(matchingArrival.mr_no || matchingArrival.final_arrival_no || matchingArrival.arrival_no || matchingArrival.temporary_arrival_no, po);
+        const nextMr = matchingArrival.mr_no || matchingArrival.final_arrival_no || '';
+        if (nextMr) handleMrSelection(nextMr, po);
       }
     }
   };
@@ -766,34 +752,34 @@ export function usePaymentData(onSaveSuccess?: () => void) {
     }
 
     let arrival = verifiedArrivals.find(a => {
-      const arrMr = String(a.mr_no || a.final_arrival_no || a.arrival_no || a.temporary_arrival_no || a.amad_no || '').trim().toUpperCase();
+      const arrMr = String(a.mr_no || a.final_arrival_no || '').trim().toUpperCase();
       const target = String(mrNo).trim().toUpperCase();
-      return arrMr === target || arrMr.replace(/^MR0*/, '') === target.replace(/^MR0*/, '');
+      return Boolean(arrMr && target && (arrMr === target || (arrMr.startsWith('MR') && target.startsWith('MR') && arrMr.replace(/^MR0*/, '') === target.replace(/^MR0*/, ''))));
     });
 
-    // Fallback if not found in verifiedArrivals
+    // Fallback if not found in verifiedArrivals (strictly match mr_no, never arrival_no)
     if (!arrival && supabase) {
       try {
         const cleanMr = mrNo.trim().toUpperCase();
+        const mrNum = cleanMr.startsWith('MR') ? cleanMr.replace(/^MR[-_ ]?/i, '') : '';
         const candidateKeys = Array.from(new Set([
           cleanMr,
-          cleanMr.replace(/^MR[-_ ]?/i, ''),
-          `MR${cleanMr.replace(/^MR[-_ ]?/i, '')}`,
-          `MR0${cleanMr.replace(/^MR[-_ ]?/i, '')}`,
-          `MR00${cleanMr.replace(/^MR[-_ ]?/i, '')}`
-        ]));
+          mrNum ? `MR${mrNum}` : '',
+          mrNum ? `MR0${mrNum}` : '',
+          mrNum ? `MR00${mrNum}` : ''
+        ].filter(Boolean)));
         for (const k of candidateKeys) {
           const { data: miLive } = await supabase
             .from('material_inspection')
             .select('*')
-            .or(`mr_no.eq.${k},arrival_no.eq.${k}`)
+            .eq('mr_no', k)
             .limit(1)
             .maybeSingle();
           if (miLive) {
             arrival = {
               ...miLive,
-              mr_no: miLive.mr_no || miLive.arrival_no || k,
-              arrival_no: miLive.arrival_no || miLive.mr_no || k,
+              mr_no: miLive.mr_no || k,
+              arrival_no: miLive.arrival_no || '',
               supplier: miLive.supplier_name || miLive.supplier,
               broker: miLive.broker_name || miLive.broker,
               po_no: miLive.po_no || miLive.mill_po_no,
@@ -845,20 +831,18 @@ export function usePaymentData(onSaveSuccess?: () => void) {
       
       if (supabase) {
         try {
-          const targetMr = arrival.mr_no || arrival.final_arrival_no || arrival.arrival_no || mrNo;
-          const cleanMr = targetMr.replace(/^MR[-_ ]?/i, '');
+          const targetMr = String(arrival.mr_no || arrival.final_arrival_no || mrNo || '').trim();
+          const mrNum = /^MR/i.test(targetMr) ? targetMr.replace(/^MR[-_ ]?/i, '') : '';
           const candidateKeys = Array.from(new Set([
             targetMr,
             mrNo,
             arrival.mr_no,
             arrival.final_arrival_no,
-            arrival.arrival_no,
-            cleanMr,
-            `MR${cleanMr}`,
-            `MR-${cleanMr}`,
-            `MR0${cleanMr}`,
-            `MR00${cleanMr}`
-          ].filter(Boolean)));
+            mrNum ? `MR${mrNum}` : '',
+            mrNum ? `MR-${mrNum}` : '',
+            mrNum ? `MR0${mrNum}` : '',
+            mrNum ? `MR00${mrNum}` : ''
+          ].map(v => String(v || '').trim()).filter(v => v && !v.toUpperCase().startsWith('AR'))));
 
           for (const key of candidateKeys) {
             const midRes = await supabase
@@ -877,7 +861,7 @@ export function usePaymentData(onSaveSuccess?: () => void) {
               const miRes = await supabase
                 .from('material_inspection')
                 .select('*')
-                .or(`mr_no.eq.${key},arrival_no.eq.${key}`)
+                .eq('mr_no', key)
                 .limit(1)
                 .maybeSingle();
               if (miRes.data) {
@@ -1015,7 +999,7 @@ export function usePaymentData(onSaveSuccess?: () => void) {
         broker: arrival.broker || po?.broker || prev.broker,
         po_type: po?.po_type || 'Standard',
         lorry_number: arrival.lorry_number || arrival.vehicle_no || prev.lorry_number,
-        arrival_no: arrival.final_arrival_no || arrival.mr_no || prev.arrival_no,
+        arrival_no: arrival.arrival_no || prev.arrival_no,
         arrival_date: arrival.date || deductions.arrivalDate || prev.arrival_date,
         total_amount: grossVal > 0 ? grossVal : Math.round(prev.total_amount || 0),
         payable_amt: grossVal > 0 ? grossVal : Math.round(prev.payable_amt || 0),
@@ -1040,7 +1024,7 @@ export function usePaymentData(onSaveSuccess?: () => void) {
     }
 
     const hasPo = Boolean((masterData.po_no && masterData.po_no.trim()) || (selectedPoNo && selectedPoNo.trim()));
-    const hasMr = Boolean((masterData.mr_no && masterData.mr_no.trim()) || (selectedMrNo && selectedMrNo.trim()) || (masterData.arrival_no && masterData.arrival_no.trim()));
+    const hasMr = Boolean((masterData.mr_no && masterData.mr_no.trim()) || (selectedMrNo && selectedMrNo.trim()));
 
     if (!hasPo && !hasMr) {
       setErrorMessage("Validation Error: Both 'Final P.O' and 'Inspection' have no data. Please select at least one Final P.O or Inspection record before saving.");
@@ -1048,7 +1032,7 @@ export function usePaymentData(onSaveSuccess?: () => void) {
       return;
     }
 
-    const checkMr = String(masterData.mr_no || selectedMrNo || masterData.arrival_no || '').trim().toUpperCase();
+    const checkMr = String(masterData.mr_no || selectedMrNo || '').trim().toUpperCase();
     const checkPo = String(masterData.po_no || selectedPoNo || '').trim().toUpperCase();
 
     if (checkMr && checkMr !== 'N/A') {
@@ -1073,7 +1057,7 @@ export function usePaymentData(onSaveSuccess?: () => void) {
           const { data: liveConflicts } = await supabase
             .from('payment_master')
             .select('voucher_no, mr_no, arrival_no, po_no, supplier, party_name, status')
-            .or(`mr_no.ilike.%${checkMr}%,arrival_no.ilike.%${checkMr}%`);
+            .ilike('mr_no', checkMr);
 
           if (liveConflicts && liveConflicts.length > 0) {
             const conflict = liveConflicts.find((p: any) => {
@@ -1083,7 +1067,7 @@ export function usePaymentData(onSaveSuccess?: () => void) {
               const pStatus = String(p.status || '').toLowerCase().trim();
               if (pStatus === 'cancelled' || pStatus === 'rejected') return false;
 
-              const pMr = String(p.mr_no || p.arrival_no || '').trim().toUpperCase();
+              const pMr = String(p.mr_no || '').trim().toUpperCase();
               return pMr === checkMr;
             });
 
@@ -1329,7 +1313,7 @@ export function usePaymentData(onSaveSuccess?: () => void) {
         (p) => String(p.voucher_no || '').trim().toUpperCase() === targetVoucher.toUpperCase()
       );
       const paymentId = targetPayment?.payment_id;
-      const linkedMrNo = String(targetPayment?.mr_no || targetPayment?.arrival_no || '').trim();
+      const linkedMrNo = String(targetPayment?.mr_no || '').trim();
       const linkedPoNo = String(targetPayment?.po_no || '').trim();
 
       // 1. Invalidate caches upfront so queries don't return stale data
@@ -1403,8 +1387,7 @@ export function usePaymentData(onSaveSuccess?: () => void) {
         if (linkedMrNo) {
           const mrPayments = activeRemaining.filter(
             (p: any) =>
-              String(p.mr_no || '').trim().toUpperCase() === linkedMrNo.toUpperCase() ||
-              String(p.arrival_no || '').trim().toUpperCase() === linkedMrNo.toUpperCase()
+              String(p.mr_no || '').trim().toUpperCase() === linkedMrNo.toUpperCase()
           );
           const mrPaidSum = mrPayments.reduce((s: number, p: any) => s + (Number(p.paid_amount) || 0), 0);
           const mrPayable = mrPayments.reduce((s: number, p: any) => Math.max(s, Number(p.payable_amt || p.total_amount) || 0), 0);
@@ -1496,7 +1479,7 @@ export function usePaymentData(onSaveSuccess?: () => void) {
 
     const deductions = await resolvePaymentDeductionsForPoAndMr({
       poNo: item.po_no,
-      mrNo: item.mr_no || item.arrival_no,
+      mrNo: item.mr_no,
       cols: loadedCols,
       saudaCheckPoints,
       purchaseOrders,

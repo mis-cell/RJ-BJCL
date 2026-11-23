@@ -299,7 +299,7 @@ export function PaymentDashboardView({
       const dateStr = getPaymentDate(p);
       const formattedDate = dateStr ? new Date(dateStr).toLocaleDateString('en-IN') : '';
 
-      const cleanMr = normalizeKey(p.mr_no || (p as any).arrival_no);
+      const cleanMr = normalizeKey(p.mr_no);
       const cleanVoucher = normalizeKey(p.voucher_no);
       const mrCleanStripped = cleanMr.replace(/^MR/, '');
       const voucherCleanStripped = cleanVoucher.replace(/^PAY/, '');
@@ -627,7 +627,7 @@ export function PaymentDashboardView({
                   const isAdvanceYes = (p.advance_payment_done || 'No').toLowerCase() === 'yes';
                   const dateStr = getPaymentDate(p);
 
-                  const cleanMr = normalizeKey(p.mr_no || (p as any).arrival_no);
+                  const cleanMr = normalizeKey(p.mr_no);
                   const cleanVoucher = normalizeKey(p.voucher_no);
                   const mrCleanStripped = cleanMr.replace(/^MR/, '');
                   const voucherCleanStripped = cleanVoucher.replace(/^PAY/, '');

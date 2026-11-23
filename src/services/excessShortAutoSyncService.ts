@@ -154,8 +154,8 @@ export function computeExcessShortPayload(
 
   const uniqueMrMap = new Map<string, { mrNo: string; date: string; rawDate: string; source: any }>();
   matchingInsps.forEach((insp: any) => {
-    const num = String(insp.mr_no || insp.arrival_no || '').trim();
-    if (num && num.toUpperCase() !== 'NO' && num.toUpperCase() !== 'N/A' && num !== '-') {
+    const num = String(insp.mr_no || '').trim();
+    if (num && num.toUpperCase() !== 'NO' && num.toUpperCase() !== 'N/A' && num !== '-' && !num.toUpperCase().startsWith('AR')) {
       const rawD = normalizeToYMD(
         insp.arrival_date || insp.mr_date || insp.inspection_date || insp.date || insp.created_at || ''
       );

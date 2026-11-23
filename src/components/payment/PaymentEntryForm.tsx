@@ -108,9 +108,9 @@ export function PaymentEntryForm({
   };
 
   const selectedArrival = verifiedArrivals.find(a => {
-    const arrMr = String(a.mr_no || a.final_arrival_no || a.arrival_no || a.temporary_arrival_no || a.amad_no || '').trim().toUpperCase();
+    const arrMr = String(a.mr_no || a.final_arrival_no || '').trim().toUpperCase();
     const target = String(selectedMrNo).trim().toUpperCase();
-    return Boolean(target && (arrMr === target || arrMr.replace(/^MR0*/, '') === target.replace(/^MR0*/, '')));
+    return Boolean(arrMr && target && (arrMr === target || (arrMr.startsWith('MR') && target.startsWith('MR') && arrMr.replace(/^MR0*/, '') === target.replace(/^MR0*/, ''))));
   });
   const inspectionPoNo = selectedArrival?.po_no || selectedArrival?.mill_po_no || '';
   const matchedFinalPo = inspectionPoNo ? findMatchingPo(inspectionPoNo, purchaseOrders) : null;

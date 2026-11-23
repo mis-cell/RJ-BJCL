@@ -130,8 +130,6 @@ export async function resolvePaymentDeductionsForPoAndMr(params: {
     mrNo ||
     arrival?.mr_no ||
     arrival?.final_arrival_no ||
-    arrival?.arrival_no ||
-    arrival?.temporary_arrival_no ||
     ''
   ).trim();
 
@@ -251,12 +249,11 @@ export async function resolvePaymentDeductionsForPoAndMr(params: {
         const noPtfPo = cleanPoNo.replace(/\(PTF\)/gi, '').trim();
         const ptfPo = `${noPtfPo}(PTF)`;
         const poOrFilter = `po_no.eq."${cleanPoNo}",po_no.eq."#${cleanPoNo}",po_no.eq."${noPtfPo}",po_no.eq."${ptfPo}"`;
-        const [miRows, faRows, tmrRows] = await Promise.all([
+        const [miRows, faRows] = await Promise.all([
           supabase.from('material_inspection').select('*').or(poOrFilter).then(r => r.data || [], () => []),
-          supabase.from('final_arrival').select('*').or(poOrFilter).then(r => r.data || [], () => []),
-          supabase.from('temporary_material_received').select('*').or(poOrFilter).then(r => r.data || [], () => [])
+          supabase.from('final_arrival').select('*').or(poOrFilter).then(r => r.data || [], () => [])
         ]);
-        arrivalsPool = [...arrivalsPool, ...miRows, ...faRows, ...tmrRows];
+        arrivalsPool = [...arrivalsPool, ...miRows, ...faRows];
       } catch (_e) {}
     }
 
@@ -268,33 +265,30 @@ export async function resolvePaymentDeductionsForPoAndMr(params: {
   let totalDeductionsAndPenalties = 0;
   let deductionSummaryText = '';
 
-  const cleanMr = rawMrNo.replace(/^MR[-_ ]?/i, '').trim();
+  const mrNumPart = /^MR/i.test(rawMrNo) ? rawMrNo.replace(/^MR[-_ ]?/i, '').trim() : '';
   const mrCandidateKeys = Array.from(
     new Set(
       [
         rawMrNo,
         arrival?.mr_no,
         arrival?.final_arrival_no,
-        arrival?.arrival_no,
-        arrival?.temporary_arrival_no,
-        cleanMr ? cleanMr : '',
-        cleanMr ? `MR${cleanMr}` : '',
-        cleanMr ? `MR-${cleanMr}` : '',
-        cleanMr ? `MR0${cleanMr}` : '',
-        cleanMr ? `MR00${cleanMr}` : ''
+        mrNumPart ? `MR${mrNumPart}` : '',
+        mrNumPart ? `MR-${mrNumPart}` : '',
+        mrNumPart ? `MR0${mrNumPart}` : '',
+        mrNumPart ? `MR00${mrNumPart}` : ''
       ]
         .map(v => String(v || '').trim())
-        .filter(Boolean)
+        .filter(v => Boolean(v) && !v.toUpperCase().startsWith('AR'))
     )
   );
 
-  // If no MR was explicitly passed and PO has only a single linked arrival, use that arrival
+  // If no MR was explicitly passed and PO has only a single linked arrival, use that arrival's M.R. No.
   if (mrCandidateKeys.length === 0 && cleanPoNo && verifiedArrivals.length > 0) {
     const linked = getLinkedMrsForPo(cleanPoNo, verifiedArrivals);
     if (linked.length === 1) {
-      [linked[0].mr_no, linked[0].final_arrival_no, linked[0].arrival_no, linked[0].temporary_arrival_no]
+      [linked[0].mr_no, linked[0].final_arrival_no]
         .map(v => String(v || '').trim())
-        .filter(Boolean)
+        .filter(v => Boolean(v) && !v.toUpperCase().startsWith('AR'))
         .forEach(k => {
           if (!mrCandidateKeys.includes(k)) mrCandidateKeys.push(k);
         });
@@ -305,13 +299,10 @@ export async function resolvePaymentDeductionsForPoAndMr(params: {
 
   if (mrCandidateKeys.length > 0 && supabase) {
     try {
-      const orClauses = mrCandidateKeys
-        .flatMap(k => [`mr_no.eq.${k}`, `arrival_no.eq.${k}`])
-        .join(',');
       const { data: dedRows } = await supabase
         .from('mill_inspection_deduction')
         .select('*')
-        .or(orClauses);
+        .in('mr_no', mrCandidateKeys);
 
       if (dedRows && dedRows.length > 0) {
         parsedDedItems = dedRows.map((d: any) => {
@@ -337,8 +328,7 @@ export async function resolvePaymentDeductionsForPoAndMr(params: {
       const upperKeys = new Set(mrCandidateKeys.map(k => k.toUpperCase()));
       const matchedLocal = (localDedRows || []).filter((d: any) => {
         const dMr = String(d.mr_no || '').trim().toUpperCase();
-        const dArr = String(d.arrival_no || '').trim().toUpperCase();
-        return (dMr && upperKeys.has(dMr)) || (dArr && upperKeys.has(dArr));
+        return Boolean(dMr && upperKeys.has(dMr));
       });
       if (matchedLocal.length > 0) {
         parsedDedItems = matchedLocal.map((d: any) => {
@@ -362,13 +352,10 @@ export async function resolvePaymentDeductionsForPoAndMr(params: {
   let liveInspMaster: any = arrival || null;
   if (parsedDedItems.length === 0 && mrCandidateKeys.length > 0 && supabase) {
     try {
-      const orClauses = mrCandidateKeys
-        .flatMap(k => [`mr_no.eq.${k}`, `arrival_no.eq.${k}`])
-        .join(',');
       const { data: miData } = await supabase
         .from('material_inspection')
         .select('*')
-        .or(orClauses)
+        .in('mr_no', mrCandidateKeys)
         .limit(1);
       if (miData && miData[0]) {
         liveInspMaster = { ...liveInspMaster, ...miData[0] };
@@ -376,7 +363,7 @@ export async function resolvePaymentDeductionsForPoAndMr(params: {
         const { data: mimData } = await supabase
           .from('mill_inspection_master')
           .select('*')
-          .or(orClauses)
+          .in('mr_no', mrCandidateKeys)
           .limit(1);
         if (mimData && mimData[0]) {
           liveInspMaster = { ...liveInspMaster, ...mimData[0] };
@@ -555,9 +542,7 @@ export async function resolvePaymentDeductionsForPoAndMr(params: {
       const orClauses = mrCandidateKeys
         .flatMap(k => [
           `mr_no.eq.${k}`,
-          `final_arrival_no.eq.${k}`,
-          `arrival_no.eq.${k}`,
-          `temporary_arrival_no.eq.${k}`
+          `final_arrival_no.eq.${k}`
         ])
         .join(',');
       const { data: faData } = await supabase
@@ -569,14 +554,12 @@ export async function resolvePaymentDeductionsForPoAndMr(params: {
       if (faData && (faData.date || faData.arrival_date)) {
         arrivalDate = String(faData.date || faData.arrival_date).trim();
       }
-      if (!arrivalDate) {
-        const tempOrClauses = mrCandidateKeys
-          .flatMap(k => [`temporary_arrival_no.eq.${k}`, `amad_no.eq.${k}`, `arrival_no.eq.${k}`])
-          .join(',');
+      if (!arrivalDate && faData?.temporary_arrival_no) {
+        const linkedTempNo = String(faData.temporary_arrival_no).trim();
         const { data: tmrData } = await supabase
           .from('temporary_material_received')
           .select('date, arrival_date')
-          .or(tempOrClauses)
+          .eq('temporary_arrival_no', linkedTempNo)
           .limit(1)
           .maybeSingle();
         if (tmrData && (tmrData.date || tmrData.arrival_date)) {
@@ -632,13 +615,10 @@ export async function resolvePaymentDeductionsForPoAndMr(params: {
   let weightQtl = extractFinalReceiptQtlFromInsp(liveInspMaster) || extractFinalReceiptQtlFromInsp(arrival);
   if (weightQtl <= 0 && mrCandidateKeys.length > 0 && supabase) {
     try {
-      const inspOrClauses = mrCandidateKeys
-        .flatMap(k => [`mill_inspection_no.eq.${k}`, `final_arrival_no.eq.${k}`, `arrival_no.eq.${k}`, `mr_no.eq.${k}`])
-        .join(',');
       const { data: miRow } = await supabase
         .from('material_inspection')
         .select('final_receipt_wt, grid_details')
-        .or(inspOrClauses)
+        .in('mr_no', mrCandidateKeys)
         .limit(1)
         .maybeSingle();
       if (miRow) {
@@ -1203,7 +1183,7 @@ export function getLinkedMrsForPo(poOrPoNo: any, arrivalsList: any[] = []): any[
   const targetDigits = cleanTarget.replace(/[^0-9]/g, '');
 
   return arrivalsList.filter(arr => {
-    const arrMr = String(arr.mr_no || arr.final_arrival_no || arr.arrival_no || '').trim().toUpperCase();
+    const arrMr = String(arr.mr_no || arr.final_arrival_no || '').trim().toUpperCase();
     if (boundMrNo && arrMr && arrMr === boundMrNo) return true;
 
     const arrPo1 = String(arr.po_no || '').trim().toUpperCase().replace(/^#+/, '').trim();
@@ -1246,7 +1226,7 @@ export function isMrAlreadyProcessed(
 
   const mrStr = typeof mrNoOrArrival === 'string'
     ? mrNoOrArrival
-    : (mrNoOrArrival.mr_no || mrNoOrArrival.final_arrival_no || mrNoOrArrival.arrival_no || mrNoOrArrival.temporary_arrival_no || '');
+    : (mrNoOrArrival.mr_no || mrNoOrArrival.final_arrival_no || '');
   
   const cleanMr = String(mrStr).trim().toUpperCase();
   if (!cleanMr || cleanMr === 'N/A') {
@@ -1269,7 +1249,7 @@ export function isMrAlreadyProcessed(
       return false;
     }
 
-    const pMr = String(p.mr_no || p.arrival_no || '').trim().toUpperCase();
+    const pMr = String(p.mr_no || '').trim().toUpperCase();
     if (!pMr) return false;
 
     // Direct MR match

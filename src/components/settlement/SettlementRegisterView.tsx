@@ -228,17 +228,15 @@ export const SettlementRegisterView: React.FC<SettlementRegisterViewProps> = ({
         const brokStr = String(s.broker || '').toLowerCase();
         const lorryStr = String(s.lorry_number || '').toLowerCase();
         const billStr = String(s.payable_bill_no || s.voucher_no || '').toLowerCase();
-        const arrStr = String(s.arrival_no || '').toLowerCase();
 
-        // Direct substring search
+        // Direct substring search (strictly M.R. No., never Arrival No.)
         if (
           mrStr.includes(term) ||
           poStr.includes(term) ||
           supStr.includes(term) ||
           brokStr.includes(term) ||
           lorryStr.includes(term) ||
-          billStr.includes(term) ||
-          arrStr.includes(term)
+          billStr.includes(term)
         ) {
           return true;
         }
@@ -248,13 +246,11 @@ export const SettlementRegisterView: React.FC<SettlementRegisterViewProps> = ({
           const mrDigits = mrStr.replace(/[^0-9]/g, '').replace(/^0+/, '');
           const poDigits = poStr.replace(/[^0-9]/g, '').replace(/^0+/, '');
           const billDigits = billStr.replace(/[^0-9]/g, '').replace(/^0+/, '');
-          const arrDigits = arrStr.replace(/[^0-9]/g, '').replace(/^0+/, '');
 
           if (
             mrDigits.includes(termDigits) ||
             poDigits.includes(termDigits) ||
-            billDigits.includes(termDigits) ||
-            arrDigits.includes(termDigits)
+            billDigits.includes(termDigits)
           ) {
             return true;
           }

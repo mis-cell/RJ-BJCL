@@ -120,7 +120,7 @@ export function aggregatePremiumsFromTables(
 
   // Process details table
   (paymentDetails || []).forEach((det: any) => {
-    const rawMr = String(det.mr_no || det.arrival_no || '').trim();
+    const rawMr = String(det.mr_no || '').trim();
     const rawVoucher = String(det.voucher_no || '').trim();
     const cleanMr = normalizeKey(rawMr);
     const cleanVoucher = normalizeKey(rawVoucher);
@@ -131,7 +131,7 @@ export function aggregatePremiumsFromTables(
                          masterByMr.get(cleanMr) || 
                          masterById.get(cleanId) || {};
 
-    const resolvedMr = rawMr || parentMaster.mr_no || parentMaster.arrival_no || 'MR-UNKNOWN';
+    const resolvedMr = rawMr || parentMaster.mr_no || 'MR-UNKNOWN';
     const primaryKey = cleanMr || cleanVoucher || normalizeKey(resolvedMr);
     if (!primaryKey) return;
 
@@ -237,7 +237,7 @@ export function aggregatePremiumsFromTables(
 
   // 3. Fallback: Check if payment_master itself has explicit header-level premium not yet caught
   paymentMasters.forEach(pm => {
-    const rawMr = String(pm.mr_no || pm.arrival_no || '').trim();
+    const rawMr = String(pm.mr_no || '').trim();
     const cleanMr = normalizeKey(rawMr);
     const cleanVoucher = normalizeKey(pm.voucher_no);
     const primaryKey = cleanMr || cleanVoucher;

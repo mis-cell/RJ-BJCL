@@ -48,7 +48,7 @@ export const SearchableMrSelect: React.FC<SearchableMrSelectProps> = ({
 
   const filteredList = baseList.filter((arr) => {
     const mrNo = String(
-      arr.mr_no || arr.final_arrival_no || arr.arrival_no || ""
+      arr.mr_no || arr.final_arrival_no || ""
     ).toLowerCase();
 
     // Show only MR series
@@ -79,14 +79,14 @@ export const SearchableMrSelect: React.FC<SearchableMrSelectProps> = ({
 
   const masterListToFind = allArrivals || verifiedArrivals;
   const selectedArr = masterListToFind.find(a => {
-    const arrMr = String(a.mr_no || a.final_arrival_no || a.arrival_no || a.temporary_arrival_no || a.amad_no || '').trim().toUpperCase();
+    const arrMr = String(a.mr_no || a.final_arrival_no || '').trim().toUpperCase();
     const target = String(selectedMrNo).trim().toUpperCase();
-    return Boolean(target && (arrMr === target || arrMr.replace(/^MR0*/, '') === target.replace(/^MR0*/, '')));
+    return Boolean(arrMr && target && (arrMr === target || (arrMr.startsWith('MR') && target.startsWith('MR') && arrMr.replace(/^MR0*/, '') === target.replace(/^MR0*/, ''))));
   });
 
   const getLabel = () => {
     if (selectedArr) {
-      const mr = selectedArr.mr_no || selectedArr.final_arrival_no || selectedArr.arrival_no || selectedArr.temporary_arrival_no || selectedMrNo;
+      const mr = selectedArr.mr_no || selectedArr.final_arrival_no || selectedMrNo;
       const supp = selectedArr.supplier || selectedArr.supplier_name || selectedArr.party_name || 'N/A';
       const po = selectedArr.po_no || selectedArr.mill_po_no || 'N/A';
       const lorry = (selectedArr.lorry_number || selectedArr.lorry_no) ? ` | Lorry: ${selectedArr.lorry_number || selectedArr.lorry_no}` : '';
@@ -169,7 +169,7 @@ export const SearchableMrSelect: React.FC<SearchableMrSelectProps> = ({
             </div>
 
             {filteredList.map((arr, i) => {
-              const mr = arr.mr_no || arr.final_arrival_no || arr.arrival_no;
+              const mr = arr.mr_no || arr.final_arrival_no || '';
               const isSelected = selectedMrNo === mr;
 
               return (
