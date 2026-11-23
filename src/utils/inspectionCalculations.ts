@@ -292,18 +292,40 @@ export function calculateBaleWeightDeduction(
     return { totalBales, totalReceiptGrossWtMt, totalWeightKg, avgKgPerBale, matchedRule: null, ruleName: "", rate: 0 };
   }
 
-  const masterList = Array.isArray(deductionMasterList) ? deductionMasterList : [];
+  const masterList = Array.isArray(deductionMasterList) ? [...deductionMasterList] : [];
+  const has142Rule = masterList.some(d => d?.is_active !== false && /BALE/i.test(String(d?.deduction || "")) && /142/.test(String(d?.deduction || "")));
+  const has139Rule = masterList.some(d => d?.is_active !== false && /BALE/i.test(String(d?.deduction || "")) && /139/.test(String(d?.deduction || "")));
+  if (!has142Rule) {
+    masterList.push({
+      deduction: "IN CASE OF BALE IF WEIGHT IS LESS THAN <142",
+      rate_per_qntl: 30,
+      rate_per_unit: 0,
+      is_active: true
+    });
+  }
+  if (!has139Rule) {
+    masterList.push({
+      deduction: "IN CASE OF BALES IF WEIGHT IS LESS THAN <139",
+      rate_per_qntl: 40,
+      rate_per_unit: null,
+      is_active: true
+    });
+  }
+
   const candidates: { rule: any; threshold: number; rate: number }[] = [];
 
   for (const d of masterList) {
+    if (d?.is_active === false) continue;
     const name = String(d.deduction || "").trim();
     if (!name) continue;
 
-    const isBaleRelated = /BALE/i.test(name) || !/DRUM|HALF|LOOSE/i.test(name);
-    const match = name.match(/LESS\s+THAN\s+(\d+(?:\.\d+)?)/i) || name.match(/<\s*(\d+(?:\.\d+)?)/i);
+    const isBaleRelated = !/DRUM|HALF|LOOSE/i.test(name);
+    const match = name.match(/LESS\s+THAN\s*<?\s*(\d+(?:\.\d+)?)/i) || name.match(/<\s*(\d+(?:\.\d+)?)/i);
     if (isBaleRelated && match) {
       const threshold = parseFloat(match[1]);
-      const rate = d.rate_per_unit != null ? Number(d.rate_per_unit) : (d.rate_per_qntl != null ? Number(d.rate_per_qntl) : 0);
+      const qntlRate = Number(d.rate_per_qntl) || 0;
+      const unitRate = Number(d.rate_per_unit) || 0;
+      const rate = qntlRate > 0 ? qntlRate : unitRate;
       if (!isNaN(threshold) && threshold > 0 && rate > 0) {
         if (avgKgPerBale < threshold) {
           candidates.push({ rule: d, threshold, rate });

@@ -197,6 +197,11 @@ export function useInspectionLogic() {
 
     setDeductionRows(prevRows => {
       let nextRows = [...prevRows];
+      const hasBaleMatch = matchedDeductions.some(m => m.category === "bale_weight");
+
+      if (!hasBaleMatch) {
+        nextRows = nextRows.filter(r => !(r.is_auto === true && isBaleWeightDeductionRule(r.deduction_type || "")));
+      }
 
       matchedDeductions.forEach(matched => {
         const existingIdx = nextRows.findIndex(
@@ -206,13 +211,19 @@ export function useInspectionLogic() {
         if (existingIdx >= 0) {
           const cur = nextRows[existingIdx];
           const hasSavedCustomAmount = Number(cur.deduction_amount) > 0 && Number(cur.deduction_rate) > 0;
-          if (!hasSavedCustomAmount) {
+          const shouldAutoUpdate =
+            !hasSavedCustomAmount ||
+            cur.is_auto === true ||
+            (matched.category === "bale_weight" && cur.deduction_type !== matched.ruleName);
+
+          if (shouldAutoUpdate) {
             nextRows[existingIdx] = {
               ...cur,
               deduction_type: matched.ruleName,
               deduction_rate: matched.rate,
               deduction_qty: matched.qty,
-              deduction_amount: matched.amount
+              deduction_amount: matched.amount,
+              is_auto: cur.is_auto ?? true
             };
           }
         } else {
@@ -229,7 +240,8 @@ export function useInspectionLogic() {
                 deduction_type: matched.ruleName,
                 deduction_rate: matched.rate,
                 deduction_qty: matched.qty,
-                deduction_amount: matched.amount
+                deduction_amount: matched.amount,
+                is_auto: true
               }
             ];
           } else {
@@ -238,7 +250,8 @@ export function useInspectionLogic() {
               deduction_type: matched.ruleName,
               deduction_rate: matched.rate,
               deduction_qty: matched.qty,
-              deduction_amount: matched.amount
+              deduction_amount: matched.amount,
+              is_auto: true
             });
           }
         }
@@ -255,7 +268,8 @@ export function useInspectionLogic() {
             r.deduction_type === nextRows[i].deduction_type &&
             Number(r.deduction_rate) === Number(nextRows[i].deduction_rate) &&
             Number(r.deduction_qty) === Number(nextRows[i].deduction_qty) &&
-            Number(r.deduction_amount) === Number(nextRows[i].deduction_amount)
+            Number(r.deduction_amount) === Number(nextRows[i].deduction_amount) &&
+            Boolean(r.is_auto) === Boolean(nextRows[i].is_auto)
         );
 
       if (isSame) {
@@ -282,10 +296,14 @@ export function useInspectionLogic() {
 
   const handleDeductionTypeChange = (idx: number, selectedName: string) => {
     const found = deductionMasterList.find(d => d.deduction === selectedName);
-    let rate = found ? (found.rate_per_unit != null ? Number(found.rate_per_unit) : (found.rate_per_qntl != null ? Number(found.rate_per_qntl) : 0)) : 0;
+    const isBaleRule = isBaleWeightDeductionRule(selectedName);
+    const unitRate = found ? (Number(found.rate_per_unit) || 0) : 0;
+    const qntlRate = found ? (Number(found.rate_per_qntl) || 0) : 0;
+    let rate = isBaleRule
+      ? (qntlRate > 0 ? qntlRate : unitRate)
+      : (unitRate > 0 ? unitRate : qntlRate);
 
     const autoCalc = calculateBaleWeightDeduction(detailRows, deductionMasterList);
-    const isBaleRule = isBaleWeightDeductionRule(selectedName);
 
     const totalGrossMt = (detailRows || []).reduce((sum, r) => {
       const wt = Number(r.receipt_gross_wt) > 0 
@@ -302,7 +320,7 @@ export function useInspectionLogic() {
       const rawHeaderWt = Number(headerForm?.gross_weight || headerForm?.challan_weight || 0);
       const qtlFromHeader = rawHeaderWt > 50 ? rawHeaderWt : Number((rawHeaderWt * 10).toFixed(2));
       defaultQty = qtlFromGross > 0 ? qtlFromGross : (qtlFromAudit > 0 ? qtlFromAudit : (qtlFromHeader > 0 ? qtlFromHeader : (autoCalc.totalBales > 0 ? autoCalc.totalBales : 1)));
-    } else if (found && found.rate_per_qntl != null && totalGrossMt > 0) {
+    } else if (found && Number(found.rate_per_qntl) > 0 && totalGrossMt > 0) {
       defaultQty = Number((totalGrossMt * 10).toFixed(2));
     } else if (selectedName.includes("DELIVERY CLAIM")) {
       const days = Number(headerForm?.detention_days) > 0 ? Number(headerForm?.detention_days) : 1;
@@ -319,6 +337,7 @@ export function useInspectionLogic() {
       current.deduction_rate = rate;
       current.deduction_qty = defaultQty;
       current.deduction_amount = Number((rate * defaultQty).toFixed(2));
+      current.is_auto = false;
       updated[idx] = current;
       syncHeaderDeductions(updated);
       return updated;
@@ -336,6 +355,7 @@ export function useInspectionLogic() {
       } else {
         current.deduction_amount = Number(((current.deduction_rate || 0) * (current.deduction_qty || 0)).toFixed(2));
       }
+      current.is_auto = false;
       updated[idx] = current;
       syncHeaderDeductions(updated);
       return updated;
