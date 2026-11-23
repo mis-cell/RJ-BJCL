@@ -56,6 +56,7 @@ export const InspectionDetailRowItem: React.FC<InspectionDetailRowItemProps> = m
   const isNcvClaimBlocked = isAutoBlocked(row, "ncv_claim");
   const isGradeDownActBlocked = isAutoBlocked(row, "grade_down_act");
   const isGradeDownClaimBlocked = isAutoBlocked(row, "grade_down_claim");
+  const isTotWtGrdBlocked = isAutoBlocked(row, "tot_wt_grd");
   const isFinalReceiptWtBlocked = isAutoBlocked(row, "final_receipt_wt");
   const isSettlementMoistureBlocked = isAutoBlocked(row, "settlement_moisture");
   const isSettlementGradeDownBlocked = isAutoBlocked(row, "settlement_grade_down");
@@ -511,6 +512,20 @@ export const InspectionDetailRowItem: React.FC<InspectionDetailRowItemProps> = m
           value={row.grade_down_claim || 0}
           onChange={(e) => !isGradeDownClaimBlocked && onDetailChange(index, "grade_down_claim", Number(e.target.value))}
           className={getFieldInputStyle(isGradeDownClaimBlocked)}
+        />
+      </td>
+
+      {/* Tot. Wt. Grd% */}
+      <td className="p-1.5 border-r border-slate-200">
+        <input
+          type="number"
+          step="0.01"
+          readOnly={isTotWtGrdBlocked}
+          tabIndex={isTotWtGrdBlocked ? -1 : 0}
+          title={isTotWtGrdBlocked ? "Auto-populated (Manual edit blocked)" : undefined}
+          value={row.tot_wt_grd || 0}
+          onChange={(e) => !isTotWtGrdBlocked && onDetailChange(index, "tot_wt_grd", Number(e.target.value))}
+          className={getFieldInputStyle(isTotWtGrdBlocked)}
         />
       </td>
 

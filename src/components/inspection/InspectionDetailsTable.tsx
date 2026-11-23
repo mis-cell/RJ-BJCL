@@ -99,7 +99,7 @@ export const InspectionDetailsTable: React.FC<InspectionDetailsTableProps> = ({
         }
       `}</style>
       <div className="table-scroll overflow-auto max-h-[calc(100vh-180px)] border-t border-slate-200">
-        <table className="min-w-[4300px] w-full text-xs border-collapse" onKeyDown={handleKeyDown}>
+        <table className="min-w-[4410px] w-full text-xs border-collapse" onKeyDown={handleKeyDown}>
           <thead>
             <tr className="bg-[#1e3a8a] text-white text-[12px] font-bold">
               <th rowSpan={2} className="p-2 border-r border-white/20 text-center sticky left-0 bg-[#1e3a8a] z-20 min-w-[50px] w-[50px]">Srl No.</th>
@@ -147,6 +147,7 @@ export const InspectionDetailsTable: React.FC<InspectionDetailsTableProps> = ({
               <th colSpan={2} className="p-2 border-r border-white/20 text-center bg-[#1d4ed8]">Dust %</th>
               <th colSpan={2} className="p-2 border-r border-white/20 text-center bg-[#1e40af]">NCV %</th>
               <th colSpan={2} className="p-2 border-r border-white/20 text-center bg-[#1d4ed8]">Grade Down %</th>
+              <th rowSpan={2} className="p-2 border-r border-white/20 text-center min-w-[110px]">Tot. Wt. Grd%</th>
               <th rowSpan={2} className="p-2 border-r border-white/20 text-center min-w-[140px]">Final Receipt Wt. (Claim)</th>
               <th colSpan={4} className="p-2 border-r border-emerald-400 text-center bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-700 text-white font-black shadow-inner">
                 <div className="flex items-center justify-center gap-1">
@@ -322,7 +323,7 @@ export const InspectionDetailsTable: React.FC<InspectionDetailsTableProps> = ({
               
               {/* Spacer columns */}
               <td
-                colSpan={14}
+                colSpan={15}
                 className="p-3 text-right font-extrabold text-emerald-900 bg-slate-100"
               >
               </td>

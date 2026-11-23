@@ -20,7 +20,7 @@ export const InspectionExpandedPanel: React.FC<InspectionExpandedPanelProps> = (
 }) => {
   return (
     <tr className="bg-slate-50 border-b-2 border-blue-200">
-      <td colSpan={48} className="p-4">
+      <td colSpan={49} className="p-4">
         <div className="bg-white border border-blue-200 rounded-xl p-4 shadow-inner">
           <div className="flex items-center justify-between mb-3 border-b border-slate-200 pb-2">
             <span className="text-xs font-extrabold text-blue-900 flex items-center gap-1.5">
