@@ -40,52 +40,142 @@ export interface PoMatchResult {
   totalReceivedMt?: number;
 }
 
-// Standard Jute Grade Code <-> Grade Name mapping dictionary
-const GRADE_CODE_NAME_MAP: Record<string, string> = {
-  '831': 'TD5', 'TD5': '831', 'TD-5': '831', 'TD.5': '831',
-  '832': 'TD6', 'TD6': '832', 'TD-6': '832', 'TD.6': '832',
-  '833': 'TD7', 'TD7': '833', 'TD-7': '833', 'TD.7': '833',
-  '834': 'TD8', 'TD8': '834', 'TD-8': '834', 'TD.8': '834',
-  '835': 'W5',  'W5': '835',  'W-5': '835',  'W.5': '835',
-  '836': 'W6',  'W6': '836',  'W-6': '836',  'W.6': '836',
-  '837': 'W7',  'W7': '837',  'W-7': '837',  'W.7': '837',
-  '838': 'W8',  'W8': '838',  'W-8': '838',  'W.8': '838',
-  '839': 'M5',  'M5': '839',  'M-5': '839',  'M.5': '839',
-  '840': 'M6',  'M6': '840',  'M-6': '840',  'M.6': '840',
-  '841': 'M7',  'M7': '841',  'M-7': '841',  'M.7': '841',
-  '842': 'M8',  'M8': '842',  'M-8': '842',  'M.8': '842',
-  '843': 'B.TOW', 'BTOW': '843', 'B-TOW': '843',
+export interface PoMatchMasterMaps {
+  gradeCodeToName?: Record<string, string>;
+  agencyCodeToName?: Record<string, string>;
+  markaCodeToName?: Record<string, string>;
+  areaCodeToName?: Record<string, string>;
+  brokerCodeToName?: Record<string, string>;
+  supplierCodeToName?: Record<string, string>;
+}
+
+// One-way Code -> Name fallback dictionaries (NEVER Name -> Code)
+const GRADE_CODE_TO_NAME: Record<string, string> = {
+  '831': 'TD5',
+  '832': 'TD6',
+  '833': 'TD7',
+  '834': 'TD8',
+  '835': 'W5',
+  '836': 'W6',
+  '837': 'W7',
+  '838': 'W8',
+  '839': 'M5',
+  '840': 'M6',
+  '841': 'M7',
+  '842': 'M8',
+  '843': 'B.TOW',
 };
 
-// Agency Code <-> Agency Name mapping dictionary
-const AGENCY_CODE_NAME_MAP: Record<string, string> = {
-  '1': 'KOLKATA', 'KOLKATA': '1',
-  '2': 'CALLY', 'CALLY': '2',
-  '3': 'TALLY', 'TALLY': '3',
-  '4': 'ASSAM', 'ASSAM': '4',
-  '5': 'DHUBRI', 'DHUBRI': '5',
-  '6': 'GAUHATI', 'GAUHATI': '6',
-  '7': 'KISHANGANJ', 'KISHANGANJ': '7',
-  '8': 'SILIGURI', 'SILIGURI': '8',
-  '22': 'PURNIA', 'PURNIA': '22', 'PURNEA': '22',
-  '30': 'DAISEE', 'DAISEE': '30',
-  '64': 'KARIMPUR', 'KARIMPUR': '64',
-  '78': 'NABADWIP', 'NABADWIP': '78',
+const AGENCY_CODE_TO_NAME: Record<string, string> = {
+  '1': 'KOLKATA',
+  '2': 'CALLY',
+  '3': 'TALLY',
+  '4': 'ASSAM',
+  '5': 'DHUBRI',
+  '6': 'GAUHATI',
+  '7': 'KISHANGANJ',
+  '8': 'SILIGURI',
+  '22': 'PURNIA',
+  '30': 'DAISEE',
+  '64': 'KARIMPUR',
+  '78': 'NABADWIP',
 };
 
-// Area Code <-> Area Name mapping dictionary
-const AREA_CODE_NAME_MAP: Record<string, string> = {
-  '10': 'BIHAR', 'BIHAR': '10',
-  '15': 'ASSAM', 'ASSAM': '15',
-  '12': 'WEST BENGAL', 'WEST BENGAL': '12',
-  '22': 'PURNIA', 'PURNIA': '22', 'PURNEA': '22',
-  '30': 'DAISEE', 'DAISEE': '30',
-  '64': 'KARIMPUR', 'KARIMPUR': '64',
-  '78': 'NABADWIP', 'NABADWIP': '78',
-  '6': 'GAUHATI', 'GAUHATI': '6',
-  '7': 'KISHANGANJ', 'KISHANGANJ': '7',
-  '8': 'SILIGURI', 'SILIGURI': '8',
+const AREA_CODE_TO_NAME: Record<string, string> = {
+  '10': 'BIHAR',
+  '15': 'ASSAM',
+  '12': 'WEST BENGAL',
+  '22': 'PURNIA',
+  '30': 'DAISEE',
+  '64': 'KARIMPUR',
+  '78': 'NABADWIP',
+  '6': 'GAUHATI',
+  '7': 'KISHANGANJ',
+  '8': 'SILIGURI',
 };
+
+function isPureNumericCode(v: string): boolean {
+  return /^\d+$/.test(v.trim());
+}
+
+function lookupCodeToName(
+  val: any,
+  primaryMap?: Record<string, string>,
+  fallbackMap?: Record<string, string>
+): string {
+  if (val === null || val === undefined) return '';
+  const raw = String(val).trim();
+  if (!raw) return '';
+  const upper = raw.toUpperCase();
+  const clean = cleanStr(raw);
+  const noZero = isPureNumericCode(clean) ? clean.replace(/^0+/, '') : '';
+
+  const checkMap = (m?: Record<string, string>): string | undefined => {
+    if (!m) return undefined;
+    if (m[upper]) return m[upper];
+    if (m[clean]) return m[clean];
+    if (noZero && m[noZero]) return m[noZero];
+    return undefined;
+  };
+
+  const resolved = checkMap(primaryMap) || checkMap(fallbackMap);
+  if (resolved && !isPureNumericCode(resolved)) {
+    return resolved.trim().toUpperCase();
+  }
+  return upper;
+}
+
+function registerCodeToName(
+  map: Record<string, string>,
+  codeVal: any,
+  nameVal: any
+): void {
+  if (codeVal === null || codeVal === undefined || nameVal === null || nameVal === undefined) return;
+  const cStr = String(codeVal).trim().toUpperCase();
+  const nStr = String(nameVal).trim().toUpperCase();
+  if (!cStr || !nStr || cStr === nStr || isPureNumericCode(nStr)) return;
+  map[cStr] = nStr;
+  const cClean = cleanStr(cStr);
+  if (cClean) {
+    map[cClean] = nStr;
+    if (isPureNumericCode(cClean)) {
+      const stripped = cClean.replace(/^0+/, '');
+      if (stripped) map[stripped] = nStr;
+    }
+  }
+}
+
+function resolveNameList(
+  nameInputs: any[],
+  codeInputs: any[],
+  primaryMap?: Record<string, string>,
+  fallbackMap?: Record<string, string>
+): string[] {
+  const resolvedFromNames: string[] = [];
+  const rawNameTokens = splitTokens(nameInputs);
+  for (const tok of rawNameTokens) {
+    const mapped = lookupCodeToName(tok, primaryMap, fallbackMap);
+    if (!mapped || isPureNumericCode(mapped)) continue;
+    if (!resolvedFromNames.includes(mapped)) {
+      resolvedFromNames.push(mapped);
+    }
+  }
+  if (resolvedFromNames.length > 0) {
+    return resolvedFromNames;
+  }
+
+  // Fallback: only if no name field was present, resolve code -> name via master map (never keep raw numeric code)
+  const resolvedFromCodes: string[] = [];
+  const rawCodeTokens = splitTokens(codeInputs);
+  for (const tok of rawCodeTokens) {
+    const mapped = lookupCodeToName(tok, primaryMap, fallbackMap);
+    if (!mapped || isPureNumericCode(mapped)) continue;
+    if (!resolvedFromCodes.includes(mapped)) {
+      resolvedFromCodes.push(mapped);
+    }
+  }
+  return resolvedFromCodes;
+}
 
 /**
  * Normalize string for exact matching (trim leading/trailing spaces, collapse multiple spaces, case-insensitive)
@@ -158,30 +248,14 @@ export function splitTokens(input: any): string[] {
  * Resolve Grade Code to Grade Name (e.g. 832 -> TD6, 833 -> TD7, 834 -> TD8)
  */
 export function resolveGradeName(val: any, customMap?: Record<string, string>): string {
-  if (val === null || val === undefined) return '';
-  const str = String(val).trim();
-  if (!str) return '';
-  const clean = cleanStr(str);
-  if (GRADE_CODE_NAME_MAP[clean]) return GRADE_CODE_NAME_MAP[clean];
-  if (GRADE_CODE_NAME_MAP[str]) return GRADE_CODE_NAME_MAP[str];
-  if (customMap && customMap[clean]) return customMap[clean];
-  if (customMap && customMap[str]) return customMap[str];
-  return str;
+  return lookupCodeToName(val, customMap, GRADE_CODE_TO_NAME);
 }
 
 /**
  * Resolve Agency Code to Agency Name (e.g. 64 -> KARIMPUR, 22 -> PURNIA, 78 -> NABADWIP)
  */
 export function resolveAgencyName(val: any, customMap?: Record<string, string>): string {
-  if (val === null || val === undefined) return '';
-  const str = String(val).trim();
-  if (!str) return '';
-  const clean = cleanStr(str);
-  if (AGENCY_CODE_NAME_MAP[clean]) return AGENCY_CODE_NAME_MAP[clean];
-  if (AGENCY_CODE_NAME_MAP[str]) return AGENCY_CODE_NAME_MAP[str];
-  if (customMap && customMap[clean]) return customMap[clean];
-  if (customMap && customMap[str]) return customMap[str];
-  return str;
+  return lookupCodeToName(val, customMap, AGENCY_CODE_TO_NAME);
 }
 export function expandGradeTokens(input: any, customMap?: Record<string, string>): Set<string> {
   const tokens = new Set<string>();
@@ -190,29 +264,16 @@ export function expandGradeTokens(input: any, customMap?: Record<string, string>
   const rawList = splitTokens(input);
   for (const str of rawList) {
     if (!str) continue;
-    const c = cleanStr(str);
-    if (c) {
-      tokens.add(c);
-      if (GRADE_CODE_NAME_MAP[c]) {
-        tokens.add(cleanStr(GRADE_CODE_NAME_MAP[c]));
-      }
-      if (customMap && customMap[c]) {
-        tokens.add(cleanStr(customMap[c]));
-      }
-      const u = str.toUpperCase().replace(/\s+/g, '');
-      if (GRADE_CODE_NAME_MAP[u]) {
-        tokens.add(cleanStr(GRADE_CODE_NAME_MAP[u]));
-      }
-      if (customMap && customMap[u]) {
-        tokens.add(cleanStr(customMap[u]));
-      }
-    }
+    const resolved = lookupCodeToName(str, customMap, GRADE_CODE_TO_NAME);
+    if (!resolved || isPureNumericCode(resolved)) continue;
+    const c = cleanStr(resolved);
+    if (c) tokens.add(c);
   }
   return tokens;
 }
 
 /**
- * Expand and normalize agency tokens
+ * Expand and normalize agency tokens (Name-only)
  */
 export function expandAgencyTokens(input: any, customMap?: Record<string, string>): Set<string> {
   const tokens = new Set<string>();
@@ -221,23 +282,12 @@ export function expandAgencyTokens(input: any, customMap?: Record<string, string
   const rawList = splitTokens(input);
   for (const str of rawList) {
     if (!str) continue;
-    const c = cleanStr(str);
-    if (c) {
-      tokens.add(c);
-      if (AGENCY_CODE_NAME_MAP[c]) {
-        tokens.add(cleanStr(AGENCY_CODE_NAME_MAP[c]));
-      }
-      if (customMap && customMap[c]) {
-        tokens.add(cleanStr(customMap[c]));
-      }
-      const u = str.toUpperCase().replace(/\s+/g, '');
-      if (AGENCY_CODE_NAME_MAP[u]) {
-        tokens.add(cleanStr(AGENCY_CODE_NAME_MAP[u]));
-      }
-      if (customMap && customMap[u]) {
-        tokens.add(cleanStr(customMap[u]));
-      }
-    }
+    const resolved = lookupCodeToName(str, customMap, AGENCY_CODE_TO_NAME);
+    if (!resolved || isPureNumericCode(resolved)) continue;
+    const norm = normalizeExact(resolved);
+    if (norm) tokens.add(norm);
+    const c = cleanStr(resolved);
+    if (c) tokens.add(c);
   }
   return tokens;
 }
@@ -281,7 +331,8 @@ export function compareSaudaTempArrival(
   sauda: any,
   saudaDetails: any[] = [],
   arrival: any | null = null,
-  arrivalLorryReceipts: any[] = []
+  arrivalLorryReceipts: any[] = [],
+  masterMaps?: PoMatchMasterMaps
 ): PoMatchResult {
   const poNo = String(sauda?.po_no || sauda?.contract_po_no || sauda?.sauda_no || sauda?.ptf_no || '').trim();
 
@@ -319,10 +370,13 @@ export function compareSaudaTempArrival(
   }
 
   // ==========================================
-  // 1. BROKER (Match By Name)
+  // 1. BROKER (Match By Name Only - Not Code)
   // ==========================================
-  const saudaBroker = sauda.broker ?? sauda.broker_name;
-  const arrivalBroker = arrival.broker ?? arrival.broker_name;
+  const brokerCodeToName = masterMaps?.brokerCodeToName;
+  const rawSaudaBroker = sauda.broker_name || sauda.broker;
+  const rawArrivalBroker = arrival.broker_name || arrival.broker;
+  const saudaBroker = rawSaudaBroker ? lookupCodeToName(rawSaudaBroker, brokerCodeToName) : '';
+  const arrivalBroker = rawArrivalBroker ? lookupCodeToName(rawArrivalBroker, brokerCodeToName) : '';
   if (saudaBroker && arrivalBroker) {
     const normSauda = normalizeCompanyName(saudaBroker);
     const normArrival = normalizeCompanyName(arrivalBroker);
@@ -337,10 +391,13 @@ export function compareSaudaTempArrival(
   }
 
   // ==========================================
-  // 2. SUPPLIER (Match By Name)
+  // 2. SUPPLIER (Match By Name Only - Not Code)
   // ==========================================
-  const saudaSupplier = sauda.supplier ?? sauda.supplier_name ?? sauda.party_name;
-  const arrivalSupplier = arrival.supplier ?? arrival.supplier_name ?? arrival.party_name;
+  const supplierCodeToName = masterMaps?.supplierCodeToName;
+  const rawSaudaSupplier = sauda.supplier_name || sauda.supplier || sauda.party_name;
+  const rawArrivalSupplier = arrival.supplier_name || arrival.supplier || arrival.party_name;
+  const saudaSupplier = rawSaudaSupplier ? lookupCodeToName(rawSaudaSupplier, supplierCodeToName) : '';
+  const arrivalSupplier = rawArrivalSupplier ? lookupCodeToName(rawArrivalSupplier, supplierCodeToName) : '';
   if (saudaSupplier && arrivalSupplier) {
     const normSauda = normalizeCompanyName(saudaSupplier);
     const normArrival = normalizeCompanyName(arrivalSupplier);
@@ -355,10 +412,12 @@ export function compareSaudaTempArrival(
   }
 
   // ==========================================
-  // 3. CHALLAN SUPPLIER (Match By Name)
+  // 3. CHALLAN SUPPLIER (Match By Name Only - Not Code)
   // ==========================================
-  const saudaChallan = sauda.challan_supplier ?? sauda.challan_party ?? sauda.supplier;
-  const arrivalChallan = arrival.challan_supplier ?? arrival.challan_party ?? arrival.supplier;
+  const rawSaudaChallan = sauda.challan_supplier_name || sauda.challan_supplier || sauda.challan_party || saudaSupplier;
+  const rawArrivalChallan = arrival.challan_supplier_name || arrival.challan_supplier || arrival.challan_party || arrivalSupplier;
+  const saudaChallan = rawSaudaChallan ? lookupCodeToName(rawSaudaChallan, supplierCodeToName) : '';
+  const arrivalChallan = rawArrivalChallan ? lookupCodeToName(rawArrivalChallan, supplierCodeToName) : '';
   if (saudaChallan && arrivalChallan) {
     const normSauda = normalizeCompanyName(saudaChallan);
     const normArrival = normalizeCompanyName(arrivalChallan);
@@ -373,39 +432,38 @@ export function compareSaudaTempArrival(
   }
 
   // ==========================================
-  // 4. AREA (Match By Name: Code converted to Name)
+  // 4. AREA (Match By Name Only - Not Code)
   // ==========================================
-  const saudaRawAreas = [sauda.area, sauda.arrival_area_name, sauda.area_name, sauda.sourcing_area];
+  const areaCodeToName: Record<string, string> = { ...(masterMaps?.areaCodeToName || {}) };
+  registerCodeToName(areaCodeToName, sauda.area_code, sauda.area_name || sauda.arrival_area_name || sauda.area);
+  registerCodeToName(areaCodeToName, arrival.arrival_area_code || arrival.area_code, arrival.arrival_area_name || arrival.area_name || arrival.area);
+
+  const saudaAreaNameInputs: any[] = [sauda.area_name, sauda.arrival_area_name, sauda.area, sauda.sourcing_area];
+  const saudaAreaCodeInputs: any[] = [sauda.area_code];
   if (Array.isArray(saudaDetails)) {
-    saudaDetails.forEach(d => saudaRawAreas.push(d?.area, d?.area_name, d?.arrival_area_name));
+    saudaDetails.forEach(d => {
+      registerCodeToName(areaCodeToName, d?.area_code, d?.area_name || d?.arrival_area_name || d?.area);
+      saudaAreaNameInputs.push(d?.area_name, d?.arrival_area_name, d?.area);
+      saudaAreaCodeInputs.push(d?.area_code);
+    });
   }
-  const normSaudaAreas: string[] = [];
-  saudaRawAreas.forEach(a => {
-    if (!a) return;
-    const str = String(a).trim();
-    if (AREA_CODE_NAME_MAP[str]) normSaudaAreas.push(normalizeExact(AREA_CODE_NAME_MAP[str]));
-    const cleanA = cleanStr(str);
-    if (AREA_CODE_NAME_MAP[cleanA]) normSaudaAreas.push(normalizeExact(AREA_CODE_NAME_MAP[cleanA]));
-    normSaudaAreas.push(normalizeExact(str));
-  });
+  const validSaudaAreas = resolveNameList(saudaAreaNameInputs, saudaAreaCodeInputs, areaCodeToName, AREA_CODE_TO_NAME)
+    .map(normalizeExact)
+    .filter(Boolean);
 
-  const arrivalRawAreas = [arrival.arrival_area_name, arrival.area, arrival.arrival_area_code, arrival.sourcing_area];
-  arrivalGridRows.forEach(g => arrivalRawAreas.push(g?.arrival_area_name, g?.area, g?.area_name));
-  const normArrivalAreas: string[] = [];
-  arrivalRawAreas.forEach(a => {
-    if (!a) return;
-    const str = String(a).trim();
-    if (AREA_CODE_NAME_MAP[str]) normArrivalAreas.push(normalizeExact(AREA_CODE_NAME_MAP[str]));
-    const cleanA = cleanStr(str);
-    if (AREA_CODE_NAME_MAP[cleanA]) normArrivalAreas.push(normalizeExact(AREA_CODE_NAME_MAP[cleanA]));
-    normArrivalAreas.push(normalizeExact(str));
+  const arrivalAreaNameInputs: any[] = [arrival.arrival_area_name, arrival.area_name, arrival.area, arrival.sourcing_area];
+  const arrivalAreaCodeInputs: any[] = [arrival.arrival_area_code, arrival.area_code];
+  arrivalGridRows.forEach(g => {
+    registerCodeToName(areaCodeToName, g?.arrival_area_code || g?.area_code, g?.arrival_area_name || g?.area_name || g?.area);
+    arrivalAreaNameInputs.push(g?.arrival_area_name, g?.area_name, g?.area);
+    arrivalAreaCodeInputs.push(g?.arrival_area_code, g?.area_code);
   });
-
-  const validSaudaAreas = normSaudaAreas.filter(Boolean);
-  const validArrivalAreas = normArrivalAreas.filter(Boolean);
+  const validArrivalAreas = resolveNameList(arrivalAreaNameInputs, arrivalAreaCodeInputs, areaCodeToName, AREA_CODE_TO_NAME)
+    .map(normalizeExact)
+    .filter(Boolean);
 
   if (validSaudaAreas.length > 0 && validArrivalAreas.length > 0) {
-    const areaMatch = validArrivalAreas.some(aa => validSaudaAreas.some(sa => sa === aa));
+    const areaMatch = validArrivalAreas.some(aa => validSaudaAreas.some(sa => sa === aa || cleanStr(sa) === cleanStr(aa)));
     if (!areaMatch) {
       const saudaDisplay = Array.from(new Set(validSaudaAreas)).join(', ');
       const arrivalDisplay = Array.from(new Set(validArrivalAreas)).join(', ');
@@ -419,226 +477,233 @@ export function compareSaudaTempArrival(
   }
 
   // ==========================================
-  // 5. GRADE (Multiple-Value Match: Sauda is approved set)
+  // 5. GRADE (Match By Name Only - Not Code)
   // ==========================================
-  const dynamicGradeMap: Record<string, string> = {};
-  const registerGradePair = (codeVal: any, nameVal: any) => {
-    if (!codeVal || !nameVal) return;
-    const cStr = String(codeVal).trim().toUpperCase();
-    const nStr = String(nameVal).trim().toUpperCase();
-    if (cStr && nStr && cStr !== nStr) {
-      dynamicGradeMap[cleanStr(cStr)] = cleanStr(nStr);
-      dynamicGradeMap[cleanStr(nStr)] = cleanStr(cStr);
-    }
-  };
-
+  const gradeCodeToName: Record<string, string> = { ...(masterMaps?.gradeCodeToName || {}) };
+  registerCodeToName(gradeCodeToName, sauda.grade_code, sauda.grade_name || sauda.grade || sauda.quality);
   if (Array.isArray(saudaDetails)) {
-    saudaDetails.forEach(d => registerGradePair(d?.grade_code, d?.grade_name || d?.grade));
+    saudaDetails.forEach(d => registerCodeToName(gradeCodeToName, d?.grade_code, d?.grade_name || d?.stock_grade_name || d?.grade || d?.quality));
   }
-  arrivalGridRows.forEach(g => registerGradePair(g?.receipt_grade_code || g?.challan_grade_code, g?.receipt_grade_name || g?.challan_grade_name || g?.grade));
-
-  const rawSaudaGrades: any[] = [sauda.grade, sauda.quality, sauda.grade_name, sauda.grade_code];
-  if (Array.isArray(saudaDetails)) {
-    saudaDetails.forEach(d => {
-      rawSaudaGrades.push(d?.grade_name, d?.quality, d?.grade, d?.grade_code, d?.stock_grade_name);
-    });
-  }
-  const saudaGradeTokens = expandGradeTokens(rawSaudaGrades, dynamicGradeMap);
-
-  const rawArrivalGrades: any[] = [
-    arrival.challan_grade,
-    arrival.challan_grade_name,
-    arrival.receipt_grade_name,
-    arrival.grade,
-    arrival.quality,
-    arrival.variety,
-    arrival.grading
-  ];
   arrivalGridRows.forEach(g => {
-    rawArrivalGrades.push(g?.challan_grade_name, g?.receipt_grade_name, g?.grade, g?.quality, g?.grade_name, g?.receipt_grade_code);
+    registerCodeToName(gradeCodeToName, g?.challan_grade_code, g?.challan_grade_name || g?.grade_name || g?.grade);
+    registerCodeToName(gradeCodeToName, g?.receipt_grade_code, g?.receipt_grade_name || g?.grade_name || g?.grade);
   });
-  const arrivalGradeList = splitTokens(rawArrivalGrades);
 
-  if (saudaGradeTokens.size > 0 && arrivalGradeList.length > 0) {
-    const unapprovedGrades: string[] = [];
-    
-    // Group by row entry
-    const arrivalGradeEntries: any[] = [];
-    arrivalGridRows.forEach(g => {
-      arrivalGradeEntries.push([g?.challan_grade_name, g?.receipt_grade_name, g?.grade, g?.quality, g?.grade_name, g?.receipt_grade_code].filter(Boolean));
+  const saudaGradeNames: string[] = [];
+  const pushUniqueNames = (target: string[], names: string[]) => {
+    names.forEach(n => {
+      if (n && !target.includes(n)) target.push(n);
     });
-    if (arrivalGradeEntries.length === 0) {
-      arrivalGradeEntries.push(rawArrivalGrades.filter(Boolean));
-    }
+  };
+  if (Array.isArray(saudaDetails) && saudaDetails.length > 0) {
+    saudaDetails.forEach(d => {
+      pushUniqueNames(
+        saudaGradeNames,
+        resolveNameList(
+          [d?.grade_name, d?.stock_grade_name, d?.grade, d?.quality],
+          [d?.grade_code],
+          gradeCodeToName,
+          GRADE_CODE_TO_NAME
+        )
+      );
+    });
+  }
+  pushUniqueNames(
+    saudaGradeNames,
+    resolveNameList(
+      [sauda.grade_name, sauda.grade, sauda.quality],
+      [sauda.grade_code],
+      gradeCodeToName,
+      GRADE_CODE_TO_NAME
+    )
+  );
+  const saudaGradeTokenSet = new Set(saudaGradeNames.map(cleanStr).filter(Boolean));
 
-    arrivalGradeEntries.forEach(entry => {
-      if (!entry || entry.length === 0) return;
-      const entryTokens = expandGradeTokens(entry, dynamicGradeMap);
-      let isMatch = false;
-      entryTokens.forEach(t => {
-        if (saudaGradeTokens.has(t)) isMatch = true;
-      });
-      if (!isMatch) {
-        const displayLabel = entry.join(', ');
-        if (displayLabel && !unapprovedGrades.includes(displayLabel)) {
-          unapprovedGrades.push(displayLabel);
-        }
+  const arrivalGradeRowNames: string[][] = [];
+  arrivalGridRows.forEach(g => {
+    const rowNames = resolveNameList(
+      [g?.challan_grade_name, g?.receipt_grade_name, g?.grade_name, g?.grade, g?.quality],
+      [g?.challan_grade_code, g?.receipt_grade_code],
+      gradeCodeToName,
+      GRADE_CODE_TO_NAME
+    );
+    if (rowNames.length > 0) arrivalGradeRowNames.push(rowNames);
+  });
+  if (arrivalGradeRowNames.length === 0) {
+    const headerGrades = resolveNameList(
+      [arrival.challan_grade_name, arrival.receipt_grade_name, arrival.grade_name, arrival.challan_grade, arrival.grade, arrival.quality, arrival.variety, arrival.grading],
+      [arrival.challan_grade_code, arrival.receipt_grade_code, arrival.grade_code],
+      gradeCodeToName,
+      GRADE_CODE_TO_NAME
+    );
+    if (headerGrades.length > 0) arrivalGradeRowNames.push(headerGrades);
+  }
+
+  const allArrivalGradeNames: string[] = [];
+  arrivalGradeRowNames.forEach(r => pushUniqueNames(allArrivalGradeNames, r));
+
+  if (saudaGradeTokenSet.size > 0 && allArrivalGradeNames.length > 0) {
+    const unapprovedGrades: string[] = [];
+    arrivalGradeRowNames.forEach(rowNames => {
+      const matched = rowNames.some(n => saudaGradeTokenSet.has(cleanStr(n)));
+      if (!matched) {
+        rowNames.forEach(n => {
+          if (!unapprovedGrades.includes(n)) unapprovedGrades.push(n);
+        });
       }
     });
 
-    const trueUnapprovedGrades = unapprovedGrades.filter(unApprovedStr => {
-      const tokens = expandGradeTokens(unApprovedStr, dynamicGradeMap);
-      let matched = false;
-      tokens.forEach(t => {
-        if (saudaGradeTokens.has(t)) matched = true;
-      });
-      return !matched;
-    });
-
-    if (trueUnapprovedGrades.length > 0) {
-      const approvedNames = splitTokens(rawSaudaGrades).map(g => resolveGradeName(g, dynamicGradeMap)).filter(Boolean);
-      const approvedDisplay = Array.from(new Set(approvedNames)).join(', ') || Array.from(saudaGradeTokens).join(', ');
-
-      const arrivalNames = arrivalGradeList.map(g => resolveGradeName(g, dynamicGradeMap)).filter(Boolean);
-      const arrivalDisplay = Array.from(new Set(arrivalNames)).join(', ');
-
-      const unapprovedDisplayNames = trueUnapprovedGrades.map(g => resolveGradeName(g, dynamicGradeMap)).filter(Boolean);
-      const cleanUnapprovedList = Array.from(new Set(unapprovedDisplayNames));
-
+    if (unapprovedGrades.length > 0) {
+      const approvedDisplay = saudaGradeNames.join(', ');
+      const arrivalDisplay = allArrivalGradeNames.join(', ');
       mismatches.push({
         field: 'Grade',
-        mismatchLabel: `Grade Mismatch: ${cleanUnapprovedList.join(', ')} not approved (Approved: ${approvedDisplay})`,
+        mismatchLabel: `Grade Mismatch: ${unapprovedGrades.join(', ')} not approved (Approved: ${approvedDisplay})`,
         poValue: approvedDisplay,
         inspValue: arrivalDisplay,
-        unapprovedValues: cleanUnapprovedList,
+        unapprovedValues: unapprovedGrades,
       });
     }
   }
 
   // ==========================================
-  // 6. AGENCY (Multiple-Value Match: Sauda is approved set)
+  // 6. AGENCY (Match By Name Only - Not Code)
   // ==========================================
-  const dynamicAgencyMap: Record<string, string> = {};
-  
-  const registerAgencyPair = (codeVal: any, nameVal: any) => {
-    if (!codeVal || !nameVal) return;
-    const cStr = String(codeVal).trim().toUpperCase();
-    const nStr = String(nameVal).trim().toUpperCase();
-    if (cStr && nStr && cStr !== nStr) {
-      dynamicAgencyMap[cleanStr(cStr)] = cleanStr(nStr);
-      dynamicAgencyMap[cleanStr(nStr)] = cleanStr(cStr);
-    }
-  };
-
-  // Register pairs from sauda and details
-  registerAgencyPair(sauda.agency_code || sauda.agency, sauda.agency_name);
+  const agencyCodeToName: Record<string, string> = { ...(masterMaps?.agencyCodeToName || {}) };
+  registerCodeToName(agencyCodeToName, sauda.agency_code, sauda.agency_name || sauda.agency);
   if (Array.isArray(saudaDetails)) {
+    saudaDetails.forEach(d => registerCodeToName(agencyCodeToName, d?.agency_code, d?.agency_name || d?.agency));
+  }
+  registerCodeToName(agencyCodeToName, arrival.agency_code, arrival.agency_name || arrival.agency);
+  arrivalGridRows.forEach(g => registerCodeToName(agencyCodeToName, g?.agency_code, g?.agency_name || g?.agency));
+
+  const saudaAgencyNames: string[] = [];
+  if (Array.isArray(saudaDetails) && saudaDetails.length > 0) {
     saudaDetails.forEach(d => {
-      registerAgencyPair(d?.agency_code || d?.agency, d?.agency_name);
+      pushUniqueNames(
+        saudaAgencyNames,
+        resolveNameList([d?.agency_name, d?.agency], [d?.agency_code], agencyCodeToName, AGENCY_CODE_TO_NAME)
+      );
     });
   }
-  // Register pairs from arrival and grid
-  registerAgencyPair(arrival.agency_code || arrival.agency, arrival.agency_name);
-  arrivalGridRows.forEach(g => {
-    registerAgencyPair(g?.agency_code || g?.agency, g?.agency_name);
+  pushUniqueNames(
+    saudaAgencyNames,
+    resolveNameList([sauda.agency_name, sauda.agency], [sauda.agency_code], agencyCodeToName, AGENCY_CODE_TO_NAME)
+  );
+  const saudaAgencyTokenSet = new Set<string>();
+  saudaAgencyNames.forEach(n => {
+    saudaAgencyTokenSet.add(normalizeExact(n));
+    saudaAgencyTokenSet.add(cleanStr(n));
   });
 
-  const rawSaudaAgencies: any[] = [sauda.agency, sauda.agency_name, sauda.agency_code];
-  if (Array.isArray(saudaDetails)) {
-    saudaDetails.forEach(d => rawSaudaAgencies.push(d?.agency_name, d?.agency_code, d?.agency));
+  const arrivalAgencyRowNames: string[][] = [];
+  arrivalGridRows.forEach(g => {
+    const rowNames = resolveNameList([g?.agency_name, g?.agency], [g?.agency_code], agencyCodeToName, AGENCY_CODE_TO_NAME);
+    if (rowNames.length > 0) arrivalAgencyRowNames.push(rowNames);
+  });
+  if (arrivalAgencyRowNames.length === 0) {
+    const headerAgencies = resolveNameList([arrival.agency_name, arrival.agency], [arrival.agency_code], agencyCodeToName, AGENCY_CODE_TO_NAME);
+    if (headerAgencies.length > 0) arrivalAgencyRowNames.push(headerAgencies);
   }
-  const saudaAgencyTokens = expandAgencyTokens(rawSaudaAgencies, dynamicAgencyMap);
 
-  const rawArrivalAgencies: any[] = [arrival.agency, arrival.agency_name, arrival.agency_code];
-  arrivalGridRows.forEach(g => rawArrivalAgencies.push(g?.agency_name, g?.agency_code, g?.agency));
-  const arrivalAgencyList = splitTokens(rawArrivalAgencies);
+  const allArrivalAgencyNames: string[] = [];
+  arrivalAgencyRowNames.forEach(r => pushUniqueNames(allArrivalAgencyNames, r));
 
-  if (saudaAgencyTokens.size > 0 && arrivalAgencyList.length > 0) {
+  if (saudaAgencyTokenSet.size > 0 && allArrivalAgencyNames.length > 0) {
     const unapprovedAgencies: string[] = [];
-    
-    // Group arrival agencies by row entry
-    const arrivalAgencyEntries: any[] = [];
-    arrivalGridRows.forEach(g => {
-      arrivalAgencyEntries.push([g?.agency, g?.agency_name, g?.agency_code].filter(Boolean));
-    });
-    if (arrivalAgencyEntries.length === 0) {
-      arrivalAgencyEntries.push([arrival.agency, arrival.agency_name, arrival.agency_code].filter(Boolean));
-    }
-
-    arrivalAgencyEntries.forEach(entry => {
-      if (!entry || entry.length === 0) return;
-      const entryTokens = expandAgencyTokens(entry, dynamicAgencyMap);
-      let isMatch = false;
-      entryTokens.forEach(t => {
-        if (saudaAgencyTokens.has(t)) isMatch = true;
-      });
-      if (!isMatch) {
-        const displayLabel = entry.join(', ');
-        if (displayLabel && !unapprovedAgencies.includes(displayLabel)) {
-          unapprovedAgencies.push(displayLabel);
-        }
+    arrivalAgencyRowNames.forEach(rowNames => {
+      const matched = rowNames.some(n => saudaAgencyTokenSet.has(normalizeExact(n)) || saudaAgencyTokenSet.has(cleanStr(n)));
+      if (!matched) {
+        rowNames.forEach(n => {
+          if (!unapprovedAgencies.includes(n)) unapprovedAgencies.push(n);
+        });
       }
     });
 
-    // Double check that any reported unapproved agency doesn't intersect with saudaAgencyTokens
-    const trueUnapprovedAgencies = unapprovedAgencies.filter(unApprovedStr => {
-      const tokens = expandAgencyTokens(unApprovedStr, dynamicAgencyMap);
-      let matched = false;
-      tokens.forEach(t => {
-        if (saudaAgencyTokens.has(t)) matched = true;
-      });
-      return !matched;
-    });
-
-    if (trueUnapprovedAgencies.length > 0) {
-      const approvedNames = splitTokens(rawSaudaAgencies).map(a => resolveAgencyName(a, dynamicAgencyMap)).filter(Boolean);
-      const approvedDisplay = Array.from(new Set(approvedNames)).join(', ') || Array.from(saudaAgencyTokens).join(', ');
-
-      const arrivalNames = arrivalAgencyList.map(a => resolveAgencyName(a, dynamicAgencyMap)).filter(Boolean);
-      const arrivalDisplay = Array.from(new Set(arrivalNames)).join(', ');
-
-      const unapprovedDisplayNames = trueUnapprovedAgencies.map(a => resolveAgencyName(a, dynamicAgencyMap)).filter(Boolean);
-      const cleanUnapprovedList = Array.from(new Set(unapprovedDisplayNames));
-
+    if (unapprovedAgencies.length > 0) {
+      const approvedDisplay = saudaAgencyNames.join(', ');
+      const arrivalDisplay = allArrivalAgencyNames.join(', ');
       mismatches.push({
         field: 'Agency',
-        mismatchLabel: `Agency Mismatch: ${cleanUnapprovedList.join(', ')} not matching (Approved: ${approvedDisplay})`,
+        mismatchLabel: `Agency Mismatch: ${unapprovedAgencies.join(', ')} not matching (Approved: ${approvedDisplay})`,
         poValue: approvedDisplay,
         inspValue: arrivalDisplay,
-        unapprovedValues: cleanUnapprovedList,
+        unapprovedValues: unapprovedAgencies,
       });
     }
   }
 
   // ==========================================
-  // 7. MARKA (Multiple-Value Match: Sauda is approved set)
+  // 7. MARKA (Match By Name Only - Not Code)
   // ==========================================
-  const rawSaudaMarkas: any[] = [sauda.marka, sauda.marka_name, sauda.challan_marka, sauda.challan_marka_name];
+  const markaCodeToName: Record<string, string> = { ...(masterMaps?.markaCodeToName || {}) };
+  registerCodeToName(markaCodeToName, sauda.marka_code || sauda.challan_marka_code, sauda.marka_name || sauda.challan_marka_name || sauda.marka);
   if (Array.isArray(saudaDetails)) {
-    saudaDetails.forEach(d => rawSaudaMarkas.push(d?.marka, d?.marka_name, d?.challan_marka_name));
+    saudaDetails.forEach(d => registerCodeToName(markaCodeToName, d?.marka_code || d?.challan_marka_code, d?.marka_name || d?.challan_marka_name || d?.marka));
   }
-  const saudaMarkaTokens = expandMarkaTokens(rawSaudaMarkas);
+  registerCodeToName(markaCodeToName, arrival.challan_marka_code || arrival.marka_code, arrival.challan_marka_name || arrival.marka_name || arrival.challan_marka || arrival.marka);
+  arrivalGridRows.forEach(g => {
+    registerCodeToName(markaCodeToName, g?.challan_marka_code || g?.marka_code, g?.challan_marka_name || g?.marka_name || g?.marka);
+  });
 
-  const rawArrivalMarkas: any[] = [arrival.challan_marka, arrival.challan_marka_name, arrival.marka];
-  arrivalGridRows.forEach(g => rawArrivalMarkas.push(g?.challan_marka_name, g?.challan_marka_code, g?.marka));
-  const arrivalMarkaList = splitTokens(rawArrivalMarkas);
+  const saudaMarkaNames: string[] = [];
+  if (Array.isArray(saudaDetails) && saudaDetails.length > 0) {
+    saudaDetails.forEach(d => {
+      pushUniqueNames(
+        saudaMarkaNames,
+        resolveNameList([d?.marka_name, d?.challan_marka_name, d?.marka], [d?.marka_code, d?.challan_marka_code], markaCodeToName)
+      );
+    });
+  }
+  pushUniqueNames(
+    saudaMarkaNames,
+    resolveNameList(
+      [sauda.marka_name, sauda.challan_marka_name, sauda.marka, sauda.challan_marka],
+      [sauda.marka_code, sauda.challan_marka_code],
+      markaCodeToName
+    )
+  );
+  const saudaMarkaTokenSet = new Set<string>();
+  saudaMarkaNames.forEach(n => {
+    saudaMarkaTokenSet.add(normalizeExact(n));
+    saudaMarkaTokenSet.add(cleanStr(n));
+  });
 
-  if (saudaMarkaTokens.size > 0 && arrivalMarkaList.length > 0) {
+  const arrivalMarkaRowNames: string[][] = [];
+  arrivalGridRows.forEach(g => {
+    const rowNames = resolveNameList(
+      [g?.challan_marka_name, g?.marka_name, g?.marka],
+      [g?.challan_marka_code, g?.marka_code],
+      markaCodeToName
+    );
+    if (rowNames.length > 0) arrivalMarkaRowNames.push(rowNames);
+  });
+  if (arrivalMarkaRowNames.length === 0) {
+    const headerMarkas = resolveNameList(
+      [arrival.challan_marka_name, arrival.marka_name, arrival.challan_marka, arrival.marka],
+      [arrival.challan_marka_code, arrival.marka_code],
+      markaCodeToName
+    );
+    if (headerMarkas.length > 0) arrivalMarkaRowNames.push(headerMarkas);
+  }
+
+  const allArrivalMarkaNames: string[] = [];
+  arrivalMarkaRowNames.forEach(r => pushUniqueNames(allArrivalMarkaNames, r));
+
+  if (saudaMarkaTokenSet.size > 0 && allArrivalMarkaNames.length > 0) {
     const unapprovedMarkas: string[] = [];
-    arrivalMarkaList.forEach(arrMarka => {
-      const mTokens = expandMarkaTokens(arrMarka);
-      let isMatch = false;
-      mTokens.forEach(t => {
-        if (saudaMarkaTokens.has(t)) isMatch = true;
-      });
-      if (!isMatch && arrMarka.trim()) {
-        unapprovedMarkas.push(arrMarka.trim());
+    arrivalMarkaRowNames.forEach(rowNames => {
+      const matched = rowNames.some(n => saudaMarkaTokenSet.has(normalizeExact(n)) || saudaMarkaTokenSet.has(cleanStr(n)));
+      if (!matched) {
+        rowNames.forEach(n => {
+          if (!unapprovedMarkas.includes(n)) unapprovedMarkas.push(n);
+        });
       }
     });
 
     if (unapprovedMarkas.length > 0) {
-      const approvedDisplay = splitTokens(rawSaudaMarkas).join(', ') || Array.from(saudaMarkaTokens).join(', ');
-      const arrivalDisplay = arrivalMarkaList.join(', ');
+      const approvedDisplay = saudaMarkaNames.join(', ');
+      const arrivalDisplay = allArrivalMarkaNames.join(', ');
       mismatches.push({
         field: 'Marka',
         mismatchLabel: `Marka Mismatch: ${unapprovedMarkas.join(', ')} not approved (Approved: ${approvedDisplay})`,
@@ -704,7 +769,8 @@ export function comparePoInspection(
   po: any,
   poItems: any[] = [],
   insp: any | null = null,
-  inspItems: any[] = []
+  inspItems: any[] = [],
+  masterMaps?: PoMatchMasterMaps
 ): PoMatchResult {
-  return compareSaudaTempArrival(po, poItems, insp, inspItems);
+  return compareSaudaTempArrival(po, poItems, insp, inspItems, masterMaps);
 }

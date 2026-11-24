@@ -1371,6 +1371,8 @@ async function startServer() {
         ALTER TABLE IF EXISTS material_inspection ADD COLUMN IF NOT EXISTS supplier_name TEXT;
         ALTER TABLE IF EXISTS material_inspection ADD COLUMN IF NOT EXISTS broker TEXT;
         ALTER TABLE IF EXISTS material_inspection ADD COLUMN IF NOT EXISTS supplier TEXT;
+        ALTER TABLE IF EXISTS material_inspection ADD COLUMN IF NOT EXISTS challan_supplier TEXT;
+        ALTER TABLE IF EXISTS mill_inspection_master ADD COLUMN IF NOT EXISTS challan_supplier TEXT;
         ALTER TABLE IF EXISTS material_inspection ADD COLUMN IF NOT EXISTS actual_moisture NUMERIC DEFAULT 0;
         ALTER TABLE IF EXISTS material_inspection ADD COLUMN IF NOT EXISTS claim_moisture NUMERIC DEFAULT 0;
         ALTER TABLE IF EXISTS material_inspection ADD COLUMN IF NOT EXISTS actual_dust NUMERIC DEFAULT 0;

@@ -17,7 +17,7 @@ import {
 import { cn, canApproveMismatch } from '../lib/utils';
 import { dbModule } from '../services/dbModule';
 import { supabase } from '../lib/supabase';
-import { comparePoInspection, compareSaudaTempArrival, PoMismatchDetail } from '../lib/poMatch';
+import { comparePoInspection, compareSaudaTempArrival, PoMismatchDetail, PoMatchMasterMaps } from '../lib/poMatch';
 import LegacyLayout from '../components/LegacyLayout';
 import { getCurrentUserContext } from '../lib/permissions';
 import { resolveSattaRate } from '../services/sattaRateService';
@@ -126,7 +126,7 @@ export default function MismatchCase({ onClose, variant = 'satta' }: { onClose?:
     setLoading(true);
     try {
       // Direct fresh queries from database (no browser cache dependency)
-      const [scpRows, scpDetailRows, amadRows, matInspRows, millInspRows, dbMismatches, purchaseMasterRows, purchaseDetailRows, sattaBaseRows, sattaDiffRows, gradeRows, dbSattaMismatches, saudaMasterRows, saudaQualityRows, sattaMasterRows, sattaQualityRows, smsSaudaDbRows] = await Promise.all([
+      const [scpRows, scpDetailRows, amadRows, matInspRows, millInspRows, dbMismatches, purchaseMasterRows, purchaseDetailRows, sattaBaseRows, sattaDiffRows, gradeRows, agencyRows, markaRows, areaRows, brokerRows, supplyRows, dbSattaMismatches, saudaMasterRows, saudaQualityRows, sattaMasterRows, sattaQualityRows, smsSaudaDbRows] = await Promise.all([
         supabase ? supabase.from('sauda_check_point').select('*').then(res => res.data || []) : dbModule.fetchAll('sauda_check_point').catch(() => []),
         supabase ? supabase.from('sauda_check_point_details').select('*').then(res => res.data || []) : dbModule.fetchAll('sauda_check_point_details').catch(() => []),
         dbModule.fetchAll('temporary_material_received').catch(() => []),
@@ -138,6 +138,11 @@ export default function MismatchCase({ onClose, variant = 'satta' }: { onClose?:
         supabase ? supabase.from('satta_base_rates').select('*').then(res => res.data || []) : Promise.resolve([]),
         supabase ? supabase.from('satta_differentials').select('*').then(res => res.data || []) : Promise.resolve([]),
         dbModule.fetchAll('grade_master').catch(() => []),
+        dbModule.fetchAll('agency_master').catch(() => []),
+        dbModule.fetchAll('marka_master').catch(() => []),
+        dbModule.fetchAll('area_master').catch(() => []),
+        dbModule.fetchAll('broker_master').catch(() => []),
+        dbModule.fetchAll('supply_master').catch(() => []),
         supabase ? supabase.from('satta_mismatch').select('*').then(res => res.data || []) : dbModule.fetchAll('satta_mismatch').catch(() => []),
         supabase ? supabase.from('sauda_master').select('*').then(res => res.data || []) : dbModule.fetchAll('sauda_master').catch(() => []),
         supabase ? supabase.from('sauda_quality_details').select('*').then(res => res.data || []) : dbModule.fetchAll('sauda_quality_details').catch(() => []),
@@ -145,6 +150,30 @@ export default function MismatchCase({ onClose, variant = 'satta' }: { onClose?:
         supabase ? supabase.from('satta_quality_details').select('*').then(res => res.data || []) : dbModule.fetchAll('satta_quality_details').catch(() => []),
         supabase ? supabase.from('sms_sauda').select('*').then(res => res.data || []) : Promise.resolve([]),
       ]);
+
+      // Build one-way Code -> Name master lookup maps so Material Mismatch compares strictly by Name (not Code)
+      const masterMaps: PoMatchMasterMaps = {
+        gradeCodeToName: {},
+        agencyCodeToName: {},
+        markaCodeToName: {},
+        areaCodeToName: {},
+        brokerCodeToName: {},
+        supplierCodeToName: {},
+      };
+      const addMasterEntry = (map: Record<string, string>, code: any, name: any) => {
+        const c = String(code ?? '').trim().toUpperCase();
+        const n = String(name ?? '').trim().toUpperCase();
+        if (!c || !n || c === n) return;
+        map[c] = n;
+        const stripped = /^\d+$/.test(c) ? c.replace(/^0+/, '') : '';
+        if (stripped) map[stripped] = n;
+      };
+      (gradeRows || []).forEach((g: any) => addMasterEntry(masterMaps.gradeCodeToName!, g.grade_code ?? g.code, g.grade_name ?? g.name));
+      (agencyRows || []).forEach((a: any) => addMasterEntry(masterMaps.agencyCodeToName!, a.agency_code ?? a.AGENCY_CODE ?? a.code, a.agency_name ?? a.AGENCY_NAME ?? a.name));
+      (markaRows || []).forEach((m: any) => addMasterEntry(masterMaps.markaCodeToName!, m.marka_code ?? m.code, m.marka_name ?? m.mark_name ?? m.name));
+      (areaRows || []).forEach((ar: any) => addMasterEntry(masterMaps.areaCodeToName!, ar.area_code ?? ar.code, ar.area_name ?? ar.name));
+      (brokerRows || []).forEach((b: any) => addMasterEntry(masterMaps.brokerCodeToName!, b.brok_code ?? b.broker_code ?? b.code, b.brok_name ?? b.broker_name ?? b.name));
+      (supplyRows || []).forEach((s: any) => addMasterEntry(masterMaps.supplierCodeToName!, s.supp_code ?? s.sup_code ?? s.supplier_code ?? s.code, s.supp_name ?? s.sup_name ?? s.supplier_name ?? s.name));
 
       const inspMasterRows = [...(matInspRows || []), ...(millInspRows || [])];
 
@@ -187,7 +216,7 @@ export default function MismatchCase({ onClose, variant = 'satta' }: { onClose?:
 
         const allLorryReceipts = [...matchingInspections];
 
-        const matchRes = compareSaudaTempArrival(po, poDetails, enrichedInsp, allLorryReceipts);
+        const matchRes = compareSaudaTempArrival(po, poDetails, enrichedInsp, allLorryReceipts, masterMaps);
 
         if (matchRes.hasInspection && matchRes.status === 'mismatch' && matchRes.mismatches.length > 0) {
           const dbMm = (dbMismatches || []).find((m: any) => {
@@ -814,6 +843,118 @@ export default function MismatchCase({ onClose, variant = 'satta' }: { onClose?:
             approval_level: approvalLevel,
           }).ilike('sauda_no', `%${token}%`);
         } catch (e) {}
+      }
+
+      // Sync ONLY Broker, Supplier, and Challan Supplier from Sauda Check Point ->
+      // Temporary Arrival, Final Arrival, and Mill Inspection (strict exact PO match)
+      try {
+        const cleanPo = String(itemPoNo || '').trim();
+        const noPtfPo = cleanPo.replace(/^#+/, '').replace(/\(PTF\)/gi, '').trim();
+        const exactPoCandidates = Array.from(new Set([
+          cleanPo,
+          noPtfPo,
+          noPtfPo ? `#${noPtfPo}` : '',
+          noPtfPo ? `${noPtfPo}(PTF)` : ''
+        ].filter(Boolean)));
+
+        let scpRecord: any = null;
+        for (const cand of exactPoCandidates) {
+          const { data: scpFound } = await supabase
+            .from('sauda_check_point')
+            .select('*')
+            .ilike('po_no', cand)
+            .limit(1);
+          if (Array.isArray(scpFound) && scpFound.length > 0) {
+            scpRecord = scpFound[0];
+            break;
+          }
+          const { data: scpContractFound } = await supabase
+            .from('sauda_check_point')
+            .select('*')
+            .ilike('contract_po_no', cand)
+            .limit(1);
+          if (Array.isArray(scpContractFound) && scpContractFound.length > 0) {
+            scpRecord = scpContractFound[0];
+            break;
+          }
+        }
+
+        const cleanPartyVal = (val: any) => {
+          const s = safeStr(val, '').trim();
+          return s && s.toUpperCase() !== 'N/A' ? s : '';
+        };
+
+        const scpBroker = cleanPartyVal(scpRecord?.broker_name || scpRecord?.broker || targetItem?.brokerName);
+        const scpSupplier = cleanPartyVal(scpRecord?.supplier_name || scpRecord?.supplier || scpRecord?.party_name || targetItem?.supplierName);
+        const scpChallanSupplier = cleanPartyVal(
+          scpRecord
+            ? (scpRecord.challan_supplier_name || scpRecord.challan_supplier || scpRecord.challan_party || scpSupplier)
+            : (targetItem?.challanSupplier || scpSupplier)
+        );
+
+        const arrivalPartyPatch: Record<string, any> = {};
+        if (scpBroker) arrivalPartyPatch.broker = scpBroker;
+        if (scpSupplier) arrivalPartyPatch.supplier = scpSupplier;
+        if (scpChallanSupplier) arrivalPartyPatch.challan_supplier = scpChallanSupplier;
+
+        const millInspPartyPatch: Record<string, any> = {};
+        if (scpBroker) {
+          millInspPartyPatch.broker = scpBroker;
+          millInspPartyPatch.broker_name = scpBroker;
+        }
+        if (scpSupplier) {
+          millInspPartyPatch.supplier = scpSupplier;
+          millInspPartyPatch.supplier_name = scpSupplier;
+        }
+        if (scpChallanSupplier) {
+          millInspPartyPatch.challan_supplier = scpChallanSupplier;
+        }
+
+        if (Object.keys(arrivalPartyPatch).length > 0) {
+          for (const cand of exactPoCandidates) {
+            // 1. Temporary Arrival Section (temporary_material_received)
+            await supabase
+              .from('temporary_material_received')
+              .update(arrivalPartyPatch)
+              .eq('po_no', cand)
+              .then(() => {}, () => {});
+
+            // 2. Final Arrival Section (final_arrival)
+            await supabase
+              .from('final_arrival')
+              .update(arrivalPartyPatch)
+              .eq('po_no', cand)
+              .then(() => {}, () => {});
+          }
+        }
+
+        if (Object.keys(millInspPartyPatch).length > 0) {
+          for (const cand of exactPoCandidates) {
+            // 3. Mill Inspection Section (material_inspection & mill_inspection_master)
+            await supabase
+              .from('material_inspection')
+              .update(millInspPartyPatch)
+              .eq('po_no', cand)
+              .then(() => {}, () => {});
+            await supabase
+              .from('material_inspection')
+              .update(millInspPartyPatch)
+              .eq('mill_po_no', cand)
+              .then(() => {}, () => {});
+            await supabase
+              .from('mill_inspection_master')
+              .update(millInspPartyPatch)
+              .eq('po_no', cand)
+              .then(() => {}, () => {});
+            await supabase
+              .from('mill_inspection_master')
+              .update(millInspPartyPatch)
+              .eq('mill_po_no', cand)
+              .then(() => {}, () => {});
+          }
+        }
+      } catch (syncErr) {
+        console.warn("Sauda Check Point party sync warning on mismatch approval:", syncErr);
       }
     }
 

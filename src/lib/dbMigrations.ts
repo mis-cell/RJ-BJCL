@@ -777,6 +777,8 @@ export async function runDatabaseMigrations() {
           ALTER TABLE IF EXISTS material_inspection ADD COLUMN IF NOT EXISTS deductions JSONB;
           ALTER TABLE IF EXISTS material_inspection ADD COLUMN IF NOT EXISTS deduction_rows JSONB;
           ALTER TABLE IF EXISTS material_inspection ADD COLUMN IF NOT EXISTS deductions_json TEXT;
+          ALTER TABLE IF EXISTS material_inspection ADD COLUMN IF NOT EXISTS challan_supplier TEXT;
+          ALTER TABLE IF EXISTS mill_inspection_master ADD COLUMN IF NOT EXISTS challan_supplier TEXT;
           ALTER TABLE IF EXISTS mill_inspection_master ADD COLUMN IF NOT EXISTS deductions JSONB;
           ALTER TABLE IF EXISTS mill_inspection_master ADD COLUMN IF NOT EXISTS deduction_rows JSONB;
           ALTER TABLE IF EXISTS mill_inspection_master ADD COLUMN IF NOT EXISTS deductions_json TEXT;
