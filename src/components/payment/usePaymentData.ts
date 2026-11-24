@@ -24,6 +24,7 @@ import {
   mapItemsToDetailCols, 
   isMrAlreadyProcessed, 
   isPoEligibleForPayment,
+  annotatePosWithMaterialMismatchStatus,
   getLinkedMrsForPo,
   calculateNetPaidAmountAfterDeductions,
   resolvePaymentDeductionsForPoAndMr
@@ -121,10 +122,13 @@ export function usePaymentData(onSaveSuccess?: () => void) {
   const isPoEligibleForPaymentLocal = useCallback((po: any): boolean => {
     if (!po) return false;
     const isReturnLorryPo = Boolean(po.is_return_lorry || po.source_table === 'return_lorry' || String(po.status || '').toUpperCase() === 'RETURN_LORRY');
+    const isMaterialMismatchApprovedPo = Boolean(po.material_mismatch_approved === true);
+    if (po.material_mismatch_pending === true && !isMaterialMismatchApprovedPo) return false;
+
     const statusStr = String(po.status || '').toLowerCase().trim();
     const passMismatchStr = String(po.pass_mismatch || po.pass_status || po.mismatch_status || po.quality_status || '').toUpperCase().trim();
 
-    const isCompleted = isReturnLorryPo || (
+    const isCompleted = isReturnLorryPo || isMaterialMismatchApprovedPo || (
       statusStr === 'completed' ||
       statusStr === 'closed' ||
       statusStr === 'final' ||
@@ -134,7 +138,7 @@ export function usePaymentData(onSaveSuccess?: () => void) {
       Boolean(po.ptf_no && String(po.ptf_no).trim() && String(po.ptf_no).trim() !== 'N/A')
     );
 
-    let isPass = isReturnLorryPo;
+    let isPass = isReturnLorryPo || isMaterialMismatchApprovedPo;
     if (passMismatchStr === 'PASS') isPass = true;
     else if (po.mismatch_cleared === true || String(po.mismatch_cleared) === 'true') isPass = true;
     else if (po.satta_dispute_approved === true || String(po.satta_dispute_approved) === 'true') isPass = true;
@@ -216,6 +220,7 @@ export function usePaymentData(onSaveSuccess?: () => void) {
       let scpList: any[] = [];
       let arrList: any[] = [];
       let returnLorries: any[] = [];
+      let materialMismatchList: any[] = [];
 
       if (supabase) {
         // Execute all queries in a single parallel batch for fast loading
@@ -232,7 +237,8 @@ export function usePaymentData(onSaveSuccess?: () => void) {
           faRes,
           miRes,
           mimRes,
-          rlRes
+          rlRes,
+          mmRes
         ] = await Promise.all([
           supabase.from('grade_master').select('*').then(r => r.data || [], () => []),
           supabase.from('agency_master').select('*').then(r => r.data || [], () => []),
@@ -246,7 +252,8 @@ export function usePaymentData(onSaveSuccess?: () => void) {
           supabase.from('final_arrival').select('*').order('created_at', { ascending: false }).then(r => r.data || [], () => []),
           supabase.from('material_inspection').select('*').order('created_at', { ascending: false }).then(r => r.data || [], () => []),
           supabase.from('mill_inspection_master').select('*').order('created_at', { ascending: false }).then(r => r.data || [], () => []),
-          supabase.from('return_lorry').select('*').then(r => r.data || [], () => [])
+          supabase.from('return_lorry').select('*').then(r => r.data || [], () => []),
+          supabase.from('material_mismatch').select('*').then(r => r.data || [], () => [])
         ]);
 
         gData = gRes;
@@ -257,6 +264,7 @@ export function usePaymentData(onSaveSuccess?: () => void) {
         poList = poRes;
         scpList = scpRes;
         returnLorries = rlRes;
+        materialMismatchList = mmRes;
 
         if (sattaRes && sattaRes.length > 0) {
           setSattaDiffsList(sattaRes);
@@ -388,6 +396,7 @@ export function usePaymentData(onSaveSuccess?: () => void) {
           });
         }
       });
+      annotatePosWithMaterialMismatchStatus(combinedPoMap, materialMismatchList, arrList);
       const combinedPos = Array.from(combinedPoMap.values());
 
       setPaymentList(payData);
@@ -452,6 +461,7 @@ export function usePaymentData(onSaveSuccess?: () => void) {
       'purchase_detail_master',
       'return_lorry',
       'return_lorry_details',
+      'material_mismatch',
       'satta_differentials'
     ]
   });

@@ -22,6 +22,7 @@ import {
   mapItemsToDetailCols, 
   isMrAlreadyProcessed, 
   isPoEligibleForPayment,
+  annotatePosWithMaterialMismatchStatus,
   getLinkedMrsForPo,
   calculateNetPaidAmountAfterDeductions,
   resolvePaymentDeductionsForPoAndMr
@@ -257,6 +258,7 @@ export default function PaymentReport({ onClose }: { onClose?: () => void }) {
       let poList: any[] = [];
       let scpList: any[] = [];
       let arrList: any[] = [];
+      let mmList: any[] = [];
 
       if (supabase) {
         const [gRes, agRes, mRes, aRes, sattaRes] = await Promise.all([
@@ -312,6 +314,13 @@ export default function PaymentReport({ onClose }: { onClose?: () => void }) {
         }
 
         try {
+          const { data: mList } = await supabase.from('material_mismatch').select('*');
+          if (mList) mmList = mList;
+        } catch (err) {
+          console.warn("Supabase material_mismatch fetch error:", err);
+        }
+
+        try {
           const [aRes, miRes] = await Promise.all([
             supabase.from('final_arrival').select('*').order('created_at', { ascending: false }).then(r => r.data || [], () => []),
             supabase.from('material_inspection').select('*').order('created_at', { ascending: false }).then(r => r.data || [], () => []),
@@ -358,6 +367,9 @@ export default function PaymentReport({ onClose }: { onClose?: () => void }) {
 
         if (poList.length === 0) {
           poList = await dbModule.fetchAll('purchase_master').catch(() => []);
+        }
+        if (mmList.length === 0) {
+          mmList = await dbModule.fetchAll('material_mismatch').catch(() => []);
         }
 
         const [localArr, localInsp, localMillInsp, localTempArr] = await Promise.all([
@@ -450,6 +462,7 @@ export default function PaymentReport({ onClose }: { onClose?: () => void }) {
           combinedPoMap.set(k, { ...existing, ...s, source_table: 'sauda_check_point' });
         }
       });
+      annotatePosWithMaterialMismatchStatus(combinedPoMap, mmList, arrList);
       const combinedPos = Array.from(combinedPoMap.values());
 
       setPaymentList(payData);
@@ -478,7 +491,7 @@ export default function PaymentReport({ onClose }: { onClose?: () => void }) {
     }
   };
 
-  useLiveAutoRefresh(initPage, [], { tables: ['payment_master', 'payment_details', 'm_r_settlement', 'final_arrival', 'inspection_master', 'mill_inspection_master', 'inspection_checklist', 'material_inspection_details', 'satta_differentials'] });
+  useLiveAutoRefresh(initPage, [], { tables: ['payment_master', 'payment_details', 'm_r_settlement', 'final_arrival', 'inspection_master', 'mill_inspection_master', 'inspection_checklist', 'material_inspection_details', 'material_mismatch', 'satta_differentials'] });
 
   useEffect(() => {
     initPage();

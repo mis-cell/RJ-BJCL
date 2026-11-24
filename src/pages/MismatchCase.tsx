@@ -979,7 +979,7 @@ export default function MismatchCase({ onClose, variant = 'satta' }: { onClose?:
 
     // Dispatch global live update events
     window.dispatchEvent(new CustomEvent('mismatch_resolved', { detail: { poNo: itemPoNo } }));
-    window.dispatchEvent(new CustomEvent('app-data-updated'));
+    window.dispatchEvent(new CustomEvent('app-data-updated', { detail: { table: 'material_mismatch', tables: ['material_mismatch', 'sauda_check_point', 'purchase_master'] } }));
 
     // Refetch fresh data from database
     await loadMismatches();

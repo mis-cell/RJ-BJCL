@@ -1278,6 +1278,162 @@ export function isMrAlreadyProcessed(
   };
 }
 
+export function normalizeMaterialMismatchPoKey(val: any): string {
+  const s = String(val || '')
+    .trim()
+    .toUpperCase()
+    .replace(/^(MIS-|SAT-)/i, '')
+    .replace(/^#+/, '')
+    .trim();
+  if (!s || s === 'N/A' || s === 'UNDEFINED' || s === 'NULL' || s === 'NOT LINKED') return '';
+  return s;
+}
+
+export function isMaterialMismatchApproved(mm: any): boolean {
+  if (!mm) return false;
+  const st = String(mm.status || mm.resolution_status || '').toLowerCase().trim();
+  if (st === 'rejected' || st === 'cancelled') return false;
+
+  const remarksUpper = String(mm.remarks || '').toUpperCase();
+  const approvedByUpper = String(mm.approved_by || '').trim().toUpperCase();
+  const approvalLevelUpper = String(mm.approval_level || '').trim().toUpperCase();
+
+  const hasApprovedStatus = st === 'resolved' || st === 'approved' || st === 'cleared';
+  const hasApprovedBy = Boolean(approvedByUpper);
+  const hasApprovedTag = remarksUpper.includes('[APPROVED BY');
+  const hasApprovedRemark =
+    hasApprovedTag ||
+    (remarksUpper.includes('APPROVED') &&
+      !remarksUpper.includes('NOT APPROVED') &&
+      !remarksUpper.includes('UNAPPROVED') &&
+      !remarksUpper.includes('PENDING APPROVAL'));
+
+  if (st === 'pending' || st === 'open') {
+    if (!hasApprovedBy && !hasApprovedTag) return false;
+  } else if (!hasApprovedStatus && !hasApprovedBy && !hasApprovedRemark) {
+    return false;
+  }
+
+  // Verify approver authority when explicit level metadata is present (Admin / L3 / L4 / L5 / MAX)
+  const remarkMatch = remarksUpper.match(/\[APPROVED BY\s+([^\]]+?)\s*\(([^)]+)\)/);
+  const remarkApprover = remarkMatch ? remarkMatch[1].trim() : '';
+  const remarkLevel = remarkMatch ? remarkMatch[2].trim() : '';
+  const detectedLevel = approvalLevelUpper || remarkLevel;
+  const detectedApprover = approvedByUpper || remarkApprover;
+
+  if (detectedLevel) {
+    const isAuthorizedLevel =
+      detectedLevel.includes('ADMIN') ||
+      detectedLevel.includes('L3') ||
+      detectedLevel.includes('L4') ||
+      detectedLevel.includes('L5') ||
+      detectedLevel.includes('MAX') ||
+      detectedLevel.includes('SUPER') ||
+      detectedApprover.includes('ADMIN');
+    if (!isAuthorizedLevel) return false;
+  }
+
+  return true;
+}
+
+export function annotatePosWithMaterialMismatchStatus(
+  combinedPoMap: Map<string, any>,
+  materialMismatches: any[] = [],
+  arrivalsList: any[] = []
+): void {
+  if (!Array.isArray(materialMismatches) || materialMismatches.length === 0) return;
+
+  const approvedKeys = new Set<string>();
+  const pendingKeys = new Set<string>();
+  const approvedRowByKey = new Map<string, any>();
+
+  for (const mm of materialMismatches) {
+    if (!mm) continue;
+    const keys = [mm.po_no, mm.inspection_no, mm.mismatch_id]
+      .map(normalizeMaterialMismatchPoKey)
+      .filter(Boolean);
+    if (keys.length === 0) continue;
+
+    if (isMaterialMismatchApproved(mm)) {
+      for (const k of keys) {
+        approvedKeys.add(k);
+        if (!approvedRowByKey.has(k)) approvedRowByKey.set(k, mm);
+      }
+    } else {
+      for (const k of keys) {
+        pendingKeys.add(k);
+      }
+    }
+  }
+
+  // Approved takes precedence over any older pending row for the same PO
+  for (const k of approvedKeys) {
+    pendingKeys.delete(k);
+  }
+
+  const matchedApprovedKeys = new Set<string>();
+
+  for (const [mapKey, po] of combinedPoMap.entries()) {
+    const poKeys = [
+      mapKey,
+      po.po_no,
+      po.contract_po_no,
+      po.ptf_no,
+      po.sauda_no
+    ]
+      .map(normalizeMaterialMismatchPoKey)
+      .filter(Boolean);
+
+    const matchedApproved = poKeys.find(k => approvedKeys.has(k));
+    if (matchedApproved) {
+      matchedApprovedKeys.add(matchedApproved);
+      combinedPoMap.set(mapKey, {
+        ...po,
+        material_mismatch_approved: true,
+        material_mismatch_pending: false,
+        mismatch_cleared: true
+      });
+      continue;
+    }
+
+    const matchedPending = poKeys.find(k => pendingKeys.has(k));
+    if (matchedPending) {
+      combinedPoMap.set(mapKey, {
+        ...po,
+        material_mismatch_approved: false,
+        material_mismatch_pending: true,
+        mismatch_cleared: false
+      });
+    }
+  }
+
+  // Fallback: if an Admin/L3-approved material mismatch PO is not yet in purchase_master/sauda_check_point,
+  // include it so it is still selectable in the Payment Operation dropdown.
+  for (const [poKey, mm] of approvedRowByKey.entries()) {
+    if (matchedApprovedKeys.has(poKey)) continue;
+    const rawPoNo = String(mm.po_no || '').trim();
+    if (!rawPoNo || normalizeMaterialMismatchPoKey(rawPoNo) !== poKey) continue;
+
+    const matchedArr = (arrivalsList || []).find(a => {
+      const aPo = normalizeMaterialMismatchPoKey(a?.po_no || a?.mill_po_no);
+      return aPo === poKey;
+    });
+
+    combinedPoMap.set(poKey, {
+      po_no: rawPoNo,
+      supplier: mm.supplier || matchedArr?.supplier || matchedArr?.supplier_name || '',
+      broker: mm.broker || matchedArr?.broker || matchedArr?.broker_name || '',
+      area: mm.area || matchedArr?.area || '',
+      grade: mm.grade || '',
+      status: 'approved',
+      material_mismatch_approved: true,
+      material_mismatch_pending: false,
+      mismatch_cleared: true,
+      source_table: 'material_mismatch'
+    });
+  }
+}
+
 /* Helper to evaluate if a P.O is eligible for payment based on both P.O status AND remaining unpaid M.R records */
 export function isPoEligibleForPayment(
   po: any,
@@ -1288,12 +1444,17 @@ export function isPoEligibleForPayment(
   if (!po) return false;
 
   const isReturnLorryPo = Boolean(po.is_return_lorry || po.source_table === 'return_lorry' || String(po.status || '').toUpperCase() === 'RETURN_LORRY');
+  const isMaterialMismatchApprovedPo = Boolean(po.material_mismatch_approved === true);
+  if (po.material_mismatch_pending === true && !isMaterialMismatchApprovedPo) {
+    return false;
+  }
+
   const statusStr = String(po.status || '').toLowerCase().trim();
   const passMismatchStr = String(po.pass_mismatch || po.pass_status || po.mismatch_status || po.quality_status || '').toUpperCase().trim();
   
-  const isCompleted = isReturnLorryPo || (statusStr === 'completed' || statusStr === 'closed' || statusStr === 'final' || statusStr === 'moved_to_final' || statusStr === 'settled' || statusStr === 'active' || (po.ptf_no && String(po.ptf_no).trim() && String(po.ptf_no).trim() !== 'N/A'));
+  const isCompleted = isReturnLorryPo || isMaterialMismatchApprovedPo || (statusStr === 'completed' || statusStr === 'closed' || statusStr === 'final' || statusStr === 'moved_to_final' || statusStr === 'settled' || statusStr === 'active' || (po.ptf_no && String(po.ptf_no).trim() && String(po.ptf_no).trim() !== 'N/A'));
   
-  let isPass = isReturnLorryPo;
+  let isPass = isReturnLorryPo || isMaterialMismatchApprovedPo;
   if (passMismatchStr === 'PASS') isPass = true;
   else if (po.mismatch_cleared === true || String(po.mismatch_cleared) === 'true') isPass = true;
   else if (po.satta_dispute_approved === true || String(po.satta_dispute_approved) === 'true') isPass = true;
