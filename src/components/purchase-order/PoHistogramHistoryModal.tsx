@@ -375,18 +375,26 @@ export const PoHistogramHistoryModal: React.FC<PoHistogramHistoryModalProps> = (
         });
         const matchedPayments = sortByMrAsc(Array.from(paymentMap.values()), (p) => extractRecordMrNo(p) || String(p.voucher_no || ''));
 
-        // STEP E: Build Settlements strictly from mr_settlement_master (deduplicated by mr_no / settlement_id)
+        // STEP E: Build Settlements strictly from mr_settlement_master keyed by valid Final M.R. No. (MR... only)
         const settlementMap = new Map<string, any>();
         allSettlementsPool.forEach((s: any) => {
           const sMr = extractRecordMrNo(s);
+          if (!sMr) return;
           const matchesPo = isExactPoMatch(s);
           const matchesMrSafely = !hasDifferentExplicitPo(s) && isMrInSet(sMr);
           if (!matchesPo && !matchesMrSafely) return;
 
-          const key = String(sMr || s.settlement_id || s.id || '').trim().toUpperCase();
-          if (!key) return;
-          if (!settlementMap.has(key)) {
-            settlementMap.set(key, s);
+          const key = sMr.toUpperCase();
+          const existing = settlementMap.get(key);
+          const sValueScore =
+            (Number(s.value_amt || s.val_material_value || s.summary_material_value || 0) > 0 ? 2 : 0) +
+            (Number(s.net_settled_amount || s.net_amt || s.payable_amt || s.final_amount || 0) > 0 ? 1 : 0);
+          const eValueScore = existing
+            ? (Number(existing.value_amt || existing.val_material_value || existing.summary_material_value || 0) > 0 ? 2 : 0) +
+              (Number(existing.net_settled_amount || existing.net_amt || existing.payable_amt || existing.final_amount || 0) > 0 ? 1 : 0)
+            : -1;
+          if (!existing || sValueScore > eValueScore) {
+            settlementMap.set(key, { ...s, mr_no: sMr });
           }
         });
         const matchedSettlements = sortByMrAsc(Array.from(settlementMap.values()), (s) => extractRecordMrNo(s) || '');

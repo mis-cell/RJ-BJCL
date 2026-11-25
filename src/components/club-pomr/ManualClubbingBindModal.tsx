@@ -202,6 +202,13 @@ export const ManualClubbingBindModal: React.FC<ManualClubbingBindModalProps> = (
                       po.quantity ??
                       (Number(po.weight_per_lorry || 0) > 0 ? Number(po.weight_per_lorry) * totalLorries : 0)
                     ) || 0;
+                    const receivedQtyMt = Number(po.received_weight_mt ?? 0) || 0;
+                    const remainingQtyMt =
+                      po.remaining_weight_mt !== undefined && po.remaining_weight_mt !== null
+                        ? Number(po.remaining_weight_mt)
+                        : Math.max(0, totalQtyMt - receivedQtyMt);
+                    const excessQtyMt = receivedQtyMt > totalQtyMt && totalQtyMt > 0 ? receivedQtyMt - totalQtyMt : 0;
+                    const progressPct = totalQtyMt > 0 ? Math.min(100, Math.round((receivedQtyMt / totalQtyMt) * 100)) : 0;
                     const isFullyReceived = receivedCount >= totalLorries && totalLorries > 0;
 
                     return (
@@ -249,8 +256,28 @@ export const ManualClubbingBindModal: React.FC<ManualClubbingBindModalProps> = (
                             {receivedCount} / {totalLorries} Lorries
                           </span>
                         </td>
-                        <td className="p-2.5 text-right font-mono font-bold text-slate-800 pr-3">
-                          {totalQtyMt.toFixed(2)} MT
+                        <td className="p-2.5 text-right font-mono pr-3 whitespace-nowrap">
+                          <div className="text-[11px] font-bold">
+                            <span className={cn(excessQtyMt > 0 ? 'text-rose-600' : receivedQtyMt > 0 ? 'text-emerald-700' : 'text-slate-600')}>
+                              {receivedQtyMt.toFixed(3)}
+                            </span>
+                            <span className="text-slate-400"> / </span>
+                            <span className="text-slate-800">{totalQtyMt.toFixed(3)} MT</span>
+                          </div>
+                          <div className="w-full h-1 bg-slate-200 rounded-full overflow-hidden my-0.5">
+                            <div
+                              className={cn(
+                                'h-full rounded-full transition-all',
+                                excessQtyMt > 0 ? 'bg-rose-500' : progressPct >= 100 ? 'bg-emerald-600' : 'bg-indigo-600'
+                              )}
+                              style={{ width: `${progressPct}%` }}
+                            />
+                          </div>
+                          <div className={cn('text-[9.5px] font-extrabold', excessQtyMt > 0 ? 'text-rose-600' : 'text-indigo-700')}>
+                            {excessQtyMt > 0
+                              ? `+${excessQtyMt.toFixed(3)} MT Excess`
+                              : `Bal: ${remainingQtyMt.toFixed(3)} MT`}
+                          </div>
                         </td>
                       </tr>
                     );

@@ -37,16 +37,71 @@ import {
 } from "../types/clubPomr.types";
 import { ClubbingHistoryModal } from "../components/club-pomr/ClubbingHistoryModal";
 import { ManualClubbingBindModal } from "../components/club-pomr/ManualClubbingBindModal";
-import { extractFinalArrivalMrNo } from "../lib/mrNumberUtils";
+import { extractFinalArrivalMrNo, extractInspectionMrNo } from "../lib/mrNumberUtils";
 
 export type { ClubbingRecord };
 
+const toWeightMt = (raw: any): number => {
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  if (n >= 500) return n / 1000;
+  if (n > 50) return n / 10;
+  return n;
+};
+
 export const getArrivalWeightMt = (a: any): number => {
   if (!a) return 0;
-  const val = parseFloat(a.final_weight_mt || a.received_weight_mt || a.electronic_net_weight || a.supplier_net_weight || a.challan_material_weight || a.net_weight || a.weight || 0);
-  if (val > 0) return val;
+  if (a.final_weight_mt && Number(a.final_weight_mt) > 0) return toWeightMt(a.final_weight_mt);
+  if (a.received_weight_mt && Number(a.received_weight_mt) > 0) return toWeightMt(a.received_weight_mt);
   if (a.weight_qtl && Number(a.weight_qtl) > 0) return Number(a.weight_qtl) / 10;
+  if (a.electronic_net_weight && Number(a.electronic_net_weight) > 0) return toWeightMt(a.electronic_net_weight);
+  if (a.supplier_net_weight && Number(a.supplier_net_weight) > 0) return toWeightMt(a.supplier_net_weight);
+  if (a.challan_material_weight && Number(a.challan_material_weight) > 0) return toWeightMt(a.challan_material_weight);
+  if (a.weight_reduced && Number(a.weight_reduced) > 0) return toWeightMt(a.weight_reduced);
+  if (a.net_weight && Number(a.net_weight) > 0) return toWeightMt(a.net_weight);
+  if (a.weight && Number(a.weight) > 0) return toWeightMt(a.weight);
   return 0;
+};
+
+const getInspectionWeightMtForClub = (insp: any): number => {
+  if (!insp) return 0;
+  let gItems: any[] = [];
+  if (insp.grid_details) {
+    try {
+      gItems = typeof insp.grid_details === 'string' ? JSON.parse(insp.grid_details) : insp.grid_details;
+    } catch (_e) {}
+  }
+  if ((!gItems || !gItems.length) && insp.details) {
+    try {
+      gItems = typeof insp.details === 'string' ? JSON.parse(insp.details) : insp.details;
+    } catch (_e) {}
+  }
+  if (Array.isArray(gItems) && gItems.length > 0) {
+    const sum = gItems.reduce((s: number, it: any) => {
+      if (!it || typeof it !== 'object') return s;
+      const w = toWeightMt(
+        it.final_receipt_wt ||
+          it.reduced_weight ||
+          it.netto_pnto ||
+          it.receipt_gross_wt ||
+          it.challan_gross_wt ||
+          it.gross_weight ||
+          0
+      );
+      return s + w;
+    }, 0);
+    if (sum > 0) return Math.round(sum * 1000) / 1000;
+  }
+  return toWeightMt(
+    insp.final_receipt_wt ||
+      insp.total_final_receipt_wt ||
+      insp.reduced_weight ||
+      insp.receipt_gross_wt ||
+      insp.challan_gross_wt ||
+      insp.gross_weight ||
+      insp.net_weight ||
+      0
+  );
 };
 
 export const ensureClubbedPomrSchema = async () => {
@@ -165,6 +220,7 @@ export default function ClubPOMR({ onClose }: { onClose?: () => void }) {
         allSaudaMaster,
         allFinalArrivals,
         allTempArrivals,
+        allInspections,
         allClubbed
       ] = await Promise.all([
         dbModule.fetchAll('purchase_master', 'created_at', false).catch(() => []),
@@ -172,6 +228,7 @@ export default function ClubPOMR({ onClose }: { onClose?: () => void }) {
         dbModule.fetchAll('sauda_master', 'created_at', false).catch(() => []),
         dbModule.fetchAll('final_arrival', 'created_at', false).catch(() => []),
         dbModule.fetchAll('temporary_material_received', 'created_at', false).catch(() => []),
+        dbModule.fetchAll('material_inspection', 'created_at', false).catch(() => []),
         dbModule.fetchAll('clubbed_pomr', 'created_at', false).catch(() => [])
       ]);
 
@@ -201,7 +258,8 @@ export default function ClubPOMR({ onClose }: { onClose?: () => void }) {
         allSaudaCheck || [],
         allSaudaMaster || [],
         allFinalArrivals || [],
-        allTempArrivals || []
+        allTempArrivals || [],
+        allInspections || []
       );
     } catch (err) {
       console.error('Error loading Club P.O & Arrival data:', err);
@@ -216,7 +274,8 @@ export default function ClubPOMR({ onClose }: { onClose?: () => void }) {
     allSaudaCheck: any[],
     allSaudaMaster: any[],
     allFinalArrivals: any[],
-    allTempArrivals: any[]
+    allTempArrivals: any[],
+    allInspections: any[] = []
   ) => {
     const isAll = !supplierName || supplierName === 'ALL';
 
@@ -363,6 +422,15 @@ export default function ClubPOMR({ onClose }: { onClose?: () => void }) {
       r.ptf_no
     ]);
 
+    const inspByPoIndex = buildPoRecordIndex(allInspections, (r) => [
+      r.po_no,
+      r.mill_po_no,
+      r.contract_no,
+      r.contract_po_no,
+      r.sauda_no,
+      r.ptf_no
+    ]);
+
     const saudaByKeyIndex = buildPoRecordIndex(allSaudaMaster, (s) => [
       s.sauda_no,
       s.po_no,
@@ -379,6 +447,97 @@ export default function ClubPOMR({ onClose }: { onClose?: () => void }) {
       if (!f) return;
       addPromotedTempToken(f.temporary_arrival_no);
     });
+
+    const computePoProgress = (poKeys: string[]) => {
+      const rawMatchingFinal = queryPoIndex(finalByPoIndex, poKeys);
+      const seenFinalKeys = new Set<string>();
+      const matchingFinal = rawMatchingFinal.filter((f: any) => {
+        const key = extractFinalArrivalMrNo(f) || normalize(f.final_arrival_no || f.mr_no || f.id || '');
+        if (!key) return true;
+        if (seenFinalKeys.has(key)) return false;
+        seenFinalKeys.add(key);
+        return true;
+      });
+
+      const rawMatchingInsp = queryPoIndex(inspByPoIndex, poKeys);
+      const uniqueInspByMr = new Map<string, any>();
+      rawMatchingInsp.forEach((insp: any) => {
+        const mr = extractInspectionMrNo(insp);
+        if (!mr) return;
+        const seqMatch = mr.match(/(\d+)$/);
+        const mrKey = seqMatch ? `MR_${parseInt(seqMatch[1], 10)}` : mr;
+        const existing = uniqueInspByMr.get(mrKey);
+        const hasGrid = Boolean(insp.grid_details || insp.details);
+        const existingHasGrid = Boolean(existing?.grid_details || existing?.details);
+        if (!existing || (!existingHasGrid && hasGrid)) {
+          uniqueInspByMr.set(mrKey, insp);
+        }
+      });
+      const matchingInsp = Array.from(uniqueInspByMr.values());
+
+      const matchingTempArrivals = queryPoIndex(tempByPoIndex, poKeys);
+      const seenTempKeys = new Set<string>();
+      const matchingTempDeduped = matchingTempArrivals.filter((ar: any) => {
+        const matchedInThisPoFinal = matchingFinal.some(
+          (f: any) =>
+            (f.temporary_arrival_no &&
+              (ar.temporary_arrival_no || ar.amad_no) &&
+              normalize(f.temporary_arrival_no) === normalize(ar.temporary_arrival_no || ar.amad_no)) ||
+            (f.lorry_number &&
+              ar.lorry_number &&
+              normalize(f.lorry_number) === normalize(ar.lorry_number))
+        );
+        if (matchedInThisPoFinal) return false;
+
+        const tempId = normalize(ar.temporary_arrival_no || ar.amad_no || '');
+        if (tempId && allPromotedTempTokens.has(tempId)) return false;
+
+        const key = normalize(ar.temporary_arrival_no || ar.amad_no || ar.id || '');
+        if (key) {
+          if (seenTempKeys.has(key)) return false;
+          seenTempKeys.add(key);
+        }
+        return true;
+      });
+
+      // Unique received lorries across Final Arrival, Mill Inspection, and unpromoted Temp Arrival (matches Sauda Check Point)
+      const receivedLorryKeys = new Set<string>();
+      const addLorryKey = (rawMr: string | null | undefined, fallback: string) => {
+        const mr = String(rawMr || '').trim().toUpperCase();
+        if (mr) {
+          const seqMatch = mr.match(/(\d+)$/);
+          receivedLorryKeys.add(seqMatch ? `MR_${parseInt(seqMatch[1], 10)}` : mr);
+          return;
+        }
+        receivedLorryKeys.add(fallback);
+      };
+      matchingFinal.forEach((f: any, i: number) => addLorryKey(extractFinalArrivalMrNo(f), `FINAL_${i}`));
+      matchingInsp.forEach((ins: any, i: number) => addLorryKey(extractInspectionMrNo(ins), `INSP_${i}`));
+      matchingTempDeduped.forEach((t: any, i: number) =>
+        addLorryKey(extractFinalArrivalMrNo(t), `TEMP_${normalize(t.temporary_arrival_no || t.amad_no || t.id || i)}`)
+      );
+
+      const inspWeightMt = matchingInsp.reduce((s: number, ins: any) => s + getInspectionWeightMtForClub(ins), 0);
+      const arrivalWeightMt =
+        matchingFinal.reduce((sum: number, r: any) => sum + getArrivalWeightMt(r), 0) +
+        matchingTempDeduped.reduce((sum: number, r: any) => sum + getArrivalWeightMt(r), 0);
+      const receivedWeightMt = inspWeightMt > 0 ? inspWeightMt : arrivalWeightMt;
+
+      const linkedMrNos = Array.from(
+        new Set(
+          [
+            ...matchingFinal.map((r: any) => extractFinalArrivalMrNo(r)),
+            ...matchingInsp.map((r: any) => extractInspectionMrNo(r)),
+          ].filter(Boolean)
+        )
+      );
+
+      return {
+        receivedLorries: receivedLorryKeys.size,
+        receivedWeightMt: Number(receivedWeightMt.toFixed(3)),
+        linkedMrNos,
+      };
+    };
 
     // 3. Process Open P.O / Sauda Check Point Contracts:
     // A P.O / Sauda with multiple lorries (e.g. 6 lorries on BJCL/2026-2027/0660) MUST remain available
@@ -422,59 +581,7 @@ export default function ClubPOMR({ onClose }: { onClose?: () => void }) {
         ) || 1
       );
 
-      // Match all Final Arrivals and Temporary Arrivals already tagged to this P.O
-      const rawMatchingFinal = queryPoIndex(finalByPoIndex, poKeys);
-      const seenFinalKeys = new Set<string>();
-      const matchingFinal = rawMatchingFinal.filter((f: any) => {
-        const key = normalize(f.final_arrival_no || f.mr_no || f.id || '');
-        if (!key) return true;
-        if (seenFinalKeys.has(key)) return false;
-        seenFinalKeys.add(key);
-        return true;
-      });
-
-      const matchingTempArrivals = queryPoIndex(tempByPoIndex, poKeys);
-
-      // Deduplicate Temp Arrivals that are already represented in Final Arrivals (1 Lorry = 1 MR)
-      const seenTempKeys = new Set<string>();
-      const matchingTempDeduped = matchingTempArrivals.filter((ar: any) => {
-        const matchedInThisPoFinal = matchingFinal.some(
-          (f: any) =>
-            (f.temporary_arrival_no &&
-              (ar.temporary_arrival_no || ar.amad_no) &&
-              normalize(f.temporary_arrival_no) === normalize(ar.temporary_arrival_no || ar.amad_no)) ||
-            (f.lorry_number &&
-              ar.lorry_number &&
-              normalize(f.lorry_number) === normalize(ar.lorry_number))
-        );
-        if (matchedInThisPoFinal) return false;
-
-        const tempId = normalize(ar.temporary_arrival_no || ar.amad_no || '');
-        if (tempId && allPromotedTempTokens.has(tempId)) {
-          return false;
-        }
-
-        const key = normalize(ar.temporary_arrival_no || ar.amad_no || ar.id || '');
-        if (key) {
-          if (seenTempKeys.has(key)) return false;
-          seenTempKeys.add(key);
-        }
-        return true;
-      });
-
-      const receivedLorries = matchingFinal.length + matchingTempDeduped.length;
-
-      const receivedWeightMt =
-        matchingFinal.reduce((sum: number, r: any) => sum + getArrivalWeightMt(r), 0) +
-        matchingTempDeduped.reduce((sum: number, r: any) => sum + getArrivalWeightMt(r), 0);
-
-      const linkedMrNos = Array.from(
-        new Set(
-          matchingFinal
-            .map((r: any) => String(r.final_arrival_no || r.mr_no || '').trim())
-            .filter(Boolean)
-        )
-      );
+      const { receivedLorries, receivedWeightMt, linkedMrNos } = computePoProgress(poKeys);
 
       // Check if explicitly closed or cancelled
       const statusLower = String(po.status || '').toLowerCase();
@@ -497,6 +604,7 @@ export default function ClubPOMR({ onClose }: { onClose?: () => void }) {
             (Number(po.weight_per_lorry || 0) > 0 ? Number(po.weight_per_lorry) * contractLorries : 0) ||
             0
         );
+        const remainingWeightMt = Number(Math.max(0, totalContractMt - receivedWeightMt).toFixed(3));
 
         combinedPOsMap.set(normPoNo, {
           ...po,
@@ -514,7 +622,8 @@ export default function ClubPOMR({ onClose }: { onClose?: () => void }) {
           supplier: po.supplier || matchedSauda?.supplier || 'N/A',
           total_contract_mt: totalContractMt,
           contract_quantity: totalContractMt,
-          received_weight_mt: Number(receivedWeightMt.toFixed(3)),
+          received_weight_mt: receivedWeightMt,
+          remaining_weight_mt: remainingWeightMt,
           total_lorries: contractLorries,
           contract_lorries: contractLorries,
           received_lorries: receivedLorries,
@@ -536,38 +645,7 @@ export default function ClubPOMR({ onClose }: { onClose?: () => void }) {
       const matchedSaudas = queryPoIndex(saudaByKeyIndex, poKeys);
       const matchedSauda = matchedSaudas[0] || null;
       const contractLorries = Math.max(1, parseInt(po.total_lorries || po.total_no_of_lorries || po.no_of_lorries || po.lorries || matchedSauda?.no_of_lorries || matchedSauda?.total_lorries || 1, 10) || 1);
-      const rawCatFinal = queryPoIndex(finalByPoIndex, poKeys);
-      const seenCatFinal = new Set<string>();
-      const matchingFinal = rawCatFinal.filter((f: any) => {
-        const key = normalize(f.final_arrival_no || f.mr_no || f.id || '');
-        if (!key) return true;
-        if (seenCatFinal.has(key)) return false;
-        seenCatFinal.add(key);
-        return true;
-      });
-      const matchingCatTemp = queryPoIndex(tempByPoIndex, poKeys);
-      const seenCatTemp = new Set<string>();
-      const matchingTempDeduped = matchingCatTemp.filter((ar: any) => {
-        const matchedInFinal = matchingFinal.some(
-          (f: any) =>
-            (f.temporary_arrival_no &&
-              (ar.temporary_arrival_no || ar.amad_no) &&
-              normalize(f.temporary_arrival_no) === normalize(ar.temporary_arrival_no || ar.amad_no)) ||
-            (f.lorry_number &&
-              ar.lorry_number &&
-              normalize(f.lorry_number) === normalize(ar.lorry_number))
-        );
-        if (matchedInFinal) return false;
-        const tempId = normalize(ar.temporary_arrival_no || ar.amad_no || '');
-        if (tempId && allPromotedTempTokens.has(tempId)) return false;
-        const key = normalize(ar.temporary_arrival_no || ar.amad_no || ar.id || '');
-        if (key) {
-          if (seenCatTemp.has(key)) return false;
-          seenCatTemp.add(key);
-        }
-        return true;
-      });
-      const catReceivedLorries = matchingFinal.length + matchingTempDeduped.length;
+      const { receivedLorries: catReceivedLorries, receivedWeightMt: catReceivedWeightMt } = computePoProgress(poKeys);
       const totalContractMt = Number(
         po.total_contract_mt ||
           po.contract_quantity ||
@@ -579,6 +657,7 @@ export default function ClubPOMR({ onClose }: { onClose?: () => void }) {
           (Number(po.weight_per_lorry || 0) > 0 ? Number(po.weight_per_lorry) * contractLorries : 0) ||
           0
       );
+      const catRemainingWeightMt = Number(Math.max(0, totalContractMt - catReceivedWeightMt).toFixed(3));
       allPoCatalogMap.set(normPo, {
         ...po,
         po_no: poNo,
@@ -588,6 +667,8 @@ export default function ClubPOMR({ onClose }: { onClose?: () => void }) {
         supplier: po.supplier || matchedSauda?.supplier || 'N/A',
         total_contract_mt: totalContractMt,
         contract_quantity: totalContractMt,
+        received_weight_mt: catReceivedWeightMt,
+        remaining_weight_mt: catRemainingWeightMt,
         total_lorries: contractLorries,
         contract_lorries: contractLorries,
         received_lorries: catReceivedLorries,
@@ -612,6 +693,7 @@ export default function ClubPOMR({ onClose }: { onClose?: () => void }) {
       'sauda_master',
       'final_arrival',
       'temporary_material_received',
+      'material_inspection',
       'clubbed_pomr'
     ]
   });
