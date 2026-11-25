@@ -893,7 +893,37 @@ export function usePurchaseOrderData({
 
         const isMismatch = !isCleared && (hasDbMismatch || mismatchFields.length > 0 || (p.pass_status === 'mismatch' && !isCleared));
 
-        const receivedLorries = matchingFinal.length + matchingTemp.length;
+        const receivedLorryKeys = new Set<string>();
+        const addReceivedLorryKey = (rawMr: string | null | undefined, fallbackKey?: string) => {
+          const mr = String(rawMr || '').trim().toUpperCase();
+          if (mr) {
+            const seqMatch = mr.match(/(\d+)$/);
+            receivedLorryKeys.add(seqMatch ? `MR_${parseInt(seqMatch[1], 10)}` : mr);
+            return;
+          }
+          if (fallbackKey) {
+            receivedLorryKeys.add(fallbackKey);
+          }
+        };
+        matchingFinal.forEach((f: any, idx: number) => {
+          addReceivedLorryKey(
+            extractFinalArrivalMrNo(f),
+            `FINAL_${String(f.final_arrival_no || f.id || idx).trim().toUpperCase()}`
+          );
+        });
+        sortedInspsForPo.forEach((insp: any, idx: number) => {
+          addReceivedLorryKey(
+            extractInspectionMrNo(insp),
+            `INSP_${String(insp.mr_no || insp.id || idx).trim().toUpperCase()}`
+          );
+        });
+        matchingTemp.forEach((t: any, idx: number) => {
+          addReceivedLorryKey(
+            extractFinalArrivalMrNo(t),
+            `TEMP_${String(t.temporary_arrival_no || t.amad_no || t.id || idx).trim().toUpperCase()}`
+          );
+        });
+        const receivedLorries = receivedLorryKeys.size;
         const contractLorries = Math.max(1, parseInt(p.total_lorries || p.total_no_of_lorries || p.no_of_lorries || p.lorries || 1, 10) || 1);
 
         const cleanPoKey = String(p.po_no || '').trim().toUpperCase();
