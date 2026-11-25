@@ -618,9 +618,7 @@ export const PurchaseOrderFormHeader: React.FC<PurchaseOrderFormHeaderProps> = (
                       isSaudaActive ? "bg-[#FDE7E6] border-sky-300 text-sky-950 font-semibold" : "bg-white border-slate-400"
                     }`} value={formData.delivery_to} onChange={(e) => setFormData({...formData, delivery_to: e.target.value})} />
                     <label htmlFor="grace_days_3600" className="ml-2 shrink-0">Grace Days</label>
-                    <input  id="grace_days_3600" name="grace_days" aria-label="Grace Days"className={`w-12 p-0.5 outline-none text-right font-normal border text-black transition-colors duration-150 ${
-                      isSaudaActive ? "bg-[#FDE7E6] border-sky-300 text-sky-950 font-semibold font-mono" : "bg-white border-slate-400"
-                    }`} value={formData.grace_days} onChange={(e) => setFormData({...formData, grace_days: e.target.value})} />
+                    <input  id="grace_days_3600" name="grace_days" aria-label="Grace Days" inputMode="numeric" className="w-12 p-0.5 outline-none text-right font-normal border text-black bg-white border-slate-400 transition-colors duration-150" value={formData.grace_days} onChange={(e) => setFormData({...formData, grace_days: e.target.value})} />
                     <label htmlFor="delivery_penalty_3604" className="ml-2 shrink-0">Delivery Penalty</label>
                     <input  id="delivery_penalty_3604" name="delivery_penalty" aria-label="Delivery Penalty"className={`w-12 p-0.5 outline-none text-right font-normal border text-black transition-colors duration-150 ${
                       isSaudaActive ? "bg-[#FDE7E6] border-sky-300 text-sky-950 font-semibold font-mono" : "bg-white border-slate-400"

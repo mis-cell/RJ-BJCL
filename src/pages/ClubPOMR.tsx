@@ -488,11 +488,13 @@ export default function ClubPOMR({ onClose }: { onClose?: () => void }) {
       if (hasOpenLorries) {
         const totalContractMt = Number(
           po.total_contract_mt ||
+            po.contract_quantity ||
             po.quantity_mt ||
             po.total_qty_mt ||
             po.quantity ||
             matchedSauda?.total_wt_in_ton ||
             (po.qty_qtl ? Number(po.qty_qtl) / 10 : 0) ||
+            (Number(po.weight_per_lorry || 0) > 0 ? Number(po.weight_per_lorry) * contractLorries : 0) ||
             0
         );
 
@@ -511,9 +513,12 @@ export default function ClubPOMR({ onClose }: { onClose?: () => void }) {
             'N/A',
           supplier: po.supplier || matchedSauda?.supplier || 'N/A',
           total_contract_mt: totalContractMt,
+          contract_quantity: totalContractMt,
           received_weight_mt: Number(receivedWeightMt.toFixed(3)),
+          total_lorries: contractLorries,
           contract_lorries: contractLorries,
           received_lorries: receivedLorries,
+          received_lorries_count: receivedLorries,
           remaining_lorries: Math.max(0, contractLorries - receivedLorries),
           linked_mr_nos: linkedMrNos
         });
@@ -531,8 +536,49 @@ export default function ClubPOMR({ onClose }: { onClose?: () => void }) {
       const matchedSaudas = queryPoIndex(saudaByKeyIndex, poKeys);
       const matchedSauda = matchedSaudas[0] || null;
       const contractLorries = Math.max(1, parseInt(po.total_lorries || po.total_no_of_lorries || po.no_of_lorries || po.lorries || matchedSauda?.no_of_lorries || matchedSauda?.total_lorries || 1, 10) || 1);
-      const matchingFinal = queryPoIndex(finalByPoIndex, poKeys);
-      const totalContractMt = Number(po.total_contract_mt || po.quantity_mt || po.total_qty_mt || po.quantity || matchedSauda?.total_wt_in_ton || (po.qty_qtl ? Number(po.qty_qtl) / 10 : 0) || 0);
+      const rawCatFinal = queryPoIndex(finalByPoIndex, poKeys);
+      const seenCatFinal = new Set<string>();
+      const matchingFinal = rawCatFinal.filter((f: any) => {
+        const key = normalize(f.final_arrival_no || f.mr_no || f.id || '');
+        if (!key) return true;
+        if (seenCatFinal.has(key)) return false;
+        seenCatFinal.add(key);
+        return true;
+      });
+      const matchingCatTemp = queryPoIndex(tempByPoIndex, poKeys);
+      const seenCatTemp = new Set<string>();
+      const matchingTempDeduped = matchingCatTemp.filter((ar: any) => {
+        const matchedInFinal = matchingFinal.some(
+          (f: any) =>
+            (f.temporary_arrival_no &&
+              (ar.temporary_arrival_no || ar.amad_no) &&
+              normalize(f.temporary_arrival_no) === normalize(ar.temporary_arrival_no || ar.amad_no)) ||
+            (f.lorry_number &&
+              ar.lorry_number &&
+              normalize(f.lorry_number) === normalize(ar.lorry_number))
+        );
+        if (matchedInFinal) return false;
+        const tempId = normalize(ar.temporary_arrival_no || ar.amad_no || '');
+        if (tempId && allPromotedTempTokens.has(tempId)) return false;
+        const key = normalize(ar.temporary_arrival_no || ar.amad_no || ar.id || '');
+        if (key) {
+          if (seenCatTemp.has(key)) return false;
+          seenCatTemp.add(key);
+        }
+        return true;
+      });
+      const catReceivedLorries = matchingFinal.length + matchingTempDeduped.length;
+      const totalContractMt = Number(
+        po.total_contract_mt ||
+          po.contract_quantity ||
+          po.quantity_mt ||
+          po.total_qty_mt ||
+          po.quantity ||
+          matchedSauda?.total_wt_in_ton ||
+          (po.qty_qtl ? Number(po.qty_qtl) / 10 : 0) ||
+          (Number(po.weight_per_lorry || 0) > 0 ? Number(po.weight_per_lorry) * contractLorries : 0) ||
+          0
+      );
       allPoCatalogMap.set(normPo, {
         ...po,
         po_no: poNo,
@@ -541,9 +587,11 @@ export default function ClubPOMR({ onClose }: { onClose?: () => void }) {
         area: po.area || po.arrival_area_name || po.arrival_yard || po.area_name || po.dispatch_place || matchedSauda?.area || 'N/A',
         supplier: po.supplier || matchedSauda?.supplier || 'N/A',
         total_contract_mt: totalContractMt,
+        contract_quantity: totalContractMt,
+        total_lorries: contractLorries,
         contract_lorries: contractLorries,
-        received_lorries: matchingFinal.length,
-        received_lorries_count: matchingFinal.length,
+        received_lorries: catReceivedLorries,
+        received_lorries_count: catReceivedLorries,
       });
     });
 

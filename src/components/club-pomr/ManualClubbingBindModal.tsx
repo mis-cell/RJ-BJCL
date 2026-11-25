@@ -191,8 +191,17 @@ export const ManualClubbingBindModal: React.FC<ManualClubbingBindModalProps> = (
                 <tbody className="divide-y divide-slate-100">
                   {matchingPOs.map((po) => {
                     const isSelected = chosenPoForBind?.po_no === po.po_no;
-                    const totalLorries = Number(po.total_lorries || po.lorries || 1);
-                    const receivedCount = Number(po.received_lorries_count || 0);
+                    const totalLorries = Number(po.contract_lorries ?? po.total_lorries ?? po.total_no_of_lorries ?? po.no_of_lorries ?? po.lorries ?? 1) || 1;
+                    const receivedCount = Number(po.received_lorries_count ?? po.received_lorries ?? 0) || 0;
+                    const totalQtyMt = Number(
+                      po.total_contract_mt ??
+                      po.contract_quantity ??
+                      po.total_qty_mt ??
+                      po.quantity_mt ??
+                      po.approx_quantity ??
+                      po.quantity ??
+                      (Number(po.weight_per_lorry || 0) > 0 ? Number(po.weight_per_lorry) * totalLorries : 0)
+                    ) || 0;
                     const isFullyReceived = receivedCount >= totalLorries && totalLorries > 0;
 
                     return (
@@ -241,7 +250,7 @@ export const ManualClubbingBindModal: React.FC<ManualClubbingBindModalProps> = (
                           </span>
                         </td>
                         <td className="p-2.5 text-right font-mono font-bold text-slate-800 pr-3">
-                          {(Number(po.contract_quantity || po.approx_quantity || po.quantity || 0)).toFixed(2)} MT
+                          {totalQtyMt.toFixed(2)} MT
                         </td>
                       </tr>
                     );

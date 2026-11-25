@@ -447,7 +447,7 @@ export function usePurchaseOrderFormLogic({
 
     const saudaDateStr = sauda.date || todayStr;
     const shipDateStr = sauda.shipment_date || sauda.delivery_to;
-    const shipDaysNum = parseInt(String(sauda.shipment_days || sauda.grace_days || '0'), 10) || 0;
+    const shipDaysNum = parseInt(String(sauda.shipment_days || '0'), 10) || 0;
 
     let computedDeliveryTo = shipDateStr || saudaDateStr;
     if ((!shipDateStr || shipDateStr === saudaDateStr) && shipDaysNum > 0) {
@@ -484,7 +484,7 @@ export function usePurchaseOrderFormLogic({
       contract_date: saudaDateStr,
       delivery_from: saudaDateStr,
       delivery_to: computedDeliveryTo,
-      grace_days: shipDaysNum.toString(),
+      grace_days: prev.grace_days || '0',
       delivery_penalty: sauda.shipment_penalty ? sauda.shipment_penalty.toString() : (sauda.delivery_penalty || '0'),
       b_rate: selectedBRate,
       s_date: sDate,
@@ -938,7 +938,7 @@ export function usePurchaseOrderFormLogic({
       const resolvedDeliveryTo = cachedDeliveryDates?.delivery_to || poHeader.delivery_to || poHeader.shipment_date || resolvedDeliveryFrom || todayStr;
       const resolvedGraceDays = cachedDeliveryDates?.grace_days !== undefined
         ? String(cachedDeliveryDates.grace_days)
-        : (poHeader.grace_days?.toString() || poHeader.shipment_days?.toString() || '0');
+        : (poHeader.grace_days !== undefined && poHeader.grace_days !== null ? String(poHeader.grace_days) : '0');
       const resolvedDeliveryPenalty = cachedDeliveryDates?.delivery_penalty !== undefined
         ? String(cachedDeliveryDates.delivery_penalty)
         : (poHeader.delivery_penalty?.toString() || poHeader.shipment_penalty?.toString() || '0');
@@ -1256,8 +1256,7 @@ export function usePurchaseOrderFormLogic({
         delivery_from: formData.delivery_from || null,
         delivery_to: formData.delivery_to || null,
         shipment_date: formData.delivery_to || formData.delivery_from || null,
-        grace_days: parseInt(formData.grace_days) || 0,
-        shipment_days: parseInt(formData.grace_days) || 0,
+        grace_days: parseInt(formData.grace_days, 10) || 0,
         delivery_penalty: parseFloat(formData.delivery_penalty) || 0,
         shipment_penalty: parseFloat(formData.delivery_penalty) || 0,
         contract_po_no: formData.contract_po_no || formData.no || finalPoNo,

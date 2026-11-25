@@ -438,7 +438,6 @@ export const ReopenSuccessModal: React.FC<{
         String(
           cachedDates?.grace_days ??
           info.po.grace_days ??
-          info.po.shipment_days ??
           0
         )
       );
@@ -465,7 +464,6 @@ export const ReopenSuccessModal: React.FC<{
         delivery_to: deliveryTo || null,
         shipment_date: deliveryTo || deliveryFrom || null,
         grace_days: parsedGrace,
-        shipment_days: parsedGrace,
         updated_at: new Date().toISOString()
       };
 
@@ -485,7 +483,6 @@ export const ReopenSuccessModal: React.FC<{
         delivery_to: deliveryTo || null,
         shipment_date: deliveryTo || deliveryFrom || null,
         grace_days: parsedGrace,
-        shipment_days: parsedGrace,
         is_closed: false,
         is_reopened: true,
         pending: true,

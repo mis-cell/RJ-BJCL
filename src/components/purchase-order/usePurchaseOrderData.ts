@@ -968,7 +968,7 @@ export function usePurchaseOrderData({
 
         const effectiveDeliveryFrom = cachedDeliveryDates?.delivery_from || p.delivery_from || p.shipment_date || null;
         const effectiveDeliveryTo = cachedDeliveryDates?.delivery_to || p.delivery_to || p.shipment_date || effectiveDeliveryFrom || null;
-        const effectiveGraceDays = cachedDeliveryDates?.grace_days !== undefined ? cachedDeliveryDates.grace_days : (p.grace_days ?? p.shipment_days ?? 0);
+        const effectiveGraceDays = cachedDeliveryDates?.grace_days !== undefined ? cachedDeliveryDates.grace_days : (p.grace_days ?? 0);
 
         return {
           ...p,

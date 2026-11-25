@@ -930,7 +930,7 @@ export function usePurchaseOrderOperations({
           qty_penalty: source?.qty_penalty ?? item.qty_penalty ?? 0,
           delivery_from: item.delivery_from || source?.delivery_from || source?.shipment_date || item.shipment_date || null,
           delivery_to: item.delivery_to || source?.delivery_to || source?.shipment_date || item.shipment_date || null,
-          grace_days: item.grace_days ?? source?.grace_days ?? source?.shipment_days ?? 0,
+          grace_days: item.grace_days ?? source?.grace_days ?? 0,
           delivery_penalty: source?.delivery_penalty || source?.shipment_penalty || item.delivery_penalty || 0,
           contract_po_no: source?.contract_po_no || item.contract_po_no || '',
           contract_date: source?.contract_date || source?.date || item.contract_date || null,
