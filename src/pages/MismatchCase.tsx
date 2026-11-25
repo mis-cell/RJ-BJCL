@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useLiveAutoRefresh } from '../hooks/useLiveAutoRefresh';
 import { 
   AlertTriangle, 
@@ -59,6 +59,9 @@ export default function MismatchCase({ onClose, variant = 'satta' }: { onClose?:
   const [searchQuery, setSearchQuery] = useState('');
   const [mismatchList, setMismatchList] = useState<MaterialMismatchItem[]>([]);
   const [remarksMap, setRemarksMap] = useState<Record<string, string>>({});
+  const [isBulkApproving, setIsBulkApproving] = useState(false);
+  const hasAutoApprovedCutoffRef = useRef(false);
+  const ONE_TIME_APPROVAL_CUTOFF_DATE = '2026-10-31';
   const [navTarget, setNavTarget] = useState<MaterialMismatchNavigationTarget | null>(() =>
     variant === 'material' ? peekMaterialMismatchNavigationTarget() : null
   );
@@ -1173,6 +1176,219 @@ export default function MismatchCase({ onClose, variant = 'satta' }: { onClose?:
     setTimeout(() => setSuccessToast(null), 4000);
   };
 
+  const normalizeItemDateYmd = (rawDate?: string): string => {
+    const s = String(rawDate || '').trim().split('T')[0].trim();
+    if (!s) return '';
+    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+    const m = s.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})$/);
+    if (m) return `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`;
+    return '';
+  };
+
+  const pendingTillCutoffItems = useMemo(() => {
+    return mismatchList.filter((m) => {
+      if (m.status !== 'pending') return false;
+      const d = normalizeItemDateYmd(m.mrDate || m.detectedAt);
+      return Boolean(d && d <= ONE_TIME_APPROVAL_CUTOFF_DATE);
+    });
+  }, [mismatchList]);
+
+  const handleBulkApproveTillCutoff = async (explicitItems?: MaterialMismatchItem[]) => {
+    const sourceList = explicitItems || mismatchList;
+    const eligible = sourceList.filter((m) => {
+      if (m.status !== 'pending') return false;
+      const d = normalizeItemDateYmd(m.mrDate || m.detectedAt);
+      return Boolean(d && d <= ONE_TIME_APPROVAL_CUTOFF_DATE);
+    });
+    if (eligible.length === 0 || isBulkApproving) return;
+
+    setIsBulkApproving(true);
+    try {
+      const ctx = getCurrentUserContext();
+      const username = ctx.username || ctx.userName || 'Administrator';
+      const approvalLevel = (ctx.userLevel || ctx.userRole || 'ADMIN').toUpperCase();
+      const nowIso = new Date().toISOString();
+      const todayYmd = nowIso.split('T')[0];
+      const bulkRemarks = `One-time approved (MR Date <= ${ONE_TIME_APPROVAL_CUTOFF_DATE})`;
+
+      const eligibleIdSet = new Set(eligible.map((e) => e.id));
+      const remainingPendingPos = Array.from(
+        new Set(
+          sourceList
+            .filter((m) => m.status === 'pending' && !eligibleIdSet.has(m.id))
+            .map((m) => m.poNo)
+            .filter(Boolean)
+        )
+      );
+
+      let approvedCount = 0;
+      let serverSucceeded = false;
+
+      // 1. Try fast single-call server endpoint first
+      try {
+        const resp = await fetch('/api/material-mismatch/bulk-approve-till-date', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            cutoffDate: ONE_TIME_APPROVAL_CUTOFF_DATE,
+            approvedBy: username,
+            approvalLevel,
+            remarks: bulkRemarks,
+            remainingPendingPos,
+            items: eligible.map((item) => ({
+              id: item.id,
+              poNo: item.poNo,
+              mrNo: item.mrNo,
+              mrDate: item.mrDate,
+              detectedAt: item.detectedAt,
+              saudaNo: item.saudaNo,
+              supplierName: item.supplierName,
+              brokerName: item.brokerName,
+              area: item.area,
+              grade: item.grade,
+              agency: item.agency,
+              ptfMode: item.ptfMode,
+              challanSupplier: item.challanSupplier,
+              ratePerMt: item.ratePerMt,
+              lorryNumber: item.lorryNumber,
+              mismatchedFields: item.mismatchedFields,
+              issueDescription: item.issueDescription,
+              severity: item.severity,
+            })),
+          }),
+        });
+        if (resp.ok) {
+          const data = await resp.json();
+          if (data?.success) {
+            approvedCount = Number(data.approvedCount || eligible.length);
+            serverSucceeded = true;
+          }
+        }
+      } catch (_apiErr) {}
+
+      // 2. Fallback to direct batched DB writes if server hasn't been restarted yet
+      if (!serverSucceeded && supabase) {
+        const { data: existingAll } = await supabase.from('material_mismatch').select('*');
+        const existingRows: any[] = Array.isArray(existingAll) ? existingAll : [];
+        const existingById = new Map<string, any>();
+        existingRows.forEach((r: any) => {
+          const rId = String(r.mismatch_id || '').trim().toUpperCase();
+          if (rId) existingById.set(rId, r);
+        });
+
+        const BATCH_SIZE = 15;
+        for (let i = 0; i < eligible.length; i += BATCH_SIZE) {
+          const chunk = eligible.slice(i, i + BATCH_SIZE);
+          await Promise.all(
+            chunk.map(async (item) => {
+              const resolvedMrNo = (item.mrNo || '').trim().toUpperCase();
+              const baseRecord: Record<string, any> = {
+                po_no: item.poNo,
+                arrival_no: resolvedMrNo || (item.lorryNumber && item.lorryNumber !== 'N/A' ? item.lorryNumber : 'N/A'),
+                inspection_no: resolvedMrNo || item.id,
+                area: item.area || 'DAISEE',
+                grade: item.grade || 'N/A',
+                field: Array.isArray(item.mismatchedFields) ? item.mismatchedFields.join(', ') : 'Material Mismatch',
+                expected_value: item.issueDescription || 'PO Specifications',
+                actual_value: item.issueDescription || 'Material Inspection Variance',
+                status: 'resolved',
+                remarks: `[APPROVED by ${username} (${approvalLevel}) on ${todayYmd}]: ${bulkRemarks}`,
+              };
+              const extendedRecord: Record<string, any> = {
+                ...baseRecord,
+                mismatch_id: item.id,
+                approved_by: username,
+                approved_at: nowIso,
+                approval_level: approvalLevel,
+                supplier: item.supplierName || null,
+                broker: item.brokerName || null,
+                agency: item.agency || null,
+                ptf_mode: item.ptfMode || null,
+                challan_supplier: item.challanSupplier || null,
+                rate_per_mt: item.ratePerMt || null,
+                lorry_number: item.lorryNumber || null,
+                issue_description: item.issueDescription || null,
+                mismatched_fields: Array.isArray(item.mismatchedFields) ? item.mismatchedFields.join(', ') : null,
+                severity: item.severity || 'medium',
+              };
+              const existing = existingById.get(item.id.toUpperCase());
+              if (existing?.id) {
+                const { error } = await supabase.from('material_mismatch').update(extendedRecord).eq('id', existing.id);
+                if (error) await supabase.from('material_mismatch').update(baseRecord).eq('id', existing.id);
+              } else {
+                const { error } = await supabase.from('material_mismatch').insert(extendedRecord);
+                if (error) await supabase.from('material_mismatch').insert(baseRecord);
+              }
+              approvedCount++;
+            })
+          );
+        }
+
+        const remainingPoSet = new Set(remainingPendingPos.map((p) => p.trim().toUpperCase()));
+        const clearedPos = Array.from(new Set(eligible.map((e) => e.poNo))).filter(
+          (po) => !remainingPoSet.has(po.trim().toUpperCase())
+        );
+        const parentVariants = Array.from(new Set(clearedPos.flatMap((po) => buildExactPoQueryVariants(po))));
+        if (parentVariants.length > 0) {
+          const patch = {
+            mismatch_cleared: true,
+            pass_status: 'pass',
+            mismatch_remarks: bulkRemarks,
+            approved_by: username,
+            approved_at: nowIso,
+            approval_level: approvalLevel,
+          };
+          await supabase.from('sauda_check_point').update(patch).in('po_no', parentVariants).then(() => {}, () => {});
+          await supabase.from('purchase_master').update(patch).in('po_no', parentVariants).then(() => {}, () => {});
+        }
+      }
+
+      // Immediately reflect all approved MRs in UI state
+      setMismatchList((prev) =>
+        prev.map((m) =>
+          eligibleIdSet.has(m.id)
+            ? {
+                ...m,
+                status: 'resolved',
+                resolutionNotes: bulkRemarks,
+                resolvedBy: username,
+                resolvedAt: todayYmd,
+                approvalLevel,
+              }
+            : m
+        )
+      );
+
+      window.dispatchEvent(new CustomEvent('mismatch_resolved', { detail: { bulkCutoffDate: ONE_TIME_APPROVAL_CUTOFF_DATE } }));
+      window.dispatchEvent(
+        new CustomEvent('app-data-updated', {
+          detail: { table: 'material_mismatch', tables: ['material_mismatch', 'sauda_check_point', 'purchase_master'] },
+        })
+      );
+
+      await loadMismatches();
+
+      setSuccessToast(
+        `Approved ${approvedCount || eligible.length} Material Mismatch MR(s) dated <= ${ONE_TIME_APPROVAL_CUTOFF_DATE}.`
+      );
+      setTimeout(() => setSuccessToast(null), 5000);
+    } catch (err) {
+      console.error('Error bulk approving material mismatches:', err);
+    } finally {
+      setIsBulkApproving(false);
+    }
+  };
+
+  // One-time automatic approval for all pending Material Mismatch MRs dated <= 2026-10-31
+  useEffect(() => {
+    if (variant !== 'material') return;
+    if (loading || isBulkApproving || hasAutoApprovedCutoffRef.current) return;
+    if (pendingTillCutoffItems.length > 0) {
+      hasAutoApprovedCutoffRef.current = true;
+      handleBulkApproveTillCutoff(mismatchList);
+    }
+  }, [variant, loading, isBulkApproving, pendingTillCutoffItems.length]);
+
   const handleResolveSatta = async (itemId: string, itemPoNo: string) => {
     setSavingSattaId(itemId);
     try {
@@ -1785,6 +2001,10 @@ export default function MismatchCase({ onClose, variant = 'satta' }: { onClose?:
             remarksMap={remarksMap}
             setRemarksMap={setRemarksMap}
             handleResolve={handleResolve}
+            pendingTillCutoffCount={pendingTillCutoffItems.length}
+            cutoffDate={ONE_TIME_APPROVAL_CUTOFF_DATE}
+            isBulkApproving={isBulkApproving}
+            onBulkApproveTillCutoff={() => handleBulkApproveTillCutoff()}
           />
         ) : (
           <SattaMismatchView

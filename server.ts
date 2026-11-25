@@ -2907,6 +2907,184 @@ async function startServer() {
     }
   });
 
+  // Fast Bulk Approval for Material Mismatch Board MRs dated <= cutoffDate (e.g. 2026-10-31)
+  app.post(
+    ["/api/material-mismatch/bulk-approve-till-date", "/Jute-Purchase-Automation/api/material-mismatch/bulk-approve-till-date"],
+    async (req, res) => {
+      try {
+        const body = req.body || {};
+        const cutoffDate = String(body.cutoffDate || '2026-10-31').trim();
+        const approvedBy = String(body.approvedBy || 'Administrator').trim() || 'Administrator';
+        const approvalLevel = String(body.approvalLevel || 'ADMIN').trim().toUpperCase() || 'ADMIN';
+        const customRemarks = String(body.remarks || `One-time bulk approved (MR Date <= ${cutoffDate})`).trim();
+        const items: any[] = Array.isArray(body.items) ? body.items : [];
+        const remainingPendingPos: string[] = Array.isArray(body.remainingPendingPos) ? body.remainingPendingPos : [];
+
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(cutoffDate)) {
+          return res.status(400).json({ success: false, error: 'Invalid cutoffDate format. Expected YYYY-MM-DD.' });
+        }
+
+        const toYmd = (raw: any): string => {
+          const s = String(raw || '').trim().split('T')[0].trim();
+          if (!s) return '';
+          if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+          const m = s.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})$/);
+          if (m) return `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`;
+          return '';
+        };
+
+        const eligibleItems = items.filter((item) => {
+          if (!item || !item.poNo) return false;
+          const itemDate = toYmd(item.mrDate || item.detectedAt);
+          return Boolean(itemDate && itemDate <= cutoffDate);
+        });
+
+        if (eligibleItems.length === 0) {
+          return res.json({ success: true, approvedCount: 0, cutoffDate });
+        }
+
+        const nowIso = new Date().toISOString();
+        const todayYmd = nowIso.split('T')[0];
+
+        // Fetch existing material_mismatch rows once to avoid N+1 round trips
+        const { data: existingAll } = await supabase.from('material_mismatch').select('*');
+        const existingRows: any[] = Array.isArray(existingAll) ? existingAll : [];
+
+        const existingByKey = new Map<string, any>();
+        existingRows.forEach((r: any) => {
+          const rId = String(r.mismatch_id || '').trim().toUpperCase();
+          if (rId) existingByKey.set(`ID:${rId}`, r);
+          const rPo = normalizePoExact(r.po_no);
+          const rMr = normalizeFinalMrNo(r.mr_no || r.inspection_no || r.arrival_no || '');
+          if (rPo && rMr) existingByKey.set(`POMR:${rPo}|${rMr}`, r);
+        });
+
+        let approvedCount = 0;
+        const approvedPoSet = new Set<string>();
+        const approvedSaudaSet = new Set<string>();
+
+        for (const item of eligibleItems) {
+          const itemPoNo = String(item.poNo || '').trim().toUpperCase();
+          const resolvedMrNo = String(item.mrNo || '').trim().toUpperCase();
+          const itemId = String(item.id || (resolvedMrNo ? `MIS-${itemPoNo}-${resolvedMrNo}` : `MIS-${itemPoNo}`)).trim().toUpperCase();
+          const mismatchedText = Array.isArray(item.mismatchedFields)
+            ? item.mismatchedFields.join(', ')
+            : String(item.mismatchedFields || 'Material Mismatch');
+
+          const baseRecord: Record<string, any> = {
+            po_no: itemPoNo,
+            arrival_no: resolvedMrNo || (item.lorryNumber && item.lorryNumber !== 'N/A' ? String(item.lorryNumber) : 'N/A'),
+            inspection_no: resolvedMrNo || itemId,
+            area: item.area || 'DAISEE',
+            grade: item.grade || 'N/A',
+            field: mismatchedText,
+            expected_value: item.issueDescription || 'PO Specifications',
+            actual_value: item.issueDescription || 'Material Inspection Variance',
+            status: 'resolved',
+            remarks: `[APPROVED by ${approvedBy} (${approvalLevel}) on ${todayYmd}]: ${customRemarks}`,
+          };
+
+          const extendedRecord: Record<string, any> = {
+            ...baseRecord,
+            mismatch_id: itemId,
+            approved_by: approvedBy,
+            approved_at: nowIso,
+            approval_level: approvalLevel,
+            supplier: item.supplierName || null,
+            broker: item.brokerName || null,
+            agency: item.agency || null,
+            ptf_mode: item.ptfMode || null,
+            challan_supplier: item.challanSupplier || null,
+            rate_per_mt: item.ratePerMt || null,
+            lorry_number: item.lorryNumber || null,
+            issue_description: item.issueDescription || null,
+            mismatched_fields: mismatchedText,
+            severity: item.severity || 'medium',
+          };
+
+          const normPo = normalizePoExact(itemPoNo);
+          const normMr = normalizeFinalMrNo(resolvedMrNo);
+          const matchedExisting =
+            existingByKey.get(`ID:${itemId}`) ||
+            (normPo && normMr ? existingByKey.get(`POMR:${normPo}|${normMr}`) : null);
+
+          let saved = false;
+          if (matchedExisting?.id) {
+            const { error: updErr } = await supabase.from('material_mismatch').update(extendedRecord).eq('id', matchedExisting.id);
+            if (updErr) {
+              const { error: baseUpdErr } = await supabase.from('material_mismatch').update(baseRecord).eq('id', matchedExisting.id);
+              if (!baseUpdErr) saved = true;
+            } else {
+              saved = true;
+            }
+          } else {
+            const { error: insErr } = await supabase.from('material_mismatch').insert(extendedRecord);
+            if (insErr) {
+              const { error: baseInsErr } = await supabase.from('material_mismatch').insert(baseRecord);
+              if (!baseInsErr) saved = true;
+            } else {
+              saved = true;
+            }
+          }
+
+          if (saved) {
+            approvedCount++;
+            approvedPoSet.add(itemPoNo);
+            if (item.saudaNo && item.saudaNo !== 'N/A') {
+              approvedSaudaSet.add(String(item.saudaNo).trim());
+            }
+          }
+        }
+
+        // Mark parent PO rows cleared ONLY when zero other pending MRs (> cutoffDate) remain on that exact PO
+        const remainingPendingPoNormSet = new Set(remainingPendingPos.map((p) => normalizePoExact(p)).filter(Boolean));
+        const posToMarkCleared = Array.from(approvedPoSet).filter(
+          (po) => !remainingPendingPoNormSet.has(normalizePoExact(po))
+        );
+
+        const parentPoVariants = Array.from(
+          new Set(posToMarkCleared.flatMap((po) => buildExactPoQueryVariants(po)))
+        );
+
+        if (parentPoVariants.length > 0) {
+          const parentPatch = {
+            mismatch_cleared: true,
+            pass_status: 'pass',
+            mismatch_remarks: customRemarks,
+            approved_by: approvedBy,
+            approved_at: nowIso,
+            approval_level: approvalLevel,
+          };
+          await supabase.from('sauda_check_point').update(parentPatch).in('po_no', parentPoVariants).then(() => {}, () => {});
+          await supabase.from('purchase_master').update(parentPatch).in('po_no', parentPoVariants).then(() => {}, () => {});
+        }
+
+        const saudaVariants = Array.from(
+          new Set(Array.from(approvedSaudaSet).flatMap((s) => buildExactPoQueryVariants(s)))
+        );
+        if (saudaVariants.length > 0) {
+          await supabase.from('sauda_master').update({
+            mismatch_cleared: true,
+            mismatch_remarks: customRemarks,
+            approved_by: approvedBy,
+            approved_at: nowIso,
+            approval_level: approvalLevel,
+          }).in('sauda_no', saudaVariants).then(() => {}, () => {});
+        }
+
+        return res.json({
+          success: true,
+          approvedCount,
+          cutoffDate,
+          clearedParentPoCount: posToMarkCleared.length,
+        });
+      } catch (err: any) {
+        console.error('[Material Mismatch Bulk Approve] Error:', err);
+        return res.status(500).json({ success: false, error: err?.message || 'Bulk approval failed' });
+      }
+    }
+  );
+
   // Health Check
   app.get(["/api/health", "/Jute-Purchase-Automation/api/health"], (req, res) => {
     res.json({ status: "ok" });

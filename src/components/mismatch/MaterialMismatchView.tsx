@@ -31,6 +31,10 @@ interface MaterialMismatchViewProps {
   remarksMap: Record<string, string>;
   setRemarksMap: React.Dispatch<React.SetStateAction<Record<string, string>>>;
   handleResolve: (itemId: string, itemPoNo: string, itemMrNo?: string) => void;
+  pendingTillCutoffCount?: number;
+  cutoffDate?: string;
+  isBulkApproving?: boolean;
+  onBulkApproveTillCutoff?: () => void;
 }
 
 export const MaterialMismatchView: React.FC<MaterialMismatchViewProps> = ({
@@ -53,7 +57,11 @@ export const MaterialMismatchView: React.FC<MaterialMismatchViewProps> = ({
   setPageSize,
   remarksMap,
   setRemarksMap,
-  handleResolve
+  handleResolve,
+  pendingTillCutoffCount = 0,
+  cutoffDate = '2026-10-31',
+  isBulkApproving = false,
+  onBulkApproveTillCutoff
 }) => {
   const pendingCount = mismatchList.filter(m => m.status === 'pending').length;
   const resolvedCount = mismatchList.filter(m => m.status === 'resolved').length;
@@ -102,20 +110,38 @@ export const MaterialMismatchView: React.FC<MaterialMismatchViewProps> = ({
             </button>
           </div>
 
-          {/* Reset Filters */}
-          {(selectedSupplier !== 'ALL' || selectedBroker !== 'ALL' || searchQuery || filterStatus !== 'pending') && (
-            <button
-              onClick={() => {
-                setSelectedSupplier('ALL');
-                setSelectedBroker('ALL');
-                setFilterStatus('pending');
-                setSearchQuery('');
-              }}
-              className="text-[11px] font-bold text-rose-700 hover:text-rose-900 underline flex items-center gap-1"
-            >
-              Reset Filters
-            </button>
-          )}
+          <div className="flex flex-wrap items-center gap-2">
+            {pendingTillCutoffCount > 0 && onBulkApproveTillCutoff && canApproveMismatch() && (
+              <button
+                type="button"
+                disabled={isBulkApproving}
+                onClick={onBulkApproveTillCutoff}
+                className="px-3 py-1.5 rounded text-xs font-extrabold uppercase tracking-wider bg-emerald-700 hover:bg-emerald-800 disabled:opacity-60 text-white border border-emerald-800 shadow-xs transition flex items-center gap-1.5 cursor-pointer"
+              >
+                <Check className="h-3.5 w-3.5" />
+                <span>
+                  {isBulkApproving
+                    ? `Approving MRs <= ${cutoffDate}...`
+                    : `Approve All MRs <= ${cutoffDate} (${pendingTillCutoffCount})`}
+                </span>
+              </button>
+            )}
+
+            {/* Reset Filters */}
+            {(selectedSupplier !== 'ALL' || selectedBroker !== 'ALL' || searchQuery || filterStatus !== 'pending') && (
+              <button
+                onClick={() => {
+                  setSelectedSupplier('ALL');
+                  setSelectedBroker('ALL');
+                  setFilterStatus('pending');
+                  setSearchQuery('');
+                }}
+                className="text-[11px] font-bold text-rose-700 hover:text-rose-900 underline flex items-center gap-1"
+              >
+                Reset Filters
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Bottom Row: Dropdown Selectors & Search Input */}
