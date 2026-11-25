@@ -15,9 +15,22 @@ import {
   extractFinalArrivalMrNo,
   extractInspectionMrNo,
   extractRecordMrNo,
+  getCanonicalMrCompareKey,
   normalizeFinalMrNo,
   areMrNumbersEqual
 } from "../lib/mrNumberUtils";
+import {
+  arePoNumbersExactMatch,
+  evaluateMrMaterialMismatchStatus,
+  evaluatePoSettlementClosureEligibility,
+  filterAndDeduplicatePaymentsForMr,
+  MATERIAL_MISMATCH_BLOCK_MESSAGE,
+  MrMaterialMismatchEvaluation,
+  normalizePoCanonical,
+  normalizePoExact,
+  PoSettlementClosureEligibility,
+  resolveMrContractualRelationship
+} from "../lib/contractRelationshipEngine";
 import { enforceEditOrDeletePermission, canEditOrDelete, canViewCompletedData, isL5OrAdmin } from "../lib/permissions";
 import { findMatchedPoItem, parseGridOrItems, getColSettRate, calculateSattaDeduction } from "../utils/paymentCalculations";
 import { setCachedSattaDiffs, getCachedSattaDiffs } from "../services/sattaCalculation";
@@ -153,7 +166,17 @@ export function useSettlementWorkflow({ onClose, onLogEvent }: { onClose?: () =>
   const [showSuccessAnim, setShowSuccessAnim] = useState<boolean>(false);
   const [paymentList, setPaymentList] = useState<any[]>([]);
   const [paymentValidationInfo, setPaymentValidationInfo] = useState<{ mrNo: string; poNo: string; paidAmount: number; voucherNo: string; advanceDone?: string } | null>(null);
-  
+
+  // Financial Integrity & Layer 1/2/4 State (Material Mismatches, Raw Cross-Module Tables, Conflict Detection)
+  const [materialMismatchRows, setMaterialMismatchRows] = useState<any[]>([]);
+  const [scpRowsList, setScpRowsList] = useState<any[]>([]);
+  const [scpDetailsList, setScpDetailsList] = useState<any[]>([]);
+  const [rawFinalArrivals, setRawFinalArrivals] = useState<any[]>([]);
+  const [rawMillInspections, setRawMillInspections] = useState<any[]>([]);
+  const [miDetailsList, setMiDetailsList] = useState<any[]>([]);
+  const [paymentConflictWarning, setPaymentConflictWarning] = useState<string | null>(null);
+  const settlementSelectionSeqRef = useRef<number>(0);
+
   // Overwrite Authorization / Audit modal state
   const [showAuditOverwriteModal, setShowAuditOverwriteModal] = useState<boolean>(false);
   const [auditOverwriteInfo, setAuditOverwriteInfo] = useState<{
@@ -292,26 +315,42 @@ export function useSettlementWorkflow({ onClose, onLogEvent }: { onClose?: () =>
         }
       });
 
-      // Priority 1A: Strictly match payment_master rows whose mr_no matches target mrNo
-      let matchingPayments: any[] = payments.filter((p: any) => {
-        const st = String(p.status || '').toLowerCase().trim();
-        if (st === 'cancelled' || st === 'rejected') return false;
-        return exactMrMatch(p.mr_no, mrNo);
+      // Priority 1A: Strictly match & deduplicate payment_master rows for target MR and verify PO consistency
+      const dedupedRes = filterAndDeduplicatePaymentsForMr({
+        payments,
+        mrNo,
+        authoritativePoNo: cleanPo || undefined,
       });
 
-      // Priority 1B: Fallback to voucher match ONLY for payment rows that do NOT have a different mr_no (never match arrival_no)
+      if (dedupedRes.conflictingPoPayments.length > 0) {
+        const conflictVouchers = dedupedRes.conflictingPoPayments
+          .map((cp: any) => `${cp.voucher_no || 'N/A'} (PO: ${cp.po_no || 'N/A'})`)
+          .join(', ');
+        setPaymentConflictWarning(
+          `Historical Payment PO Conflict: MR ${mrNo} has payment voucher(s) recorded under a different P.O — ${conflictVouchers}. Excluded from advance adjustment for audit review.`
+        );
+      } else {
+        setPaymentConflictWarning(null);
+      }
+
+      let matchingPayments: any[] = dedupedRes.validPayments;
+
+      // Priority 1B: Fallback to voucher match ONLY for payment rows that do NOT have a different mr_no or different PO
       if (matchingPayments.length === 0) {
+        const seenV = new Set<string>();
         matchingPayments = payments.filter((p: any) => {
           const st = String(p.status || '').toLowerCase().trim();
-          if (st === 'cancelled' || st === 'rejected') return false;
+          if (st === 'cancelled' || st === 'rejected' || st === 'reversed') return false;
           const pMr = String(p.mr_no || '').trim();
-          // Never match a payment record that explicitly belongs to a different MR number (e.g. MR01323 vs MR01324)
           if (pMr && !exactMrMatch(pMr, mrNo)) return false;
+          if (cleanPo && p.po_no && !arePoNumbersExactMatch(p.po_no, cleanPo)) return false;
           const isVoucherMatch = Boolean(p.voucher_no && vouchersFromDetails.has(p.voucher_no));
-          return (
-            isVoucherMatch ||
-            exactMrMatch(p.payable_bill_no, mrNo)
-          );
+          const isBillMatch = exactMrMatch(p.payable_bill_no, mrNo);
+          if (!isVoucherMatch && !isBillMatch) return false;
+          const vk = String(p.payment_id || p.voucher_no || '').trim().toUpperCase();
+          if (vk && seenV.has(vk)) return false;
+          if (vk) seenV.add(vk);
+          return true;
         });
       }
 
@@ -1161,13 +1200,24 @@ export function useSettlementWorkflow({ onClose, onLogEvent }: { onClose?: () =>
 
         setSettledList(Array.from(mergedSettledMap.values()));
 
-        // 2. Fetch completed inspections from Mill Inspection Section (material_inspection, final_arrival, clubbed_pomr, return_lorry)
-        const [matInspRes, faRes, clubbedRes, returnLorryRes] = await Promise.all([
+        // 2. Fetch completed inspections + material mismatch & Sauda Check Point context for MR-level integrity checks
+        const [matInspRes, faRes, clubbedRes, returnLorryRes, mmRes, scpAllRes, scpDetAllRes, miDetAllRes] = await Promise.all([
           supabase.from('material_inspection').select('*').order('created_at', { ascending: false }).then(r => r.data || [], () => []),
           supabase.from('final_arrival').select('*').order('date', { ascending: false }).then(r => r.data || [], () => []),
           dbModule.fetchAll('clubbed_pomr').catch(() => []),
-          supabase.from('return_lorry').select('*').then(r => r.data || [], () => [])
+          supabase.from('return_lorry').select('*').then(r => r.data || [], () => []),
+          supabase.from('material_mismatch').select('*').then(r => r.data || [], () => []),
+          supabase.from('sauda_check_point').select('*').then(r => r.data || [], () => []),
+          supabase.from('sauda_check_point_details').select('*').then(r => r.data || [], () => []),
+          supabase.from('material_inspection_details').select('*').then(r => r.data || [], () => [])
         ]);
+
+        setRawFinalArrivals(faRes || []);
+        setRawMillInspections(matInspRes || []);
+        setMaterialMismatchRows(mmRes || []);
+        setScpRowsList(scpAllRes || []);
+        setScpDetailsList(scpDetAllRes || []);
+        setMiDetailsList(miDetAllRes || []);
 
         // Map any bound PO numbers from final_arrival, clubbed_pomr, and return_lorry strictly by M.R. No.
         const mrToBoundPoMap = new Map<string, string>();
@@ -1552,7 +1602,9 @@ export function useSettlementWorkflow({ onClose, onLogEvent }: { onClose?: () =>
   };
 
   const handlePoNoSelection = async (poNo: string, preserveMrNo: boolean = false, explicitMrNo?: string) => {
+    const reqId = ++settlementSelectionSeqRef.current;
     setSelectedPoNo(poNo);
+    setPaymentConflictWarning(null);
     if (!poNo) {
       setSelectedPoData(null);
       setPoStats(null);
@@ -1583,8 +1635,9 @@ export function useSettlementWorkflow({ onClose, onLogEvent }: { onClose?: () =>
       
       const cleanPoNo = poNo.trim().replace(/^#/, '');
 
-      // 1. Fetch matching PO master and item details FIRST (checking purchase_master, sauda_check_point, sauda_master, po_archive, and indexedDB)
+      // 1. Fetch matching PO master and item details FIRST (strict exact canonical PO lookup)
       const { poData, poDetails: fetchedDetails } = await fetchPoAndItemDetails(cleanPoNo, gradeMasterList, agencyMasterList);
+      if (reqId !== settlementSelectionSeqRef.current) return;
 
       if (!poData) {
         setSelectedPoData(null);
@@ -1892,16 +1945,18 @@ export function useSettlementWorkflow({ onClose, onLogEvent }: { onClose?: () =>
   // Fetch complete details from and populate form
   const handleProceedWithMrNo = async (targetMrNo: string, forceSync: boolean = false) => {
     if (!targetMrNo) return;
+    const reqId = ++settlementSelectionSeqRef.current;
     setLoading(true);
     setErrorMessage('');
     setSuccessMessage('');
+    setPaymentConflictWarning(null);
     try {
       if (!supabase) return;
-      const cleanTargetMr = String(targetMrNo || '').trim().toUpperCase();
+      const cleanTargetMr = normalizeFinalMrNo(targetMrNo) || String(targetMrNo || '').trim().toUpperCase();
 
       // 0. Resolve MR and PO from payment_master strictly by mr_no (never arrival_no)
       let payMasterRec: any = paymentList.find(
-        (p: any) => String(p.mr_no || '').trim().toUpperCase() === cleanTargetMr
+        (p: any) => areMrNumbersEqual(extractRecordMrNo(p), cleanTargetMr)
       ) || null;
       if (!payMasterRec) {
         try {
@@ -3245,17 +3300,49 @@ export function useSettlementWorkflow({ onClose, onLogEvent }: { onClose?: () =>
       return;
     }
 
-    let targetMrNo = masterData.mr_no ? masterData.mr_no.trim() : '';
+    // Mandatory Final M.R. No. validation — NEVER invent synthetic `MR-PO-...` identifiers
+    const targetMrNo = normalizeFinalMrNo(masterData.mr_no);
+    const targetPoNo = normalizePoExact(masterData.po_no || selectedPoNo);
+
     if (!targetMrNo) {
-      if (masterData.lorry_number) {
-        const cleanLorry = masterData.lorry_number.trim().toUpperCase().replace(/\s+/g, '');
-        targetMrNo = `MR-${cleanLorry}`;
-      } else if (masterData.po_no) {
-        targetMrNo = `MR-PO-${masterData.po_no.replace(/[^a-zA-Z0-9]/g, '')}-${Date.now().toString().slice(-4)}`;
-      } else {
-        targetMrNo = `MR-${Date.now().toString().slice(-6)}`;
+      setErrorMessage("Validation Error: A valid verified Final M.R. Number (starting with MR) is required before saving settlement.");
+      return;
+    }
+    if (!targetPoNo) {
+      setErrorMessage("Validation Error: A valid linked P.O Number is required before saving settlement.");
+      return;
+    }
+
+    // Layer 1: Contractual MR-to-PO consistency & conflict guard
+    const mrRel = resolveMrContractualRelationship({
+      mrNo: targetMrNo,
+      finalArrivals: rawFinalArrivals,
+      millInspections: rawMillInspections,
+      purchaseOrders,
+      saudaCheckPoints: scpRowsList,
+    });
+    if (mrRel.hasDataIntegrityConflict) {
+      setErrorMessage(mrRel.conflictReason || `Data Integrity Conflict: MR ${targetMrNo} has conflicting P.O mappings.`);
+      return;
+    }
+    if (mrRel.authoritativePoNo && !arePoNumbersExactMatch(mrRel.authoritativePoNo, targetPoNo)) {
+      setErrorMessage(`Invalid MR-to-PO Mapping: MR ${targetMrNo} belongs strictly to P.O ${mrRel.authoritativePoNo} and cannot be settled under P.O ${targetPoNo}.`);
+      return;
+    }
+
+    // Layer 2: MR-Level Material Mismatch guard
+    if (activeMrMismatch?.isUnresolved) {
+      setErrorMessage(MATERIAL_MISMATCH_BLOCK_MESSAGE);
+      return;
+    }
+
+    // Duplicate Settlement Prevention (block creating a second settlement for an already settled MR)
+    if (!isEdit) {
+      const existingSettled = settledList.find(r => areMrNumbersEqual(extractRecordMrNo(r), targetMrNo));
+      if (existingSettled) {
+        setErrorMessage(`Duplicate Settlement Blocked: M.R. ${targetMrNo} has already been settled under P.O ${existingSettled.po_no || targetPoNo}. Use Edit mode to modify an existing settlement.`);
+        return;
       }
-      setMasterData(prev => ({ ...prev, mr_no: targetMrNo }));
     }
 
     // Validate that settlement_weight (we check both totalSettleQty and electronic_scale_net / challan_weight)
@@ -3270,7 +3357,7 @@ export function useSettlementWorkflow({ onClose, onLogEvent }: { onClose?: () =>
     let allowedWeight = poStats ? poStats.pendingReceivedQty : 0;
     if (isEdit && selectedPoNo) {
       // Find if there was an existing record for this mr_no in customSettlementRecords
-      const existingRecord = customSettlementRecords.find(r => r.mr_no === targetMrNo || r.id === masterData.settlement_id);
+      const existingRecord = customSettlementRecords.find(r => areMrNumbersEqual(r.mr_no, targetMrNo) || r.id === masterData.settlement_id);
       if (existingRecord) {
         allowedWeight += (Number(existingRecord.quantity) || 0);
       }
@@ -3297,6 +3384,54 @@ export function useSettlementWorkflow({ onClose, onLogEvent }: { onClose?: () =>
     setSuccessMessage('');
     try {
       if (!supabase) throw new Error("Supabase client is not available.");
+
+      // Live DB duplicate settlement check when creating a new settlement
+      if (!isEdit) {
+        const { data: liveSettled } = await supabase
+          .from('mr_settlement_master')
+          .select('mr_no, po_no')
+          .eq('mr_no', targetMrNo)
+          .limit(1);
+        if (liveSettled && liveSettled.length > 0) {
+          setErrorMessage(`Duplicate Settlement Blocked: M.R. ${targetMrNo} is already settled in database under P.O ${liveSettled[0].po_no || targetPoNo}.`);
+          setLoading(false);
+          return;
+        }
+      }
+
+      // Layer 6: Authoritative Backend Settlement Validation + Concurrency Protection
+      let backendClosureAllowed: boolean | null = null;
+      try {
+        const apiRes = await fetch('/api/settlements/validate-transaction', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            mr_no: targetMrNo,
+            po_no: targetPoNo,
+            is_edit: isEdit,
+            payable_amt: Number(masterData.payable_amt) || 0,
+            advance_adjusted: Number(masterData.final_on_ac_adv) || 0,
+          })
+        });
+        if (apiRes.ok) {
+          const apiData = await apiRes.json();
+          if (!apiData.valid) {
+            setErrorMessage(apiData.message || `Backend validation rejected settlement for M.R. ${targetMrNo}.`);
+            setLoading(false);
+            return;
+          }
+          if (typeof apiData.canClosePo === 'boolean') {
+            backendClosureAllowed = apiData.canClosePo;
+          }
+        } else if (apiRes.status === 400 || apiRes.status === 409 || apiRes.status === 422) {
+          const errData = await apiRes.json().catch(() => ({}));
+          setErrorMessage(errData.message || `Settlement rejected by backend validation (HTTP ${apiRes.status}).`);
+          setLoading(false);
+          return;
+        }
+      } catch (apiErr) {
+        console.warn("Backend settlement validation notice:", apiErr);
+      }
 
       const rawSettDate = String(masterData.sett_date || '').trim();
       const validSettDate = (rawSettDate && !/^000\d/.test(rawSettDate) && !/^00\d{2}/.test(rawSettDate))
@@ -3471,24 +3606,52 @@ export function useSettlementWorkflow({ onClose, onLogEvent }: { onClose?: () =>
         console.warn("m_r_settlement Sync Notice:", customTableErr);
       });
 
-      // Mark P.O and M.R status as 'settled' so they move to Settlement table
-      if (masterData.po_no) {
-        await dbModule.update('purchase_master', 'po_no', masterData.po_no, { status: 'settled', pending: false }).catch(() => {});
-        await dbModule.update('sauda_master', 'sauda_no', masterData.po_no, { status: 'settled', pending: false }).catch(() => {});
-        await dbModule.update('sauda_master', 'po_no', masterData.po_no, { status: 'settled', pending: false }).catch(() => {});
-        await dbModule.update('sauda_check_point', 'po_no', masterData.po_no, { status: 'settled', pending: false }).catch(() => {});
+      // LAYER 4 CONTRACT CLOSURE PROTECTION:
+      // 1. Mark ONLY THIS MR as 'settled' (NEVER bulk-settle sibling MRs by po_no!).
+      if (targetMrNo) {
+        await dbModule.update('mill_inspection_master', 'mr_no', targetMrNo, { status: 'settled' }).catch(() => {});
+        await dbModule.update('material_inspection', 'mr_no', targetMrNo, { status: 'settled' }).catch(() => {});
+        await dbModule.update('final_arrival', 'final_arrival_no', targetMrNo, { status: 'settled' }).catch(() => {});
+        await dbModule.update('final_arrival', 'mr_no', targetMrNo, { status: 'settled' }).catch(() => {});
       }
 
-      if (targetMrNo || masterData.po_no) {
-        if (targetMrNo) {
-          await dbModule.update('mill_inspection_master', 'mr_no', targetMrNo, { status: 'settled' }).catch(() => {});
-          await dbModule.update('final_arrival', 'mr_no', targetMrNo, { status: 'settled' }).catch(() => {});
-          await dbModule.update('final_arrival', 'final_arrival_no', targetMrNo, { status: 'settled' }).catch(() => {});
-        }
-        if (masterData.po_no) {
-          await dbModule.update('mill_inspection_master', 'po_no', masterData.po_no, { status: 'settled' }).catch(() => {});
-          await dbModule.update('final_arrival', 'po_no', masterData.po_no, { status: 'settled' }).catch(() => {});
-          await dbModule.update('temporary_material_received', 'po_no', masterData.po_no, { status: 'settled' }).catch(() => {});
+      // 2. Evaluate whether the parent P.O contract may be closed (ALL lorries/MRs settled AND ZERO unresolved MR mismatches)
+      if (targetPoNo) {
+        const linkedMrNosForPo = Array.from(
+          new Set(
+            [...rawFinalArrivals, ...rawMillInspections, ...inspections]
+              .filter(r => arePoNumbersExactMatch(r?.po_no || r?.mill_po_no, targetPoNo))
+              .map(r => extractRecordMrNo(r))
+              .filter(Boolean)
+          )
+        );
+        const alreadySettledForPo = settledList
+          .filter(s => arePoNumbersExactMatch(s?.po_no, targetPoNo))
+          .map(s => extractRecordMrNo(s))
+          .filter(Boolean);
+
+        const closureEval = evaluatePoSettlementClosureEligibility({
+          poNo: targetPoNo,
+          poRecord: selectedPoData || scpRowsList.find(s => arePoNumbersExactMatch(s?.po_no, targetPoNo)),
+          linkedMrNos: linkedMrNosForPo,
+          alreadySettledMrNos: alreadySettledForPo,
+          currentlySettlingMrNo: targetMrNo,
+          mrMismatchEvaluations: poMrMismatchEvaluations,
+        });
+
+        const allowPoClose =
+          closureEval.canClosePo &&
+          (backendClosureAllowed === null ? true : backendClosureAllowed);
+
+        if (allowPoClose) {
+          await dbModule.update('purchase_master', 'po_no', targetPoNo, { status: 'settled', pending: false }).catch(() => {});
+          await dbModule.update('sauda_master', 'sauda_no', targetPoNo, { status: 'settled', pending: false }).catch(() => {});
+          await dbModule.update('sauda_master', 'po_no', targetPoNo, { status: 'settled', pending: false }).catch(() => {});
+          await dbModule.update('sauda_check_point', 'po_no', targetPoNo, { status: 'settled', pending: false }).catch(() => {});
+        } else {
+          // Keep contract open while remaining MRs/lorries or unresolved mismatches exist
+          await dbModule.update('purchase_master', 'po_no', targetPoNo, { status: 'partially_settled', pending: true }).catch(() => {});
+          await dbModule.update('sauda_check_point', 'po_no', targetPoNo, { pending: true }).catch(() => {});
         }
       }
 
@@ -3583,22 +3746,21 @@ export function useSettlementWorkflow({ onClose, onLogEvent }: { onClose?: () =>
           .or(`sauda_no.eq.${targetPoNo},po_no.eq.${targetPoNo}`);
       }
 
-      // 3. Restore Final M.R data status back to Final M.R (active / Pending)
-      const filterStr = targetPoNo ? `mr_no.eq.${cleanMr},po_no.eq.${targetPoNo}` : `mr_no.eq.${cleanMr}`;
+      // 3. Restore ONLY this reverted Final M.R. back to active (NEVER bulk-revert sibling MRs on the same P.O!)
       await supabase
         .from('mill_inspection_master')
         .update({ status: 'active', payment_status: 'Pending' })
-        .or(filterStr);
+        .eq('mr_no', cleanMr);
+
+      await supabase
+        .from('material_inspection')
+        .update({ status: 'active' })
+        .eq('mr_no', cleanMr);
 
       await supabase
         .from('final_arrival')
         .update({ status: 'active', payment_status: 'Pending' })
-        .or(filterStr);
-
-      await supabase
-        .from('temporary_material_received')
-        .update({ status: 'active', payment_status: 'Pending' })
-        .or(filterStr);
+        .or(`final_arrival_no.eq.${cleanMr},mr_no.eq.${cleanMr}`);
 
       if (onLogEvent) {
         onLogEvent('MR_SETTLEMENT_REVERT', `Reverted settlement for M.R #${cleanMr} / PO #${targetPoNo || 'N/A'}. P.O data restored to Final P.O and Final M.R.`);
@@ -3793,6 +3955,126 @@ export function useSettlementWorkflow({ onClose, onLogEvent }: { onClose?: () =>
   });
 
 
+  // Layer 1 + Layer 2 + Layer 4 Live Settlement Integrity Evaluation for active PO & MR
+  const {
+    poMrMismatchEvaluations,
+    poUnresolvedMismatches,
+    activeMrMismatch,
+    activeDataConflict,
+    poClosureEligibility,
+  } = useMemo(() => {
+    const activePo = normalizePoExact(selectedPoNo || masterData.po_no);
+    const activeMr = normalizeFinalMrNo(masterData.mr_no);
+
+    const scpRec = activePo
+      ? scpRowsList.find(s => arePoNumbersExactMatch(s?.po_no || s?.contract_po_no || s?.ptf_no, activePo)) || null
+      : null;
+    const scpDets = activePo
+      ? scpDetailsList.filter(d => arePoNumbersExactMatch(d?.po_no, activePo))
+      : [];
+
+    const miByMr = new Map<string, any>();
+    for (const mi of rawMillInspections) {
+      const k = getCanonicalMrCompareKey(extractInspectionMrNo(mi));
+      if (k && !miByMr.has(k)) miByMr.set(k, mi);
+    }
+
+    const miDetsByMr = new Map<string, any[]>();
+    for (const d of miDetailsList) {
+      const k = getCanonicalMrCompareKey(d?.mr_no);
+      if (!k) continue;
+      const list = miDetsByMr.get(k) || [];
+      list.push(d);
+      miDetsByMr.set(k, list);
+    }
+
+    const poLinkedMrs = activePo
+      ? Array.from(
+          new Set(
+            [...rawFinalArrivals, ...rawMillInspections, ...inspections]
+              .filter(r => arePoNumbersExactMatch(r?.po_no || r?.mill_po_no, activePo))
+              .map(r => extractRecordMrNo(r))
+              .filter(Boolean)
+          )
+        )
+      : [];
+    if (activeMr && activePo && !poLinkedMrs.some(m => areMrNumbersEqual(m, activeMr))) {
+      poLinkedMrs.push(activeMr);
+    }
+
+    const evaluations: MrMaterialMismatchEvaluation[] = poLinkedMrs.map(mr => {
+      const mk = getCanonicalMrCompareKey(mr);
+      return evaluateMrMaterialMismatchStatus({
+        poNo: activePo,
+        mrNo: mr,
+        materialMismatches: materialMismatchRows,
+        saudaCheckPoint: scpRec,
+        saudaDetails: scpDets,
+        millInspection: miByMr.get(mk) || null,
+        millInspectionDetails: miDetsByMr.get(mk) || [],
+      });
+    });
+
+    const unresolved = evaluations.filter(e => e.isUnresolved);
+    const activeMismatch = activeMr
+      ? evaluations.find(e => areMrNumbersEqual(e.mrNo, activeMr)) || null
+      : null;
+
+    let conflict: string | null = paymentConflictWarning;
+    if (activeMr) {
+      const rel = resolveMrContractualRelationship({
+        mrNo: activeMr,
+        finalArrivals: rawFinalArrivals,
+        millInspections: rawMillInspections,
+        purchaseOrders,
+        saudaCheckPoints: scpRowsList,
+      });
+      if (rel.hasDataIntegrityConflict) {
+        conflict = rel.conflictReason;
+      } else if (activePo && rel.authoritativePoNo && !arePoNumbersExactMatch(rel.authoritativePoNo, activePo)) {
+        conflict = `MR-to-PO Conflict: MR ${activeMr} belongs to P.O ${rel.authoritativePoNo}, not P.O ${activePo}. Original P.O must be retained.`;
+      }
+    }
+
+    const alreadySettledForPo = activePo
+      ? settledList.filter(s => arePoNumbersExactMatch(s?.po_no, activePo)).map(s => extractRecordMrNo(s)).filter(Boolean)
+      : [];
+
+    const closure: PoSettlementClosureEligibility | null = activePo
+      ? evaluatePoSettlementClosureEligibility({
+          poNo: activePo,
+          poRecord: selectedPoData || scpRec,
+          linkedMrNos: poLinkedMrs,
+          alreadySettledMrNos: alreadySettledForPo,
+          currentlySettlingMrNo: activeMr || undefined,
+          mrMismatchEvaluations: evaluations,
+        })
+      : null;
+
+    return {
+      poMrMismatchEvaluations: evaluations,
+      poUnresolvedMismatches: unresolved,
+      activeMrMismatch: activeMismatch,
+      activeDataConflict: conflict,
+      poClosureEligibility: closure,
+    };
+  }, [
+    selectedPoNo,
+    selectedPoData,
+    masterData.po_no,
+    masterData.mr_no,
+    scpRowsList,
+    scpDetailsList,
+    rawFinalArrivals,
+    rawMillInspections,
+    miDetailsList,
+    inspections,
+    materialMismatchRows,
+    purchaseOrders,
+    settledList,
+    paymentConflictWarning,
+  ]);
+
     return {
       viewMode,
       setViewMode,
@@ -3820,6 +4102,10 @@ export function useSettlementWorkflow({ onClose, onLogEvent }: { onClose?: () =>
       showSuccessAnim,
       paymentList,
       paymentValidationInfo,
+      poUnresolvedMismatches,
+      activeMrMismatch,
+      activeDataConflict,
+      poClosureEligibility,
       showAuditOverwriteModal,
       setShowAuditOverwriteModal,
       auditOverwriteInfo,

@@ -25,6 +25,7 @@ import {
   fetchAllReturnLorries,
 } from "../../services/returnLorryService";
 import { areMrNumbersEqual, extractFinalArrivalMrNo, extractInspectionMrNo } from "../../lib/mrNumberUtils";
+import { arePoNumbersExactMatch } from "../../lib/contractRelationshipEngine";
 
 export function useMaterialInspectionLogic(onLogEvent?: (event: string, details: string) => void) {
   // Autocomplete lists from database
@@ -935,34 +936,20 @@ export function useMaterialInspectionLogic(onLogEvent?: (event: string, details:
         .select("po_no, mr_no, lorry_number, payable_amt, quantity, amount");
 
       if (!error && allSettles) {
-        const targetPo = (masterData.po_no || "").trim().toLowerCase();
-        const targetMr = (masterData.mr_no || "").trim().toLowerCase();
-        const targetLorry = (masterData.lorry_number || "").trim().toLowerCase();
+        const targetPo = (masterData.po_no || "").trim();
+        const targetMr = (masterData.mr_no || "").trim();
 
-        const match = allSettles.find((s: any) => {
-          const sPo = (s.po_no || "").trim().toLowerCase();
-          const sMr = (s.mr_no || "").trim().toLowerCase();
-          const sLorry = (s.lorry_number || "").trim().toLowerCase();
+        // STRICT exact matching ONLY: match by canonical MR first, then exact PO (NO substring .includes() and NO unrelated last-record fallback!)
+        let match = targetMr
+          ? allSettles.find((s: any) => areMrNumbersEqual(s.mr_no, targetMr))
+          : undefined;
 
-          if (targetPo && sPo && sPo === targetPo) return true;
-          if (targetMr && sMr && sMr === targetMr) return true;
-          if (targetLorry && sLorry && sLorry === targetLorry) return true;
-          return false;
-        });
+        if (!match && targetPo) {
+          match = allSettles.find((s: any) => arePoNumbersExactMatch(s.po_no, targetPo));
+        }
 
         if (match && Number(match.payable_amt || match.amount || 0) > 0) {
           amt = Number(match.payable_amt || match.amount);
-        } else if (targetPo) {
-          const poMatch = allSettles.find((s: any) => (s.po_no || "").trim().toLowerCase().includes(targetPo) || targetPo.includes((s.po_no || "").trim().toLowerCase()));
-          if (poMatch && Number(poMatch.payable_amt || poMatch.amount || 0) > 0) {
-            amt = Number(poMatch.payable_amt || poMatch.amount);
-          }
-        }
-        if (amt === 0 && allSettles.length > 0) {
-          const lastSettle = allSettles[allSettles.length - 1];
-          if (Number(lastSettle.payable_amt || lastSettle.amount || 0) > 0) {
-            amt = Number(lastSettle.payable_amt || lastSettle.amount);
-          }
         }
       }
 

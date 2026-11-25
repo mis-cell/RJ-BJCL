@@ -24,9 +24,48 @@ import {
   getBackupDirectory,
   cleanupDuplicateClubbingAndStubRows,
 } from "./src/lib/serverPostgresDb.ts";
+import {
+  arePoNumbersExactMatch,
+  buildExactPoQueryVariants,
+  evaluateMrMaterialMismatchStatus,
+  evaluatePoSettlementClosureEligibility,
+  MATERIAL_MISMATCH_BLOCK_MESSAGE,
+  normalizePoExact,
+  resolveMrContractualRelationship,
+} from "./src/lib/contractRelationshipEngine.ts";
+import {
+  areMrNumbersEqual,
+  extractFinalArrivalMrNo,
+  extractInspectionMrNo,
+  normalizeFinalMrNo,
+} from "./src/lib/mrNumberUtils.ts";
 
 // Pure Local PostgreSQL database instance (No Supabase connection or dependency)
 const supabase = serverLocalDb;
+
+// Short-lived in-flight concurrency lock map preventing duplicate simultaneous Payment/Settlement saves
+const inFlightFinancialLocks = new Map<string, { expiresAt: number; token: string }>();
+function acquireFinancialLock(lockKey: string, token: string, ttlMs = 3000): boolean {
+  const now = Date.now();
+  // Opportunistic sweep of expired locks
+  if (inFlightFinancialLocks.size > 200) {
+    for (const [k, v] of inFlightFinancialLocks.entries()) {
+      if (v.expiresAt <= now) inFlightFinancialLocks.delete(k);
+    }
+  }
+  const existing = inFlightFinancialLocks.get(lockKey);
+  if (existing && existing.expiresAt > now && existing.token !== token) {
+    return false;
+  }
+  inFlightFinancialLocks.set(lockKey, { expiresAt: now + ttlMs, token });
+  return true;
+}
+function releaseFinancialLock(lockKey: string, token: string): void {
+  const existing = inFlightFinancialLocks.get(lockKey);
+  if (existing && existing.token === token) {
+    inFlightFinancialLocks.delete(lockKey);
+  }
+}
 
 export interface MaintenanceModeState {
   enabled: boolean;
@@ -1218,39 +1257,40 @@ async function startServer() {
     }
   });
 
-  // Payment Validation & Duplicate Prevention Route
+  // Payment Validation & Duplicate Prevention Route (Parameterized exact MR matching)
   app.post(["/api/payments/check-duplicate", "/Jute-Purchase-Automation/api/payments/check-duplicate"], async (req, res) => {
     const { mr_no, po_no, current_voucher_no } = req.body || {};
-    
-    if (!mr_no || String(mr_no).trim() === '') {
+
+    if (!mr_no || typeof mr_no !== 'string' || mr_no.trim() === '') {
       return res.json({ isDuplicate: false });
     }
 
-    const cleanMr = String(mr_no).trim();
-    const cleanPo = po_no ? String(po_no).trim() : '';
+    const cleanMr = normalizeFinalMrNo(mr_no);
+    if (!cleanMr) {
+      return res.json({ isDuplicate: false });
+    }
+    const cleanPo = po_no ? normalizePoExact(String(po_no)) : '';
+    const mrVariants = Array.from(new Set([cleanMr, cleanMr.toUpperCase(), cleanMr.toLowerCase(), mr_no.trim()]));
 
     try {
       const { data, error } = await supabase
         .from('payment_master')
         .select('voucher_no, mr_no, arrival_no, po_no, supplier, party_name, status, payment_date')
-        .or(`mr_no.eq.${cleanMr},mr_no.ilike.${cleanMr}`);
+        .in('mr_no', mrVariants);
 
       if (error) {
-        console.warn("[Backend Payment Check] Supabase query error:", error);
+        console.warn("[Backend Payment Check] DB query error:", error);
         return res.json({ isDuplicate: false });
       }
 
-      if (data && data.length > 0) {
+      if (Array.isArray(data) && data.length > 0) {
         const conflict = data.find((p: any) => {
-          if (current_voucher_no && String(p.voucher_no).trim().toUpperCase() === String(current_voucher_no).trim().toUpperCase()) {
+          if (current_voucher_no && String(p.voucher_no || '').trim().toUpperCase() === String(current_voucher_no).trim().toUpperCase()) {
             return false;
           }
           const pStatus = String(p.status || '').toLowerCase().trim();
           if (pStatus === 'cancelled' || pStatus === 'rejected') return false;
-
-          const pMr = String(p.mr_no || '').trim().toUpperCase();
-          const targetMr = cleanMr.toUpperCase();
-          return pMr === targetMr;
+          return areMrNumbersEqual(p.mr_no, cleanMr);
         });
 
         if (conflict) {
@@ -1266,6 +1306,409 @@ async function startServer() {
     } catch (e: any) {
       console.error("[Backend Payment Check] Server error:", e);
       return res.status(200).json({ isDuplicate: false });
+    }
+  });
+
+  // Authoritative Backend Payment Transaction Validation + Concurrency Protection (Layer 6)
+  app.post(["/api/payments/validate-transaction", "/Jute-Purchase-Automation/api/payments/validate-transaction"], async (req, res) => {
+    const body = req.body || {};
+    const rawMr = typeof body.mr_no === 'string' ? body.mr_no.trim() : '';
+    const rawPo = typeof body.po_no === 'string' ? body.po_no.trim() : '';
+    const voucherNo = typeof body.voucher_no === 'string' ? body.voucher_no.trim() : '';
+    const isEdit = Boolean(body.is_edit);
+    const paidAmount = Number(body.paid_amount ?? 0);
+    const payableAmt = Number(body.payable_amt ?? 0);
+
+    const cleanMr = normalizeFinalMrNo(rawMr);
+    const cleanPo = normalizePoExact(rawPo);
+
+    if (!cleanMr || cleanMr.startsWith('MR-PO-')) {
+      return res.status(400).json({
+        valid: false,
+        code: 'INVALID_MR',
+        message: 'A valid Final M.R. Number (starting with MR) is required before saving a payment.'
+      });
+    }
+    if (!cleanPo) {
+      return res.status(400).json({
+        valid: false,
+        code: 'INVALID_PO',
+        message: 'A valid P.O. Number is required before saving a payment.'
+      });
+    }
+    if (!Number.isFinite(paidAmount) || paidAmount < 0 || !Number.isFinite(payableAmt) || payableAmt < 0) {
+      return res.status(400).json({
+        valid: false,
+        code: 'INVALID_AMOUNT',
+        message: 'Payment and payable amounts must be valid non-negative numbers.'
+      });
+    }
+
+    const lockKey = `PAY:${cleanMr}`;
+    const lockToken = voucherNo || `req_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    if (!isEdit && !acquireFinancialLock(lockKey, lockToken, 3000)) {
+      return res.status(409).json({
+        valid: false,
+        code: 'CONCURRENT_TRANSACTION',
+        message: `A payment transaction for M.R. ${cleanMr} is already in progress. Duplicate simultaneous submission rejected.`
+      });
+    }
+
+    const failAndRelease = (status: number, code: string, message: string, extra?: Record<string, any>) => {
+      releaseFinancialLock(lockKey, lockToken);
+      return res.status(status).json({ valid: false, code, message, ...(extra || {}) });
+    };
+
+    try {
+      const poVariants = buildExactPoQueryVariants(cleanPo);
+      const mrVariants = Array.from(new Set([cleanMr, cleanMr.toUpperCase(), cleanMr.toLowerCase(), rawMr]));
+
+      const [
+        pmRes,
+        scpRes,
+        scpDetRes,
+        rlRes,
+        faByFinalRes,
+        faByMrRes,
+        miRes,
+        miDetRes,
+        mmRes,
+        payRes,
+      ] = await Promise.all([
+        supabase.from('purchase_master').select('*').in('po_no', poVariants),
+        supabase.from('sauda_check_point').select('*').in('po_no', poVariants),
+        supabase.from('sauda_check_point_details').select('*').in('po_no', poVariants),
+        supabase.from('return_lorry').select('*').in('po_no', poVariants),
+        supabase.from('final_arrival').select('*').in('final_arrival_no', mrVariants),
+        supabase.from('final_arrival').select('*').in('mr_no', mrVariants),
+        supabase.from('material_inspection').select('*').in('mr_no', mrVariants),
+        supabase.from('material_inspection_details').select('*').in('mr_no', mrVariants),
+        supabase.from('material_mismatch').select('*').in('po_no', poVariants),
+        supabase.from('payment_master').select('voucher_no, mr_no, po_no, status, paid_amount').in('mr_no', mrVariants),
+      ]);
+
+      const purchaseRows = Array.isArray(pmRes.data) ? pmRes.data : [];
+      const scpRows = Array.isArray(scpRes.data) ? scpRes.data : [];
+      const scpDetails = Array.isArray(scpDetRes.data) ? scpDetRes.data : [];
+      const rlRows = Array.isArray(rlRes.data) ? rlRes.data : [];
+      const faRows = [...(Array.isArray(faByFinalRes.data) ? faByFinalRes.data : []), ...(Array.isArray(faByMrRes.data) ? faByMrRes.data : [])];
+      const miRows = Array.isArray(miRes.data) ? miRes.data : [];
+      const miDetails = Array.isArray(miDetRes.data) ? miDetRes.data : [];
+      const mmRows = Array.isArray(mmRes.data) ? mmRes.data : [];
+      const payRows = Array.isArray(payRes.data) ? payRes.data : [];
+
+      // 1. Verify PO exists
+      if (purchaseRows.length === 0 && scpRows.length === 0 && rlRows.length === 0) {
+        return failAndRelease(422, 'PO_NOT_FOUND', `P.O. ${cleanPo} was not found in Purchase Master or Sauda Check Point.`);
+      }
+
+      // 2. Verify MR exists
+      if (faRows.length === 0 && miRows.length === 0) {
+        return failAndRelease(422, 'MR_NOT_FOUND', `M.R. ${cleanMr} was not found in Final Arrival or Mill Inspection.`);
+      }
+
+      // 3. Layer 1 Contractual Relationship & Cross-PO Guard
+      const relationship = resolveMrContractualRelationship({
+        mrNo: cleanMr,
+        finalArrivals: faRows,
+        millInspections: miRows,
+        purchaseOrders: purchaseRows,
+        saudaCheckPoints: scpRows,
+        returnLorries: rlRows,
+      });
+      if (relationship.hasDataIntegrityConflict) {
+        return failAndRelease(
+          409,
+          'DATA_INTEGRITY_CONFLICT',
+          relationship.conflictReason || `Data Integrity Conflict: M.R. ${cleanMr} has conflicting P.O. references between Final Arrival and Mill Inspection.`
+        );
+      }
+      if (!relationship.authoritativePoNo || !arePoNumbersExactMatch(relationship.authoritativePoNo, cleanPo)) {
+        return failAndRelease(
+          422,
+          'PO_MR_MISMATCH',
+          `Contractual Mismatch Blocked: M.R. ${cleanMr} strictly belongs to P.O. ${relationship.authoritativePoNo || 'UNKNOWN'}, not ${cleanPo}.`
+        );
+      }
+
+      // 4. Layer 2 MR-Level Material Mismatch Guard
+      const scpRow = scpRows.find((r: any) => arePoNumbersExactMatch(r.po_no, cleanPo)) || null;
+      const miRow = miRows.find((r: any) => areMrNumbersEqual(extractInspectionMrNo(r), cleanMr)) || null;
+      const mismatchEval = evaluateMrMaterialMismatchStatus({
+        poNo: cleanPo,
+        mrNo: cleanMr,
+        saudaCheckPoint: scpRow,
+        saudaDetails: scpDetails,
+        millInspection: miRow,
+        millInspectionDetails: miDetails,
+        materialMismatches: mmRows,
+      });
+      if (mismatchEval.isUnresolved) {
+        return failAndRelease(422, 'MATERIAL_MISMATCH_BLOCKED', MATERIAL_MISMATCH_BLOCK_MESSAGE, {
+          mismatchReasons: mismatchEval.mismatchReasons,
+          mismatchId: mismatchEval.mismatchId,
+        });
+      }
+
+      // 5. Duplicate active payment prevention
+      const dupPayment = payRows.find((p: any) => {
+        if (isEdit && voucherNo && String(p.voucher_no || '').trim().toUpperCase() === voucherNo.toUpperCase()) {
+          return false;
+        }
+        const st = String(p.status || '').toLowerCase().trim();
+        if (st === 'cancelled' || st === 'rejected') return false;
+        return areMrNumbersEqual(p.mr_no, cleanMr);
+      });
+      if (dupPayment) {
+        return failAndRelease(
+          409,
+          'DUPLICATE_PAYMENT',
+          `Duplicate Payment Rejected: Payment already exists for M.R. ${cleanMr} against P.O. ${dupPayment.po_no || cleanPo} (Voucher No: ${dupPayment.voucher_no}).`
+        );
+      }
+
+      return res.status(200).json({
+        valid: true,
+        canonicalPoNo: relationship.authoritativePoNo,
+        canonicalMrNo: cleanMr,
+      });
+    } catch (e: any) {
+      console.error("[Backend Payment Validate] Server error:", e);
+      releaseFinancialLock(lockKey, lockToken);
+      return res.status(500).json({
+        valid: false,
+        code: 'VALIDATION_ERROR',
+        message: 'Unable to validate payment transaction against database.'
+      });
+    }
+  });
+
+  // Authoritative Backend Settlement Transaction Validation + Multi-MR PO Closure Guard (Layer 6)
+  app.post(["/api/settlements/validate-transaction", "/Jute-Purchase-Automation/api/settlements/validate-transaction"], async (req, res) => {
+    const body = req.body || {};
+    const rawMr = typeof body.mr_no === 'string' ? body.mr_no.trim() : '';
+    const rawPo = typeof body.po_no === 'string' ? body.po_no.trim() : '';
+    const isEdit = Boolean(body.is_edit);
+    const payableAmt = Number(body.payable_amt ?? 0);
+    const advanceAdjusted = Number(body.advance_adjusted ?? 0);
+
+    const cleanMr = normalizeFinalMrNo(rawMr);
+    const cleanPo = normalizePoExact(rawPo);
+
+    if (!cleanMr || cleanMr.startsWith('MR-PO-')) {
+      return res.status(400).json({
+        valid: false,
+        code: 'INVALID_MR',
+        message: 'A valid Final M.R. Number (starting with MR) is required before saving settlement.'
+      });
+    }
+    if (!cleanPo) {
+      return res.status(400).json({
+        valid: false,
+        code: 'INVALID_PO',
+        message: 'A valid P.O. Number is required before saving settlement.'
+      });
+    }
+    if (!Number.isFinite(payableAmt) || !Number.isFinite(advanceAdjusted) || advanceAdjusted < 0) {
+      return res.status(400).json({
+        valid: false,
+        code: 'INVALID_AMOUNT',
+        message: 'Settlement financial amounts must be valid numbers and advance adjustment cannot be negative.'
+      });
+    }
+
+    const lockKey = `SETT:${cleanMr}`;
+    const lockToken = `sett_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    if (!isEdit && !acquireFinancialLock(lockKey, lockToken, 3000)) {
+      return res.status(409).json({
+        valid: false,
+        code: 'CONCURRENT_TRANSACTION',
+        message: `A settlement transaction for M.R. ${cleanMr} is already in progress. Duplicate simultaneous submission rejected.`
+      });
+    }
+
+    const failAndRelease = (status: number, code: string, message: string, extra?: Record<string, any>) => {
+      releaseFinancialLock(lockKey, lockToken);
+      return res.status(status).json({ valid: false, code, message, ...(extra || {}) });
+    };
+
+    try {
+      const poVariants = buildExactPoQueryVariants(cleanPo);
+      const mrVariants = Array.from(new Set([cleanMr, cleanMr.toUpperCase(), cleanMr.toLowerCase(), rawMr]));
+
+      const [
+        pmRes,
+        scpRes,
+        scpDetRes,
+        rlRes,
+        faByFinalRes,
+        faByMrRes,
+        faByPoRes,
+        miByMrRes,
+        miByPoRes,
+        mmRes,
+        settByMrRes,
+        settByPoRes,
+      ] = await Promise.all([
+        supabase.from('purchase_master').select('*').in('po_no', poVariants),
+        supabase.from('sauda_check_point').select('*').in('po_no', poVariants),
+        supabase.from('sauda_check_point_details').select('*').in('po_no', poVariants),
+        supabase.from('return_lorry').select('*').in('po_no', poVariants),
+        supabase.from('final_arrival').select('*').in('final_arrival_no', mrVariants),
+        supabase.from('final_arrival').select('*').in('mr_no', mrVariants),
+        supabase.from('final_arrival').select('*').in('po_no', poVariants),
+        supabase.from('material_inspection').select('*').in('mr_no', mrVariants),
+        supabase.from('material_inspection').select('*').in('po_no', poVariants),
+        supabase.from('material_mismatch').select('*').in('po_no', poVariants),
+        supabase.from('mr_settlement_master').select('mr_no, po_no, status').in('mr_no', mrVariants),
+        supabase.from('mr_settlement_master').select('mr_no, po_no, status').in('po_no', poVariants),
+      ]);
+
+      const purchaseRows = Array.isArray(pmRes.data) ? pmRes.data : [];
+      const scpRows = Array.isArray(scpRes.data) ? scpRes.data : [];
+      const scpDetails = Array.isArray(scpDetRes.data) ? scpDetRes.data : [];
+      const rlRows = Array.isArray(rlRes.data) ? rlRes.data : [];
+      const faMrRows = [...(Array.isArray(faByFinalRes.data) ? faByFinalRes.data : []), ...(Array.isArray(faByMrRes.data) ? faByMrRes.data : [])];
+      const faPoRows = Array.isArray(faByPoRes.data) ? faByPoRes.data : [];
+      const miMrRows = Array.isArray(miByMrRes.data) ? miByMrRes.data : [];
+      const miPoRows = Array.isArray(miByPoRes.data) ? miByPoRes.data : [];
+      const mmRows = Array.isArray(mmRes.data) ? mmRes.data : [];
+      const settMrRows = Array.isArray(settByMrRes.data) ? settByMrRes.data : [];
+      const settPoRows = Array.isArray(settByPoRes.data) ? settByPoRes.data : [];
+
+      // Fetch inspection details for all MRs linked to this PO so mismatch evaluation is complete
+      const linkedPoMrSet = new Set<string>([cleanMr]);
+      faPoRows.forEach((r: any) => {
+        const mr = extractFinalArrivalMrNo(r);
+        if (mr) linkedPoMrSet.add(mr);
+      });
+      miPoRows.forEach((r: any) => {
+        const mr = extractInspectionMrNo(r);
+        if (mr) linkedPoMrSet.add(mr);
+      });
+      const allPoMrs = Array.from(linkedPoMrSet);
+      const { data: miDetData } = allPoMrs.length > 0
+        ? await supabase.from('material_inspection_details').select('*').in('mr_no', allPoMrs)
+        : { data: [] };
+      const allMiDetails = Array.isArray(miDetData) ? miDetData : [];
+
+      // 1. Verify PO exists
+      if (purchaseRows.length === 0 && scpRows.length === 0 && rlRows.length === 0) {
+        return failAndRelease(422, 'PO_NOT_FOUND', `P.O. ${cleanPo} was not found in Purchase Master or Sauda Check Point.`);
+      }
+
+      // 2. Verify MR exists
+      if (faMrRows.length === 0 && miMrRows.length === 0) {
+        return failAndRelease(422, 'MR_NOT_FOUND', `M.R. ${cleanMr} was not found in Final Arrival or Mill Inspection.`);
+      }
+
+      // 3. Layer 1 Contractual Relationship & Cross-PO Guard
+      const relationship = resolveMrContractualRelationship({
+        mrNo: cleanMr,
+        finalArrivals: faMrRows,
+        millInspections: miMrRows,
+        purchaseOrders: purchaseRows,
+        saudaCheckPoints: scpRows,
+        returnLorries: rlRows,
+      });
+      if (relationship.hasDataIntegrityConflict) {
+        return failAndRelease(
+          409,
+          'DATA_INTEGRITY_CONFLICT',
+          relationship.conflictReason || `Data Integrity Conflict: M.R. ${cleanMr} has conflicting P.O. references between Final Arrival and Mill Inspection.`
+        );
+      }
+      if (!relationship.authoritativePoNo || !arePoNumbersExactMatch(relationship.authoritativePoNo, cleanPo)) {
+        return failAndRelease(
+          422,
+          'PO_MR_MISMATCH',
+          `Contractual Mismatch Blocked: M.R. ${cleanMr} strictly belongs to P.O. ${relationship.authoritativePoNo || 'UNKNOWN'}, not ${cleanPo}.`
+        );
+      }
+
+      // 4. Duplicate settlement prevention (when not editing an existing settlement)
+      if (!isEdit) {
+        const dupSett = settMrRows.find((s: any) => {
+          const st = String(s.status || '').toLowerCase().trim();
+          if (st === 'cancelled' || st === 'rejected' || st === 'reverted') return false;
+          return areMrNumbersEqual(s.mr_no, cleanMr);
+        });
+        if (dupSett) {
+          return failAndRelease(
+            409,
+            'DUPLICATE_SETTLEMENT',
+            `Duplicate Settlement Rejected: M.R. ${cleanMr} is already settled under P.O. ${dupSett.po_no || cleanPo}.`
+          );
+        }
+      }
+
+      // 5. Layer 2 MR-Level Material Mismatch Guard across this PO's MRs
+      const scpRow = scpRows.find((r: any) => arePoNumbersExactMatch(r.po_no, cleanPo)) || null;
+      const pmRow = purchaseRows.find((r: any) => arePoNumbersExactMatch(r.po_no, cleanPo)) || null;
+      const mrMismatchEvaluations: ReturnType<typeof evaluateMrMaterialMismatchStatus>[] = [];
+      let activeMismatchEval: ReturnType<typeof evaluateMrMaterialMismatchStatus> | null = null;
+      for (const mrKey of allPoMrs) {
+        const miRow = miPoRows.find((r: any) => areMrNumbersEqual(extractInspectionMrNo(r), mrKey))
+          || miMrRows.find((r: any) => areMrNumbersEqual(extractInspectionMrNo(r), mrKey))
+          || null;
+        const mrDetails = allMiDetails.filter((d: any) => areMrNumbersEqual(d.mr_no, mrKey));
+        const ev = evaluateMrMaterialMismatchStatus({
+          poNo: cleanPo,
+          mrNo: mrKey,
+          saudaCheckPoint: scpRow,
+          saudaDetails: scpDetails,
+          millInspection: miRow,
+          millInspectionDetails: mrDetails,
+          materialMismatches: mmRows,
+        });
+        mrMismatchEvaluations.push(ev);
+        if (areMrNumbersEqual(mrKey, cleanMr)) {
+          activeMismatchEval = ev;
+        }
+      }
+
+      if (activeMismatchEval?.isUnresolved) {
+        return failAndRelease(422, 'MATERIAL_MISMATCH_BLOCKED', MATERIAL_MISMATCH_BLOCK_MESSAGE, {
+          mismatchReasons: activeMismatchEval.mismatchReasons,
+          mismatchId: activeMismatchEval.mismatchId,
+        });
+      }
+
+      // 6. Layer 4 Multi-MR PO Closure Eligibility (server-side authoritative decision)
+      const alreadySettledMrs = settPoRows
+        .filter((s: any) => {
+          const st = String(s.status || '').toLowerCase().trim();
+          return st !== 'cancelled' && st !== 'rejected' && st !== 'reverted';
+        })
+        .map((s: any) => normalizeFinalMrNo(s.mr_no))
+        .filter(Boolean);
+
+      const closureEval = evaluatePoSettlementClosureEligibility({
+        poNo: cleanPo,
+        poRecord: pmRow || scpRow || null,
+        linkedMrNos: allPoMrs,
+        alreadySettledMrNos: alreadySettledMrs,
+        currentlySettlingMrNo: cleanMr,
+        mrMismatchEvaluations,
+      });
+
+      return res.status(200).json({
+        valid: true,
+        canonicalPoNo: relationship.authoritativePoNo,
+        canonicalMrNo: cleanMr,
+        canClosePo: closureEval.canClosePo,
+        closureBlockedReason: closureEval.closureBlockedReason,
+        pendingMrCount: closureEval.unsettledMrs.length,
+        unresolvedMismatchCount: closureEval.unresolvedMismatchMrs.length,
+      });
+    } catch (e: any) {
+      console.error("[Backend Settlement Validate] Server error:", e);
+      releaseFinancialLock(lockKey, lockToken);
+      return res.status(500).json({
+        valid: false,
+        code: 'VALIDATION_ERROR',
+        message: 'Unable to validate settlement transaction against database.'
+      });
     }
   });
 

@@ -1,0 +1,1133 @@
+CRITICAL SYSTEM-WIDE AUDIT & PERMANENT BUG FIX — PAYMENT, SETTLEMENT, MR-TO-PO MAPPING, MATERIAL MISMATCH & FINANCIAL DATA INTEGRITY
+
+1. Primary Objective
+
+Perform a comprehensive, deep-level audit of the entire Bally Jute Company Limited Raw Jute Purchase Management System, with particular emphasis on Payment Operation, Settlement Operation, Material Mismatch, Sauda Check Point, Mill Inspection, and Final PO.
+
+Identify, investigate, and permanently correct all existing and potential bugs related to:
+
+Incorrect MR-to-PO mapping.
+
+Automatic PO reassignment.
+
+Incorrect supplier and broker mapping.
+
+Incorrect filtering and search mechanisms.
+
+Material mismatch validation.
+
+Payment eligibility.
+
+Settlement eligibility.
+
+Incorrect financial calculations.
+
+Cross-module data synchronization.
+
+Incorrect database relationships.
+
+Stale frontend and backend data.
+
+Duplicate financial transactions.
+
+Incorrect outstanding balances.
+
+Incorrect contract closure.
+
+Do not restrict the investigation to the reported screenshot issue. Find similar bugs throughout Payment and Settlement Operations and their dependent modules.
+
+Do not implement temporary patches, hardcoded exceptions, superficial UI corrections, or alternative fallback mechanisms that conceal the underlying problem.
+
+Identify and permanently resolve the root cause.
+
+2. Reported Critical Bug — Payment Operation
+
+The following issue has been identified in the Payment Operation Section under P.O & Linked Verified M.R Reference.
+
+Correct Scenario
+
+MR Number: MR01387
+
+Actual PO: BJCL/2026-2027/0701
+
+Selected PO: BJCL/2026-2027/0701
+
+Supplier: BABA BASUKINATH TRADERS
+
+Incorrect Scenario
+
+When changing the selected MR to MR01438:
+
+MR Number: MR01438
+
+Original PO displayed in MR reference: BJCL/2026-2027/0701
+
+Incorrect system-selected PO: BJCL/2026-2027/07013
+
+Incorrect selected PO supplier: LALIT KUMAR JHAWAR (HUF)
+
+MR supplier: BABA BASUKINATH TRADING
+
+The system incorrectly changes the PO from 0701 to 07013 despite the selected MR displaying PO 0701.
+
+Investigate whether this issue originates from material mismatch filtering, partial PO matching, supplier matching, incorrect fallback selection, database joins, or another underlying mechanism.
+
+The same type of bug must also be investigated and corrected in Settlement Operation.
+
+3. Mandatory System-Wide Root-Cause Investigation
+
+Inspect all relevant:
+
+Frontend components.
+
+Backend services.
+
+API endpoints.
+
+Database tables.
+
+Database views.
+
+Database functions and RPCs.
+
+SQL queries and joins.
+
+Search functions.
+
+Dropdown selection logic.
+
+Filtering mechanisms.
+
+State management.
+
+Cached data.
+
+Automatic field population.
+
+Database triggers.
+
+Financial calculation functions.
+
+Cross-module synchronization mechanisms.
+
+Specifically investigate and eliminate inappropriate:
+
+Partial-string matching.
+
+Prefix matching.
+
+Substring matching.
+
+Fuzzy matching.
+
+Approximate PO number matching.
+
+Supplier-name-based PO substitution.
+
+Broker-name-based PO substitution.
+
+Material-based PO substitution.
+
+Automatic nearest-match selection.
+
+First-available-record fallback.
+
+Default PO fallback.
+
+Incorrect eligible-PO filtering.
+
+Incorrect settlement-eligible filtering.
+
+Incorrect use of LIKE or ILIKE for relationship resolution.
+
+Incorrect use of includes(), startsWith(), or similar string comparison functions for establishing contractual relationships.
+
+Incorrect numeric conversion or truncation of PO numbers.
+
+Incorrect handling of leading zeros.
+
+Stale selected PO and MR state.
+
+Asynchronous request race conditions.
+
+Search suggestions may support partial matching for user convenience, but actual record selection and relationship resolution must always use exact verified identifiers.
+
+PO 0701 and PO 07013 are entirely different contractual records and must never be treated as equivalent.
+
+4. Establish a Single Authoritative Source of Truth
+
+The original contractual information must originate from the Sauda Section.
+
+The actual MR-to-PO relationship must be established and verified through the existing procurement lifecycle, particularly:
+
+Sauda Entry.
+
+Sauda Check Point.
+
+Temporary Arrival.
+
+Final Arrival.
+
+Mill Inspection.
+
+Final PO.
+
+Trace the original contractual linkage through these modules.
+
+Use unique database IDs and verified relational references wherever available.
+
+Do not independently determine an MR's PO in Payment or Settlement by searching for similar PO numbers, supplier names, broker names, material descriptions, or eligible records.
+
+If conflicting relationships exist between modules, flag the inconsistency and prevent affected financial processing until authorized correction.
+
+Do not silently select an alternative PO.
+
+5. Mandatory One-to-Many Relationship Architecture
+
+The system must correctly support:
+
+One Sauda/PO → Multiple MRs → Associated Payment Transactions → Applicable Settlement Records
+
+A single PO can contain multiple MRs.
+
+An individual MR may have multiple legitimate payment transactions, subject to existing payment rules.
+
+Settlement must aggregate or reconcile the correct underlying records according to the existing settlement business logic.
+
+Changing between MRs belonging to the same PO must never change the selected PO.
+
+A PO change is permitted only when the newly selected MR genuinely belongs to a different verified PO.
+
+Payment and Settlement Operations must never create, modify, or substitute an MR-to-PO relationship automatically.
+
+6. Payment Operation — Complete Correction
+
+A. When Selecting a PO
+
+Retrieve only MRs genuinely associated with the selected PO.
+
+Display eligible verified MRs under that PO.
+
+Exclude unrelated MRs.
+
+Maintain the original contractual relationship.
+
+Display accurate eligible and outstanding MR counts.
+
+B. When Selecting an MR
+
+Retrieve the exact original PO through the verified MR relationship.
+
+Automatically populate the correct PO number.
+
+Populate the correct supplier and broker.
+
+Retrieve the correct inspection details.
+
+Retrieve the correct invoice and financial references.
+
+Retrieve applicable advance payments.
+
+Retrieve previous payments.
+
+Calculate the correct pending amount.
+
+Retrieve applicable deductions and penalties.
+
+Retrieve applicable extra and short adjustments.
+
+Clear stale MR-specific values before loading the newly selected record.
+
+Prevent delayed API responses from overwriting the latest selected MR and PO.
+
+C. When the Original PO Is Not Available in the Eligible List
+
+Never substitute another PO.
+
+Retain the actual PO reference and display the exact reason why payment cannot proceed.
+
+Relationship resolution must remain independent of payment eligibility filtering.
+
+D. Payment Submission
+
+Before creating, updating, approving, or processing a payment voucher, independently validate the complete MR-to-PO relationship at the backend.
+
+Reject inconsistent transactions.
+
+7. Settlement Operation — Comprehensive Bug Detection & Permanent Correction
+
+Perform the same depth of investigation in Settlement Operation as in Payment Operation.
+
+Do not assume Settlement Operation is correct simply because the reported screenshots are from Payment Operation.
+
+Inspect every Settlement component, search function, dropdown, query, calculation, and record relationship.
+
+A. Settlement PO Selection
+
+Whenever a PO is selected for settlement:
+
+Retrieve the exact selected PO using its unique database identifier.
+
+Retrieve only MRs genuinely belonging to that PO.
+
+Retrieve only payments legitimately associated with those MRs or the original PO, according to existing financial rules.
+
+Retrieve the correct supplier and broker.
+
+Retrieve the correct Sauda contractual information.
+
+Retrieve the correct deductions, claims, penalties, and adjustments.
+
+Retrieve existing settlement history.
+
+Never retrieve records belonging to another PO because of similar PO numbers, supplier names, broker names, or material specifications.
+
+B. Settlement MR Selection
+
+Where MR-level selection is available:
+
+Retrieve the original PO associated with that MR.
+
+Do not automatically substitute another settlement-eligible PO.
+
+Do not modify the original contractual relationship.
+
+Ensure the selected MR, PO, supplier, payment records, and settlement records are consistent.
+
+C. Settlement Payment Linkage
+
+Every payment included in settlement must be validated against its actual contractual relationship.
+
+Verify that:
+
+The payment voucher belongs to the correct PO.
+
+The payment voucher references the correct MR where applicable.
+
+The payment supplier matches the verified contractual relationship.
+
+The payment has not been cancelled or reversed.
+
+The payment has not already been incorrectly included in another settlement.
+
+The payment amount is included only once.
+
+Advance adjustments are correctly allocated.
+
+Partial payments are correctly reconciled.
+
+Historical payment records are accurately considered.
+
+Do not use supplier name alone to retrieve payment records for settlement.
+
+A supplier may have multiple independent POs.
+
+D. Incorrect Settlement Filtering
+
+Investigate whether settlement eligibility filters cause the original PO to disappear from the selectable list and trigger automatic selection of another PO.
+
+If such logic exists, permanently correct it.
+
+When the original PO is not eligible for settlement:
+
+Retain its original reference.
+
+Display the specific reason for ineligibility.
+
+Prevent final settlement where applicable.
+
+Never substitute another PO.
+
+E. Settlement Financial Calculations
+
+Audit all settlement calculations, including:
+
+Original contract quantity.
+
+Actual delivered quantity.
+
+Accepted quantity.
+
+Pending quantity.
+
+Total verified MR value.
+
+Gross invoice value.
+
+Net payable value.
+
+Advance payments.
+
+Previous payments.
+
+Partial payments.
+
+Delivery claims.
+
+Quality deductions.
+
+Inspection penalties.
+
+Extra and short adjustments.
+
+Debit notes.
+
+Credit notes.
+
+Refunds.
+
+Reversed transactions.
+
+Outstanding balance.
+
+Final settlement amount.
+
+Supplier ledger balance.
+
+Broker ledger balance.
+
+Contract closure status.
+
+Use the correct MR-level or PO-level calculation scope according to the existing approved business rules.
+
+Prevent double counting, duplicate deductions, repeated advance adjustments, and duplicate payment inclusion.
+
+Do not introduce new financial formulas without first understanding the existing contractual and accounting rules.
+
+F. Settlement Closure Validation
+
+Before completing final settlement or closing a contract, verify all applicable conditions:
+
+Correct original PO relationship.
+
+Required MR verification completed.
+
+Required inspections completed.
+
+Material mismatches resolved.
+
+Applicable payment transactions reconciled.
+
+Outstanding liabilities correctly calculated.
+
+Pending delivery obligations correctly handled.
+
+Claims and deductions correctly accounted for.
+
+Existing settlement records checked.
+
+No duplicate final settlement.
+
+No unauthorized contract closure.
+
+Do not mark a PO as fully settled merely because one MR has been paid or settled.
+
+Do not treat payment completion and contract settlement completion as identical statuses.
+
+Preserve legitimate partial settlement functionality if supported by the existing system.
+
+8. Material Mismatch Section — MR-Level Validation Only
+
+Material mismatch detection must operate at the individual MR level, not the overall PO level.
+
+The correct comparison is:
+
+Individual MR Actual Material Details vs Original Sauda Contractual Material Details
+
+Retrieve contractual specifications from the original Sauda record.
+
+Retrieve actual material information from the relevant verified receipt and inspection records.
+
+Identify the exact material mismatch for each individual MR.
+
+Display:
+
+MR number.
+
+Original Sauda reference.
+
+Original PO number.
+
+Contractual supplier.
+
+Actual recorded supplier, where relevant.
+
+Broker name.
+
+Contractual material specifications.
+
+Actual received material specifications.
+
+Specific mismatch fields.
+
+Mismatch reason.
+
+Resolution status.
+
+Payment eligibility.
+
+Settlement impact.
+
+A material mismatch must never automatically:
+
+Change the PO.
+
+Change the supplier.
+
+Change the broker.
+
+Reassign the MR.
+
+Substitute another contract.
+
+Modify contractual specifications.
+
+Change historical financial records.
+
+A material mismatch is a validation issue, not a PO reassignment mechanism.
+
+9. Payment & Settlement Behaviour for Material Mismatches
+
+Payment Operation
+
+If an MR contains an unresolved material mismatch:
+
+Exclude that MR from the normal payment-eligible list.
+
+Retain its original PO relationship.
+
+Prevent payment submission for that MR.
+
+Keep it discoverable through a blocked-MR search or separate mismatch reference.
+
+Display the specific mismatch reason.
+
+Provide direct navigation to its mismatch record.
+
+Other valid MRs under the same PO must remain eligible, subject to existing payment rules.
+
+Settlement Operation
+
+If a PO contains one or more MRs with unresolved material mismatches:
+
+Retain the original PO relationship.
+
+Identify each affected MR individually.
+
+Display the number of unresolved mismatches.
+
+Display the affected MR references.
+
+Display the affected financial amount where accurately determinable.
+
+Prevent the unresolved MR from being treated as fully reconciled.
+
+Prevent final contract closure while applicable unresolved liabilities remain.
+
+Allow legitimate unaffected partial settlement activities where supported by existing business rules.
+
+Do not automatically block all valid MR-level payment activities simply because another MR under the same PO contains a mismatch.
+
+Do not automatically exclude the entire PO from visibility in Settlement Operation.
+
+Instead, display the actual settlement restriction.
+
+10. Direct Navigation to Specific Mismatch Records
+
+Whenever a user encounters an unresolved mismatch in Payment or Settlement Operation, display:
+
+"Material Mismatch Detected: This MR contains an unresolved mismatch against its original Sauda/PO. Please resolve the mismatch before proceeding with the applicable financial transaction."
+
+Provide a Resolve Material Mismatch button.
+
+The button must redirect directly to the specific MR's mismatch record.
+
+Pass the exact MR identifier and original PO reference.
+
+Do not redirect only to the general Material Mismatch dashboard.
+
+When multiple mismatched MRs affect settlement, display each affected MR with its individual resolution action.
+
+After authorized correction:
+
+Revalidate the MR.
+
+Update its mismatch status.
+
+Restore applicable payment eligibility.
+
+Recalculate settlement eligibility.
+
+Refresh financial information.
+
+Preserve the original PO relationship.
+
+Allow the user to return to the originating Payment or Settlement screen.
+
+Do not restore eligibility merely because a mismatch record was opened or manually marked without successful validation.
+
+11. Separate Mapping, Validation, and Eligibility Logic
+
+Implement a clear separation of responsibilities.
+
+Layer 1 — Contractual Relationship
+
+Determine the actual Sauda, PO, MR, supplier, and broker relationships.
+
+Layer 2 — Material Validation
+
+Determine whether the actual received material matches the original contractual specifications.
+
+Layer 3 — Payment Eligibility
+
+Determine whether the individual MR can be paid.
+
+Layer 4 — Settlement Eligibility
+
+Determine whether the applicable MR or PO can be reconciled, partially settled, finally settled, or closed.
+
+Layer 5 — Financial Calculation
+
+Calculate financial amounts using verified relationships and existing approved business rules.
+
+Layer 6 — Transaction Validation
+
+Independently validate all references and financial conditions before saving or processing transactions.
+
+No eligibility filter may modify the output of the contractual relationship layer.
+
+12. Centralized Reusable Relationship Resolution
+
+Investigate whether Payment and Settlement use separate or duplicated MR-to-PO mapping implementations.
+
+Where appropriate, consolidate duplicated logic into a centralized, reusable, authoritative relationship-resolution mechanism.
+
+All dependent modules should use consistent verified references.
+
+Avoid maintaining separate conflicting matching algorithms in different modules.
+
+Centralize or standardize:
+
+Exact PO resolution.
+
+MR relationship validation.
+
+Supplier and broker relationship validation.
+
+Material mismatch status.
+
+Payment eligibility.
+
+Settlement eligibility.
+
+Financial reference validation.
+
+Preserve compatibility with the existing application architecture.
+
+Do not introduce unnecessary architectural complexity.
+
+13. Mandatory Backend & Database Protection
+
+Implement strict backend validation for all financial operations.
+
+Before processing any payment or settlement transaction, verify:
+
+The referenced PO exists.
+
+The referenced MR exists where applicable.
+
+The MR genuinely belongs to the selected PO.
+
+The contractual relationship is consistent.
+
+Supplier and broker references are valid.
+
+Required verification stages are completed.
+
+Applicable material mismatches are resolved.
+
+Financial amounts are valid.
+
+Outstanding balances are current.
+
+Transactions are not duplicated.
+
+Payments are not excessive.
+
+Settlement is not duplicated.
+
+Reversed or cancelled transactions are handled correctly.
+
+The user has appropriate authorization.
+
+Where compatible with the existing database architecture, enforce:
+
+Foreign key relationships.
+
+Unique identifiers.
+
+Appropriate database constraints.
+
+Transactional consistency.
+
+Atomic financial updates.
+
+Duplicate-submission protection.
+
+Concurrency protection.
+
+Appropriate audit trails.
+
+Reject invalid transactions even if frontend validation is bypassed.
+
+Do not disable existing security policies, permissions, or audit controls.
+
+14. Historical Data Integrity Audit
+
+Audit existing records across the entire procurement lifecycle:
+
+Sauda Entry.
+
+Sauda Check Point.
+
+Temporary Arrival.
+
+Material Mismatch.
+
+Final Arrival.
+
+Mill Inspection.
+
+Final PO.
+
+Payment Operation.
+
+Settlement Operation.
+
+Associated financial ledgers and reports.
+
+Identify:
+
+Incorrect MR-to-PO mappings.
+
+Similar PO number collisions.
+
+Conflicting supplier references.
+
+Conflicting broker references.
+
+Orphaned MRs.
+
+Duplicate MR associations.
+
+Incorrect payment voucher linkage.
+
+Incorrect settlement linkage.
+
+Payments processed against unresolved mismatches.
+
+Incorrectly settled contracts.
+
+Duplicate payment transactions.
+
+Duplicate settlement transactions.
+
+Incorrect advance allocations.
+
+Duplicate deductions.
+
+Incorrect outstanding balances.
+
+Incorrect supplier ledger balances.
+
+Incorrect contract closure status.
+
+Generate a detailed exception report.
+
+For each affected record, include:
+
+Record ID.
+
+MR number.
+
+Original PO number.
+
+Incorrect PO number.
+
+Supplier and broker references.
+
+Affected module.
+
+Affected payment or settlement reference.
+
+Financial impact, where determinable.
+
+Root cause.
+
+Recommended correction.
+
+Correction approval status.
+
+Do not automatically overwrite historical financial transactions.
+
+Do not silently modify payment vouchers, settlement records, ledger entries, or closed contracts.
+
+Require authorized review and use appropriate audited correction or reversal procedures.
+
+15. UI & UX Requirements
+
+Maintain the existing Bally Jute Company Limited application design.
+
+Do not introduce unnecessary redesigns.
+
+Improve only the affected operational behaviour and necessary validation indicators.
+
+Display clear statuses such as:
+
+Verified MR.
+
+Original PO Linked.
+
+Material Mismatch.
+
+Payment Eligible.
+
+Payment Blocked.
+
+Partially Paid.
+
+Fully Paid.
+
+Settlement Pending.
+
+Settlement Blocked.
+
+Partially Settled, where supported.
+
+Fully Settled.
+
+Contract Closed.
+
+Data Integrity Conflict.
+
+Do not display a misleading "Matched P.O" label when the selected PO differs from the actual verified MR reference.
+
+Ensure that all displayed PO numbers remain consistent across:
+
+PO selection dropdown.
+
+MR selection dropdown.
+
+Contract Active Linkage.
+
+Selected PO Number.
+
+Selected MR Number.
+
+Supplier information.
+
+Broker information.
+
+Payment voucher.
+
+Settlement reference.
+
+Financial calculation section.
+
+If any inconsistency is detected, block the affected transaction and display an actionable error.
+
+16. Counters, Dashboard & Reporting Accuracy
+
+Audit all related counters and reports, including:
+
+Total PO Records.
+
+Eligible PO Records.
+
+Pending Payment PO Records.
+
+Total Verified MR Records.
+
+Unpaid MR Records.
+
+Payment-Eligible MR Records.
+
+Material Mismatch MR Records.
+
+Blocked Payment MR Records.
+
+Pending Settlement Records.
+
+Settlement-Eligible Records.
+
+Blocked Settlement Records.
+
+Fully Settled Contracts.
+
+Outstanding Financial Liabilities.
+
+Ensure that every counter uses its correct business definition.
+
+Do not count duplicate records caused by one-to-many database joins.
+
+Ensure that mismatch records are not incorrectly counted as payment-eligible records.
+
+Ensure that payment completion is not incorrectly counted as final settlement completion.
+
+Synchronize dashboard, payment, settlement, and financial reporting data.
+
+17. Mandatory Acceptance & Regression Tests
+
+Test 1 — Same PO, Different MR
+
+Select MR01387 under PO BJCL/2026-2027/0701.
+
+Change the MR to MR01438.
+
+Expected: The PO remains BJCL/2026-2027/0701 if the authoritative relationship confirms both MRs belong to that PO.
+
+Test 2 — Similar PO Number Collision
+
+Test PO 0701 against PO 07013.
+
+Expected: Both are treated as completely independent contractual records.
+
+Test 3 — Different MR, Genuine Different PO
+
+Select an MR genuinely belonging to another PO.
+
+Expected: Update the PO only to that MR's actual verified PO.
+
+Test 4 — MR Material Mismatch
+
+Select or search for a mismatched MR.
+
+Expected: Original PO retained, payment blocked, mismatch reason displayed, direct resolution link provided.
+
+Test 5 — Multiple MRs Under One PO
+
+A PO contains five MRs, with two mismatched MRs.
+
+Expected: Only the affected MRs are blocked from payment. Other valid MRs remain eligible.
+
+Test 6 — Mismatch Resolution
+
+Correct and revalidate an affected MR.
+
+Expected: Restore applicable eligibility without changing the original PO.
+
+Test 7 — Missing Eligible PO
+
+The actual PO is unavailable in the eligible payment or settlement list.
+
+Expected: Retain the original reference, display the restriction, and never substitute another PO.
+
+Test 8 — Settlement PO Collision
+
+Open settlement for PO 0701 while PO 07013 also exists.
+
+Expected: Settlement retrieves only legitimate records associated with PO 0701.
+
+Test 9 — Same Supplier, Multiple POs
+
+A supplier has several independent POs.
+
+Expected: Payment and settlement calculations remain contract-specific. No unrelated transactions are included.
+
+Test 10 — Multiple Payments Against One MR
+
+An MR has several legitimate partial payments.
+
+Expected: Each valid payment is counted exactly once.
+
+Test 11 — Multiple MRs and Multiple Payments
+
+A PO contains multiple MRs, each with different payment histories.
+
+Expected: Settlement correctly reconciles all applicable records without duplication.
+
+Test 12 — Unresolved Mismatch During Settlement
+
+A PO contains an unresolved MR mismatch.
+
+Expected: Display the affected MR, retain the original PO, and prevent invalid final settlement or contract closure.
+
+Test 13 — Advance Adjustment
+
+Test an advance payment allocated under existing contractual rules.
+
+Expected: Advance is correctly adjusted without duplicate deduction.
+
+Test 14 — Cancelled or Reversed Payment
+
+Test a cancelled or reversed payment.
+
+Expected: Settlement correctly reflects its valid accounting treatment.
+
+Test 15 — Duplicate Settlement Attempt
+
+Attempt to create a duplicate final settlement.
+
+Expected: Backend rejects the duplicate transaction.
+
+Test 16 — Incorrect Backend References
+
+Submit an MR with an unrelated PO through the backend.
+
+Expected: Transaction rejected.
+
+Test 17 — Rapid Record Switching
+
+Rapidly change PO and MR selections in Payment and Settlement.
+
+Expected: No stale references, supplier information, or financial amounts.
+
+Test 18 — Concurrent Financial Submission
+
+Attempt simultaneous financial transactions against the same outstanding balance.
+
+Expected: No duplicate payment, overpayment, or inconsistent settlement.
+
+Test 19 — Contract Closure
+
+Attempt to close a PO with unresolved applicable obligations.
+
+Expected: Invalid closure is blocked and the exact reason is displayed.
+
+Test 20 — Historical Data Conflict
+
+Open an existing record with inconsistent PO and MR references.
+
+Expected: Display the conflict and prevent affected financial processing pending authorized correction.
+
+Test 21 — Dashboard and Report Reconciliation
+
+Compare Payment, Settlement, Dashboard, and Ledger values.
+
+Expected: Consistent results under the same verified business scope.
+
+Test 22 — Existing Functionality Regression
+
+Test all unaffected procurement workflows.
+
+Expected: No regression in existing functionality, permissions, calculations, or data relationships.
+
+18. Implementation Safety Rules
+
+Do not hardcode the reported MR or PO numbers.
+
+Do not fix only the visible screenshot issue.
+
+Do not simply hide incorrect data.
+
+Do not remove legitimate business validation.
+
+Do not remove legitimate eligibility filters.
+
+Correct filters that improperly influence relationship resolution.
+
+Do not automatically substitute contractual records.
+
+Do not create duplicate sources of truth.
+
+Do not introduce mock or dummy production data.
+
+Do not silently change historical financial records.
+
+Do not modify unrelated business rules.
+
+Do not introduce unnecessary UI redesigns.
+
+Do not disable database security policies.
+
+Do not perform destructive database migrations without appropriate review.
+
+Preserve existing permissions and audit logs.
+
+Use safe migrations and rollback mechanisms where necessary.
+
+Validate changes in an appropriate test environment before production deployment.
+
+19. Required Final Implementation Report
+
+After completing the investigation and implementation, provide a comprehensive report containing:
+
+Confirmed root cause of the reported Payment Operation bug.
+
+Similar bugs discovered in Settlement Operation.
+
+Additional related bugs discovered across other modules.
+
+Affected frontend files and components.
+
+Affected backend functions and API endpoints.
+
+Affected database queries, views, and relationships.
+
+Incorrect matching and filtering mechanisms removed or corrected.
+
+Corrected MR-to-PO relationship architecture.
+
+Payment eligibility improvements.
+
+Settlement eligibility improvements.
+
+Material mismatch validation improvements.
+
+Financial calculation corrections.
+
+Historical data integrity audit results.
+
+Identified financial discrepancies.
+
+Database changes and migration details.
+
+Security and transaction validation improvements.
+
+Acceptance test results.
+
+Regression test results.
+
+Remaining issues requiring authorized correction.
+
+Final verification status.
+
+Clearly distinguish between confirmed bugs, potential risks, corrected issues, and unresolved issues.
+
+Do not claim successful implementation without actual code-level verification and completed tests.
+
+20. Non-Negotiable Master Business Rules
+
+RULE 1: The original Sauda/PO relationship is the authoritative contractual reference.
+
+RULE 2: One PO can contain multiple MRs.
+
+RULE 3: An MR must never be automatically reassigned to another PO because of filtering, material mismatch, supplier-name variation, payment eligibility, or settlement eligibility.
+
+RULE 4: Material mismatch validation must be MR-specific.
+
+RULE 5: Payment eligibility must never determine the original PO relationship.
+
+RULE 6: Settlement eligibility must never determine the original PO relationship.
+
+RULE 7: All financial calculations must use verified contractual relationships.
+
+RULE 8: Similar PO numbers must never be treated as identical records.
+
+RULE 9: An unresolved material mismatch must prevent the affected MR from being paid and must prevent invalid settlement or contract closure.
+
+RULE 10: Historical financial transactions must never be silently modified.
+
+RULE 11: Payment completion does not automatically mean settlement completion.
+
+RULE 12: The frontend, backend, database, dashboard, payment records, settlement records, and financial ledgers must remain consistent.
+
+FINAL EXECUTION INSTRUCTION:
+
+Perform a complete investigation, identify all similar bugs, correct the underlying architecture wherever necessary, implement permanent fixes, and execute comprehensive acceptance and regression testing.
+
+Treat Payment Operation and Settlement Operation as financially critical modules.
+
+Do not stop after correcting the reported Payment Operation bug. Proactively investigate and permanently correct the same category of bugs throughout Settlement Operation and all related procurement and financial workflows.
+
+The final result must be accurate, reliable, scalable, auditable, financially consistent, and suitable for production use.

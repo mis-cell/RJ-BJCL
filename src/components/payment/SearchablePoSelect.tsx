@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Search, X, ChevronRight, CheckCircle2 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { getLinkedMrsForPo, isMrAlreadyProcessed } from '../../utils/paymentCalculations';
+import { arePoNumbersExactMatch } from '../../lib/contractRelationshipEngine';
 
 export interface SearchablePoSelectProps {
   selectedPoNo: string;
@@ -58,10 +59,10 @@ export const SearchablePoSelect: React.FC<SearchablePoSelectProps> = ({
     return poNo.includes(normalizedSearch) || supp.includes(normalizedSearch) || brok.includes(normalizedSearch) || mt.includes(normalizedSearch);
   });
 
-  const selectedPo = displayPos.find(p => (p.po_no || p.ptf_no || p.sauda_no) === selectedPoNo);
+  const selectedPo = displayPos.find(p => arePoNumbersExactMatch(p.po_no || p.ptf_no || p.sauda_no, selectedPoNo));
 
   const getLabel = () => {
-    if (selectedPoNo && matchedFinalPo && selectedPoNo === matchedFinalPo.po_no) {
+    if (selectedPoNo && matchedFinalPo && arePoNumbersExactMatch(selectedPoNo, matchedFinalPo.po_no)) {
       return `✓ Matched P.O: ${matchedFinalPo.po_no} | ${matchedFinalPo.supplier || matchedFinalPo.party_name || 'Supplier'}`;
     }
     if (selectedPo) {
@@ -72,7 +73,7 @@ export const SearchablePoSelect: React.FC<SearchablePoSelectProps> = ({
       return `${pNo} | ${supp} | ${brok} (${mt} MT)`;
     }
     if (selectedPoNo) {
-      return `P.O: ${selectedPoNo}`;
+      return `Original P.O: ${selectedPoNo}`;
     }
     return '-- Choose or Search P.O --';
   };
@@ -185,9 +186,9 @@ export const SearchablePoSelect: React.FC<SearchablePoSelectProps> = ({
             {/* Filtered List */}
             {filteredList.map((po, i) => {
               const poNo = po.po_no || po.ptf_no || po.sauda_no;
-              if (matchedFinalPo && isPoEligibleForPayment(matchedFinalPo) && poNo === matchedFinalPo.po_no) return null;
+              if (matchedFinalPo && isPoEligibleForPayment(matchedFinalPo) && arePoNumbersExactMatch(poNo, matchedFinalPo.po_no)) return null;
 
-              const isSelected = selectedPoNo === poNo;
+              const isSelected = arePoNumbersExactMatch(selectedPoNo, poNo);
               const linkedMrs = getLinkedMrsForPo(po, verifiedArrivals);
               const unpaidMrs = linkedMrs.filter(mr => !isMrAlreadyProcessed(mr, paymentList, currentVoucherNo, poNo).isPaid);
 

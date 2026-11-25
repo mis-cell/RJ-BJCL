@@ -12,13 +12,25 @@ import {
   ChevronUp,
   ChevronsUpDown,
   Eye,
-  FileSpreadsheet
+  FileSpreadsheet,
+  ArrowLeft,
+  X
 } from 'lucide-react';
 import { cn, canApproveMismatch } from '../lib/utils';
 import { dbModule } from '../services/dbModule';
 import { supabase } from '../lib/supabase';
 import { compareSaudaMillInspection, PoMatchKnownCodes } from '../lib/poMatch';
-import { isMaterialMismatchApproved } from '../utils/paymentCalculations';
+import {
+  arePoNumbersExactMatch,
+  buildExactPoQueryVariants,
+  clearMaterialMismatchNavigationTarget,
+  extractMismatchRowMrNo,
+  isMaterialMismatchApproved,
+  MaterialMismatchNavigationTarget,
+  NAV_TO_MATERIAL_MISMATCH_EVENT,
+  peekMaterialMismatchNavigationTarget,
+  returnFromMaterialMismatch,
+} from '../lib/contractRelationshipEngine';
 import LegacyLayout from '../components/LegacyLayout';
 import { getCurrentUserContext } from '../lib/permissions';
 import { resolveSattaRate } from '../services/sattaRateService';
@@ -47,6 +59,33 @@ export default function MismatchCase({ onClose, variant = 'satta' }: { onClose?:
   const [searchQuery, setSearchQuery] = useState('');
   const [mismatchList, setMismatchList] = useState<MaterialMismatchItem[]>([]);
   const [remarksMap, setRemarksMap] = useState<Record<string, string>>({});
+  const [navTarget, setNavTarget] = useState<MaterialMismatchNavigationTarget | null>(() =>
+    variant === 'material' ? peekMaterialMismatchNavigationTarget() : null
+  );
+
+  // Focus specific (PO, MR) when navigated from Payment Operation or MR Settlement
+  useEffect(() => {
+    if (variant !== 'material') return;
+    const applyTarget = (target: MaterialMismatchNavigationTarget | null) => {
+      if (!target) return;
+      setNavTarget(target);
+      setActiveTab('material_inspection');
+      setFilterStatus('all');
+      setSelectedSupplier('ALL');
+      setSelectedBroker('ALL');
+      setSearchQuery(target.mrNo || target.poNo || '');
+    };
+
+    const initial = peekMaterialMismatchNavigationTarget();
+    if (initial) applyTarget(initial);
+
+    const handleDeepLink = (e: Event) => {
+      const detail = (e as CustomEvent<MaterialMismatchNavigationTarget>).detail;
+      applyTarget(detail || peekMaterialMismatchNavigationTarget());
+    };
+    window.addEventListener(NAV_TO_MATERIAL_MISMATCH_EVENT, handleDeepLink);
+    return () => window.removeEventListener(NAV_TO_MATERIAL_MISMATCH_EVENT, handleDeepLink);
+  }, [variant]);
   
   // Satta Mismatch States
   const [sattaMismatchList, setSattaMismatchList] = useState<SattaMismatchItem[]>([]);
@@ -292,36 +331,31 @@ export default function MismatchCase({ onClose, variant = 'satta' }: { onClose?:
         const mrUpper = mrKey.trim().toUpperCase();
         const exactItemId = `MIS-${poUpper}-${mrUpper}`;
 
+        const poRows = (dbMismatches || []).filter((m: any) => arePoNumbersExactMatch(m.po_no, scpPoNo));
+
         // 1. Prefer exact MR-specific record
-        const mrSpecific = (dbMismatches || []).find((m: any) => {
-          const mPo = normalizePoKey(m.po_no);
+        const mrSpecific = poRows.find((m: any) => {
           const mInsp = String(m.inspection_no || '').trim().toUpperCase();
-          const mArr = String(m.arrival_no || '').trim().toUpperCase();
           const mId = String(m.mismatch_id || m.id || '').trim().toUpperCase();
-          const mMr = String(m.mr_no || '').trim().toUpperCase();
-          return (
-            mId === exactItemId ||
-            mInsp === exactItemId ||
-            (mPo === poUpper && (mMr === mrUpper || mInsp === mrUpper || mArr === mrUpper))
-          );
+          const boundMr = extractMismatchRowMrNo(m);
+          return mId === exactItemId || mInsp === exactItemId || (boundMr !== '' && boundMr === mrUpper);
         });
-        if (mrSpecific) return mrSpecific;
+        if (mrSpecific) return { row: mrSpecific, isMrSpecific: true, hasOtherMrRowsOnPo: false };
+
+        const hasOtherMrRowsOnPo = poRows.some((m: any) => {
+          const boundMr = extractMismatchRowMrNo(m);
+          return boundMr !== '' && boundMr !== mrUpper;
+        });
 
         // 2. Fallback to legacy PO-level approval record (only if NOT tied to a different MR)
-        return (dbMismatches || []).find((m: any) => {
-          const mPo = normalizePoKey(m.po_no);
+        const legacyPoRow = poRows.find((m: any) => {
+          const boundMr = extractMismatchRowMrNo(m);
+          if (boundMr) return false;
           const mInsp = String(m.inspection_no || '').trim().toUpperCase();
-          const mArr = String(m.arrival_no || '').trim().toUpperCase();
-          const mId = String(m.mismatch_id || '').trim().toUpperCase();
-          const mMr = String(m.mr_no || '').trim().toUpperCase();
-          const boundMr =
-            mMr ||
-            (mInsp.match(/MR\d+/i)?.[0] || '') ||
-            (mArr.match(/MR\d+/i)?.[0] || '') ||
-            (mId.match(/MR\d+/i)?.[0] || '');
-          if (boundMr && boundMr.toUpperCase() !== mrUpper) return false;
-          return mPo === poUpper || mInsp === `MIS-${poUpper}` || mId === `MIS-${poUpper}`;
+          const mId = String(m.mismatch_id || m.id || '').trim().toUpperCase();
+          return arePoNumbersExactMatch(m.po_no, scpPoNo) || mInsp === `MIS-${poUpper}` || mId === `MIS-${poUpper}`;
         });
+        return { row: legacyPoRow || null, isMrSpecific: false, hasOtherMrRowsOnPo };
       };
 
       // 3. Match Mill Inspection MR-wise strictly against Sauda Check Point ONLY (Name-only)
@@ -353,11 +387,13 @@ export default function MismatchCase({ onClose, variant = 'satta' }: { onClose?:
         );
 
         if (matchRes.hasInspection && matchRes.status === 'mismatch' && matchRes.mismatches.length > 0) {
-          const dbMm = findDbMismatchForMr(scpPoNo, mrNo);
-          const isCleared = Boolean(
-            po.mismatch_cleared === true ||
-            (dbMm && isMaterialMismatchApproved(dbMm))
-          );
+          const { row: dbMm, isMrSpecific, hasOtherMrRowsOnPo } = findDbMismatchForMr(scpPoNo, mrNo);
+          const isCleared = isMrSpecific
+            ? Boolean(dbMm && isMaterialMismatchApproved(dbMm))
+            : Boolean(
+                (dbMm && isMaterialMismatchApproved(dbMm)) ||
+                (po.mismatch_cleared === true && !hasOtherMrRowsOnPo)
+              );
 
           const mismatchedLabels = matchRes.mismatches.map(m => m.mismatchLabel || `${m.field} mismatch`);
           const detailGrades = Array.from(
@@ -578,23 +614,18 @@ export default function MismatchCase({ onClose, variant = 'satta' }: { onClose?:
         const cleanSaudaNo = String(header.po_contract || header.sauda_no || header.contract_no || '').trim().toUpperCase();
         const cleanRefNo = String(header.order_no || header.ref_no || header.sauda_id || '').trim().toUpperCase();
 
-        const poSuffix = cleanPoNo.split('/').pop() || '';
-        const saudaSuffix = cleanSaudaNo.split('/').pop() || '';
-
         const dbSattaMm = (dbSattaMismatches || []).find((sm: any) => {
           const smPo = String(sm.po_no || '').trim().toUpperCase();
           const smSauda = String(sm.sauda_no || '').trim().toUpperCase();
           const smId = String(sm.mismatch_id || sm.id || '').toUpperCase();
           return (
-            (smPo && (smPo === cleanPoNo || cleanPoNo.includes(smPo) || smPo.includes(cleanPoNo) || (poSuffix && smPo.includes(poSuffix)))) ||
-            (smSauda && (smSauda === cleanSaudaNo || cleanSaudaNo.includes(smSauda) || smSauda.includes(cleanSaudaNo) || (saudaSuffix && smSauda.includes(saudaSuffix)))) ||
-            (cleanRefNo && smSauda && (smSauda === cleanRefNo || cleanRefNo.includes(smSauda) || smSauda.includes(cleanRefNo))) ||
-            (cleanRefNo && smPo && (smPo === cleanRefNo || cleanRefNo.includes(smPo) || smPo.includes(cleanRefNo))) ||
             smId === itemId.toUpperCase() ||
-            (smPo && cleanSaudaNo && (smPo.includes(cleanSaudaNo) || cleanSaudaNo.includes(smPo))) ||
-            (smSauda && cleanPoNo && (smSauda.includes(cleanPoNo) || cleanPoNo.includes(smSauda))) ||
-            (poSuffix && smId.includes(poSuffix)) ||
-            (saudaSuffix && smId.includes(saudaSuffix))
+            (smPo && arePoNumbersExactMatch(smPo, cleanPoNo)) ||
+            (smSauda && cleanSaudaNo && arePoNumbersExactMatch(smSauda, cleanSaudaNo)) ||
+            (cleanRefNo && smSauda && smSauda === cleanRefNo) ||
+            (cleanRefNo && smPo && smPo === cleanRefNo) ||
+            (smPo && cleanSaudaNo && arePoNumbersExactMatch(smPo, cleanSaudaNo)) ||
+            (smSauda && cleanPoNo && arePoNumbersExactMatch(smSauda, cleanPoNo))
           );
         });
 
@@ -664,18 +695,14 @@ export default function MismatchCase({ onClose, variant = 'satta' }: { onClose?:
             if (!sattaItems.some(item => item.id === itemId)) {
               const cleanPoNo = String(formattedNo || '').trim().toUpperCase();
               const cleanSaudaNo = String(entry.sauda_no || formattedNo || '').trim().toUpperCase();
-              const poSuffix = cleanPoNo.split('/').pop() || '';
-              const saudaSuffix = cleanSaudaNo.split('/').pop() || '';
-              const entryId = String(entry.sauda_id || '').toUpperCase();
-
               const dbSattaMm = (dbSattaMismatches || []).find((sm: any) => {
                 const smPo = String(sm.po_no || '').trim().toUpperCase();
                 const smSauda = String(sm.sauda_no || '').trim().toUpperCase();
                 const smId = String(sm.mismatch_id || sm.id || '').toUpperCase();
                 return (
-                  (smId && (smId === itemId.toUpperCase() || (entryId && smId.includes(entryId)))) ||
-                  (smPo && (smPo === cleanPoNo || cleanPoNo.includes(smPo) || smPo.includes(cleanPoNo) || (poSuffix && smPo.includes(poSuffix)))) ||
-                  (smSauda && (smSauda === cleanSaudaNo || cleanSaudaNo.includes(smSauda) || smSauda.includes(cleanSaudaNo) || (saudaSuffix && smSauda.includes(saudaSuffix))))
+                  (smId && smId === itemId.toUpperCase()) ||
+                  (smPo && arePoNumbersExactMatch(smPo, cleanPoNo)) ||
+                  (smSauda && cleanSaudaNo && arePoNumbersExactMatch(smSauda, cleanSaudaNo))
                 );
               });
 
@@ -748,17 +775,14 @@ export default function MismatchCase({ onClose, variant = 'satta' }: { onClose?:
             if (!sattaItems.some(item => item.id === itemId)) {
               const cleanPoNo = String(poNo || '').trim().toUpperCase();
               const cleanSaudaNo = String(entry.contract_po_no || poNo || '').trim().toUpperCase();
-              const poSuffix = cleanPoNo.split('/').pop() || '';
-              const saudaSuffix = cleanSaudaNo.split('/').pop() || '';
-
               const dbSattaMm = (dbSattaMismatches || []).find((sm: any) => {
                 const smPo = String(sm.po_no || '').trim().toUpperCase();
                 const smSauda = String(sm.sauda_no || '').trim().toUpperCase();
                 const smId = String(sm.mismatch_id || sm.id || '').toUpperCase();
                 return (
-                  (smId && (smId === itemId.toUpperCase() || itemId.toUpperCase().includes(smId))) ||
-                  (smPo && (smPo === cleanPoNo || cleanPoNo.includes(smPo) || smPo.includes(cleanPoNo) || (poSuffix && smPo.includes(poSuffix)))) ||
-                  (smSauda && (smSauda === cleanSaudaNo || cleanSaudaNo.includes(smSauda) || smSauda.includes(cleanSaudaNo) || (saudaSuffix && smSauda.includes(saudaSuffix))))
+                  (smId && smId === itemId.toUpperCase()) ||
+                  (smPo && arePoNumbersExactMatch(smPo, cleanPoNo)) ||
+                  (smSauda && cleanSaudaNo && arePoNumbersExactMatch(smSauda, cleanSaudaNo))
                 );
               });
 
@@ -880,14 +904,19 @@ export default function MismatchCase({ onClose, variant = 'satta' }: { onClose?:
     const targetItem = mismatchList.find(i => i.id === itemId || (itemMrNo ? (i.poNo === itemPoNo && i.mrNo === itemMrNo) : i.poNo === itemPoNo));
     const resolvedMrNo = (itemMrNo || targetItem?.mrNo || '').trim().toUpperCase();
 
-    const poTokens = [
-      itemPoNo,
-      itemPoNo.split('/').pop() || '',
-      itemPoNo.replace(/^BJCL\//i, ''),
-      itemPoNo.replace(/^BJC\//i, ''),
-      itemId,
-      itemId.replace(/^MIS-/i, '')
-    ].filter(Boolean);
+    const exactPoVariants = buildExactPoQueryVariants(itemPoNo);
+    const exactSaudaVariants = targetItem?.saudaNo && targetItem.saudaNo !== 'N/A'
+      ? buildExactPoQueryVariants(targetItem.saudaNo)
+      : exactPoVariants;
+
+    // Check if any OTHER MR on the exact same PO still has a pending mismatch
+    const hasOtherPendingMrsOnSamePo = mismatchList.some(
+      (m) =>
+        m.status === 'pending' &&
+        arePoNumbersExactMatch(m.poNo, itemPoNo) &&
+        m.id !== itemId &&
+        (!resolvedMrNo || (m.mrNo || '').trim().toUpperCase() !== resolvedMrNo)
+    );
 
     // 1. Base record (compatible with standard PostgreSQL table schema)
     const baseMaterialRecord: Record<string, any> = {
@@ -925,11 +954,11 @@ export default function MismatchCase({ onClose, variant = 'satta' }: { onClose?:
     let savedMaterialToDb = false;
     if (supabase) {
       try {
-        // Look up exact MR-specific row first so approving one MR does not overwrite another MR on the same PO
+        // Look up exact MR-specific row first using exact PO variants so approving one MR never overwrites another MR or another PO
         const { data: existingRows } = await supabase
           .from('material_mismatch')
           .select('*')
-          .eq('po_no', itemPoNo);
+          .in('po_no', exactPoVariants.length > 0 ? exactPoVariants : [itemPoNo]);
 
         const matchedExisting = (existingRows || []).find((r: any) => {
           const rInsp = String(r.inspection_no || '').trim().toUpperCase();
@@ -963,8 +992,9 @@ export default function MismatchCase({ onClose, variant = 'satta' }: { onClose?:
         console.warn("material_mismatch write warning:", e);
       }
 
-      // Update parent tables
-      for (const token of poTokens) {
+      // Update parent tables STRICTLY by exact PO match AND ONLY when zero other pending MRs remain on this PO.
+      // Never use wildcard %token% updates (which previously caused PO 0701 to clear 07010-07015).
+      if (!hasOtherPendingMrsOnSamePo && exactPoVariants.length > 0) {
         try {
           await supabase.from('sauda_check_point').update({
             mismatch_cleared: true,
@@ -973,7 +1003,7 @@ export default function MismatchCase({ onClose, variant = 'satta' }: { onClose?:
             approved_by: username,
             approved_at: nowIso,
             approval_level: approvalLevel,
-          }).ilike('po_no', `%${token}%`);
+          }).in('po_no', exactPoVariants);
         } catch (e) {}
 
         try {
@@ -984,18 +1014,20 @@ export default function MismatchCase({ onClose, variant = 'satta' }: { onClose?:
             approved_by: username,
             approved_at: nowIso,
             approval_level: approvalLevel,
-          }).ilike('po_no', `%${token}%`);
+          }).in('po_no', exactPoVariants);
         } catch (e) {}
 
-        try {
-          await supabase.from('sauda_master').update({
-            mismatch_cleared: true,
-            mismatch_remarks: remarks.trim(),
-            approved_by: username,
-            approved_at: nowIso,
-            approval_level: approvalLevel,
-          }).ilike('sauda_no', `%${token}%`);
-        } catch (e) {}
+        if (exactSaudaVariants.length > 0) {
+          try {
+            await supabase.from('sauda_master').update({
+              mismatch_cleared: true,
+              mismatch_remarks: remarks.trim(),
+              approved_by: username,
+              approved_at: nowIso,
+              approval_level: approvalLevel,
+            }).in('sauda_no', exactSaudaVariants);
+          } catch (e) {}
+        }
       }
 
       // Sync ONLY Broker, Supplier, and Challan Supplier from Sauda Check Point ->
@@ -1154,15 +1186,11 @@ export default function MismatchCase({ onClose, variant = 'satta' }: { onClose?:
 
       const targetItem = sattaMismatchList.find(i => i.id === itemId || i.poNo === itemPoNo || i.saudaNo === itemPoNo);
 
-      const saudaTokens = [
-        itemPoNo, 
-        targetItem?.saudaNo, 
-        itemPoNo.split('/').pop() || '', 
-        (targetItem?.saudaNo || '').split('/').pop() || '',
-        itemPoNo.replace(/^BJCL\//i, ''),
-        (targetItem?.saudaNo || '').replace(/^BJCL\//i, ''),
-        itemId
-      ].filter(Boolean);
+      const exactPoVariants = buildExactPoQueryVariants(itemPoNo);
+      const exactSaudaVariants = Array.from(new Set([
+        ...exactPoVariants,
+        ...(targetItem?.saudaNo && targetItem.saudaNo !== 'N/A' ? buildExactPoQueryVariants(targetItem.saudaNo) : []),
+      ]));
 
       // Generate a stable UUID for new records
       const recordUuid = typeof crypto !== 'undefined' && crypto.randomUUID
@@ -1197,12 +1225,19 @@ export default function MismatchCase({ onClose, variant = 'satta' }: { onClose?:
       let savedSattaToDb = false;
       if (supabase) {
         try {
-          // Query existing rows using select('*')
-          const searchToken = (targetItem?.saudaNo || itemPoNo).split('/').pop() || itemPoNo;
-          const { data: existingRows } = await supabase
+          // Query existing rows using exact mismatch_id / exact PO variants (never %suffix% wildcard)
+          const { data: existingById } = await supabase
             .from('satta_mismatch')
             .select('*')
-            .or(`mismatch_id.eq.${itemId},po_no.ilike.%${searchToken}%,sauda_no.ilike.%${searchToken}%`);
+            .eq('mismatch_id', itemId);
+          let existingRows = existingById || [];
+          if (existingRows.length === 0 && exactPoVariants.length > 0) {
+            const { data: existingByPo } = await supabase
+              .from('satta_mismatch')
+              .select('*')
+              .in('po_no', exactPoVariants);
+            existingRows = existingByPo || [];
+          }
 
           if (existingRows && existingRows.length > 0) {
             const rowId = existingRows[0].id;
@@ -1230,51 +1265,25 @@ export default function MismatchCase({ onClose, variant = 'satta' }: { onClose?:
           console.warn("satta_mismatch write warning:", e);
         }
 
-        // Update sauda_master, sms_sauda, sauda_check_point, and purchase_master with approval flags
-        for (const token of saudaTokens) {
-          try {
-            await supabase.from('sauda_master').update({
-              satta_dispute_approved: true,
-              mismatch_cleared: true,
-              satta_remarks: remarks.trim(),
-              approved_by: username,
-              approved_at: nowIso,
-              approval_level: approvalLevel,
-            }).ilike('sauda_no', `%${token}%`);
-          } catch (e) {}
+        // Update parent tables STRICTLY by exact PO / Sauda variants (never %token% wildcards)
+        const sattaApprovalPatch = {
+          satta_dispute_approved: true,
+          mismatch_cleared: true,
+          satta_remarks: remarks.trim(),
+          approved_by: username,
+          approved_at: nowIso,
+          approval_level: approvalLevel,
+        };
 
-          try {
-            await supabase.from('sms_sauda').update({
-              satta_dispute_approved: true,
-              mismatch_cleared: true,
-              satta_remarks: remarks.trim(),
-              approved_by: username,
-              approved_at: nowIso,
-              approval_level: approvalLevel,
-            }).ilike('sauda_no', `%${token}%`);
-          } catch (e) {}
-
-          try {
-            await supabase.from('sauda_check_point').update({
-              satta_dispute_approved: true,
-              mismatch_cleared: true,
-              satta_remarks: remarks.trim(),
-              approved_by: username,
-              approved_at: nowIso,
-              approval_level: approvalLevel,
-            }).or(`po_no.ilike.%${token}%,contract_po_no.ilike.%${token}%`);
-          } catch (e) {}
-
-          try {
-            await supabase.from('purchase_master').update({
-              satta_dispute_approved: true,
-              mismatch_cleared: true,
-              satta_remarks: remarks.trim(),
-              approved_by: username,
-              approved_at: nowIso,
-              approval_level: approvalLevel,
-            }).or(`po_no.ilike.%${token}%,contract_po_no.ilike.%${token}%`);
-          } catch (e) {}
+        if (exactSaudaVariants.length > 0) {
+          try { await supabase.from('sauda_master').update(sattaApprovalPatch).in('sauda_no', exactSaudaVariants); } catch (e) {}
+          try { await supabase.from('sms_sauda').update(sattaApprovalPatch).in('sauda_no', exactSaudaVariants); } catch (e) {}
+          try { await supabase.from('sauda_check_point').update(sattaApprovalPatch).in('contract_po_no', exactSaudaVariants); } catch (e) {}
+          try { await supabase.from('purchase_master').update(sattaApprovalPatch).in('contract_po_no', exactSaudaVariants); } catch (e) {}
+        }
+        if (exactPoVariants.length > 0) {
+          try { await supabase.from('sauda_check_point').update(sattaApprovalPatch).in('po_no', exactPoVariants); } catch (e) {}
+          try { await supabase.from('purchase_master').update(sattaApprovalPatch).in('po_no', exactPoVariants); } catch (e) {}
         }
       }
 
@@ -1333,16 +1342,12 @@ export default function MismatchCase({ onClose, variant = 'satta' }: { onClose?:
       const cleanPoNo = String(itemPoNo || '').trim().toUpperCase();
       const cleanSaudaNo = String(group.saudaNo || '').trim().toUpperCase();
 
-      // Collect all tokens for this Sauda/PO
-      const saudaTokens = [
-        cleanPoNo,
-        cleanSaudaNo,
-        cleanPoNo.split('/').pop() || '',
-        cleanSaudaNo.split('/').pop() || '',
-        cleanPoNo.replace(/^BJCL\//i, ''),
-        cleanSaudaNo.replace(/^BJCL\//i, ''),
-        groupKey
-      ].filter(Boolean);
+      // Collect strict exact PO and Sauda query variants (never %suffix% wildcards)
+      const exactPoVariants = buildExactPoQueryVariants(cleanPoNo);
+      const exactSaudaVariants = Array.from(new Set([
+        ...exactPoVariants,
+        ...(cleanSaudaNo && cleanSaudaNo !== 'N/A' ? buildExactPoQueryVariants(cleanSaudaNo) : []),
+      ]));
 
       // Save each item resolution
       for (const item of group.items) {
@@ -1377,11 +1382,21 @@ export default function MismatchCase({ onClose, variant = 'satta' }: { onClose?:
         let savedGroupItemToDb = false;
         if (supabase) {
           try {
-            const searchToken = (item.saudaNo || item.poNo).split('/').pop() || item.poNo;
-            const { data: existingRows } = await supabase
+            const { data: existingById } = await supabase
               .from('satta_mismatch')
               .select('*')
-              .or(`mismatch_id.eq.${item.id},po_no.ilike.%${searchToken}%,sauda_no.ilike.%${searchToken}%`);
+              .eq('mismatch_id', item.id);
+            let existingRows = existingById || [];
+            if (existingRows.length === 0) {
+              const itemPoVariants = buildExactPoQueryVariants(item.poNo || itemPoNo);
+              if (itemPoVariants.length > 0) {
+                const { data: existingByPo } = await supabase
+                  .from('satta_mismatch')
+                  .select('*')
+                  .in('po_no', itemPoVariants);
+                existingRows = existingByPo || [];
+              }
+            }
 
             if (existingRows && existingRows.length > 0) {
               const rowId = existingRows[0].id;
@@ -1416,51 +1431,23 @@ export default function MismatchCase({ onClose, variant = 'satta' }: { onClose?:
       }
 
       if (supabase) {
-        // Update sauda_master, sms_sauda, sauda_check_point, and purchase_master
-        for (const token of saudaTokens) {
-          try {
-            await supabase.from('sauda_master').update({
-              satta_dispute_approved: true,
-              mismatch_cleared: true,
-              satta_remarks: remarks.trim(),
-              approved_by: username,
-              approved_at: nowIso,
-              approval_level: approvalLevel,
-            }).ilike('sauda_no', `%${token}%`);
-          } catch (e) {}
-
-          try {
-            await supabase.from('sms_sauda').update({
-              satta_dispute_approved: true,
-              mismatch_cleared: true,
-              satta_remarks: remarks.trim(),
-              approved_by: username,
-              approved_at: nowIso,
-              approval_level: approvalLevel,
-            }).ilike('sauda_no', `%${token}%`);
-          } catch (e) {}
-
-          try {
-            await supabase.from('sauda_check_point').update({
-              satta_dispute_approved: true,
-              mismatch_cleared: true,
-              satta_remarks: remarks.trim(),
-              approved_by: username,
-              approved_at: nowIso,
-              approval_level: approvalLevel,
-            }).or(`po_no.ilike.%${token}%,contract_po_no.ilike.%${token}%`);
-          } catch (e) {}
-
-          try {
-            await supabase.from('purchase_master').update({
-              satta_dispute_approved: true,
-              mismatch_cleared: true,
-              satta_remarks: remarks.trim(),
-              approved_by: username,
-              approved_at: nowIso,
-              approval_level: approvalLevel,
-            }).or(`po_no.ilike.%${token}%,contract_po_no.ilike.%${token}%`);
-          } catch (e) {}
+        const sattaApprovalPatch = {
+          satta_dispute_approved: true,
+          mismatch_cleared: true,
+          satta_remarks: remarks.trim(),
+          approved_by: username,
+          approved_at: nowIso,
+          approval_level: approvalLevel,
+        };
+        if (exactSaudaVariants.length > 0) {
+          try { await supabase.from('sauda_master').update(sattaApprovalPatch).in('sauda_no', exactSaudaVariants); } catch (e) {}
+          try { await supabase.from('sms_sauda').update(sattaApprovalPatch).in('sauda_no', exactSaudaVariants); } catch (e) {}
+          try { await supabase.from('sauda_check_point').update(sattaApprovalPatch).in('contract_po_no', exactSaudaVariants); } catch (e) {}
+          try { await supabase.from('purchase_master').update(sattaApprovalPatch).in('contract_po_no', exactSaudaVariants); } catch (e) {}
+        }
+        if (exactPoVariants.length > 0) {
+          try { await supabase.from('sauda_check_point').update(sattaApprovalPatch).in('po_no', exactPoVariants); } catch (e) {}
+          try { await supabase.from('purchase_master').update(sattaApprovalPatch).in('po_no', exactPoVariants); } catch (e) {}
         }
       }
 
@@ -1727,6 +1714,45 @@ export default function MismatchCase({ onClose, variant = 'satta' }: { onClose?:
             </button>
           </div>
         </div>
+
+        {/* Deep-Link Focused Resolution Banner (from Payment / MR Settlement) */}
+        {variant === 'material' && navTarget && (
+          <div className="p-3 bg-indigo-50 border border-indigo-300 rounded-lg flex flex-wrap items-center justify-between gap-3 text-xs shadow-xs">
+            <div className="flex items-center gap-2 text-indigo-900 font-bold">
+              <AlertTriangle className="h-4 w-4 text-indigo-600 shrink-0" />
+              <span>
+                Focused from {navTarget.returnPage === 'payment' ? 'Payment Operation' : 'MR Settlement'}:
+                {' '}P.O. <span className="font-mono">{navTarget.poNo}</span>
+                {navTarget.mrNo ? <> | M.R. <span className="font-mono">{navTarget.mrNo}</span></> : null}
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  const t = navTarget;
+                  setNavTarget(null);
+                  returnFromMaterialMismatch(t);
+                }}
+                className="px-3 py-1.5 bg-indigo-700 hover:bg-indigo-800 text-white rounded text-xs font-bold transition flex items-center gap-1.5"
+              >
+                <ArrowLeft className="h-3.5 w-3.5" />
+                <span>{navTarget.returnLabel}</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  clearMaterialMismatchNavigationTarget();
+                  setNavTarget(null);
+                }}
+                title="Dismiss focus banner"
+                className="p-1 text-indigo-500 hover:text-indigo-800 rounded"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Notifications */}
         {successToast && (

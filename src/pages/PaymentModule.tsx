@@ -97,6 +97,9 @@ export default function PaymentModule({ onClose }: { onClose?: () => void }) {
     areaMasterList,
     availableArrivals,
     eligiblePos,
+    mrMismatchMap,
+    activeMrRelationship,
+    activeMrEligibility,
     isPoEligibleForPaymentLocal,
     findMatchingPo,
     initPage,
@@ -266,6 +269,9 @@ export default function PaymentModule({ onClose }: { onClose?: () => void }) {
           loading={loading}
           errorMessage={errorMessage}
           setErrorMessage={setErrorMessage}
+          mrMismatchMap={mrMismatchMap}
+          activeMrRelationship={activeMrRelationship}
+          activeMrEligibility={activeMrEligibility}
         />
       )}
 

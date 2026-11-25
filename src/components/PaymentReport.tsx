@@ -35,6 +35,7 @@ import {
   isValidFinalMrNo,
   normalizeFinalMrNo
 } from '../lib/mrNumberUtils';
+import { findExactMatchingPo } from '../lib/contractRelationshipEngine';
 import { 
   exportPaymentReportCsv, 
   exportPaymentReportPdf 
@@ -110,25 +111,7 @@ export default function PaymentReport({ onClose }: { onClose?: () => void }) {
   };
 
   const findMatchingPo = (targetPoNo: string, poArray: any[]) => {
-    if (!targetPoNo || !poArray || poArray.length === 0) return null;
-    const cleanTarget = String(targetPoNo).trim().toUpperCase();
-    const targetSuffix = cleanTarget.split('/').pop() || '';
-
-    return poArray.find((p: any) => {
-      const pNo = String(p.po_no || p.contract_po_no || '').trim().toUpperCase();
-      const pSuffix = pNo.split('/').pop() || '';
-      const sNo = String(p.sauda_no || p.po_contract || p.contract_no || '').trim().toUpperCase();
-      const sSuffix = sNo.split('/').pop() || '';
-
-      if (pNo === cleanTarget) return true;
-      if (sNo && sNo === cleanTarget) return true;
-      if (pNo && (pNo.includes(cleanTarget) || cleanTarget.includes(pNo))) return true;
-      if (targetSuffix && targetSuffix.length >= 3) {
-        if (pSuffix === targetSuffix || (pNo && pNo.includes(targetSuffix))) return true;
-        if (sSuffix === targetSuffix || (sNo && sNo.includes(targetSuffix))) return true;
-      }
-      return false;
-    });
+    return findExactMatchingPo(targetPoNo, poArray) || null;
   };
 
   // Filter verified arrivals to strictly exclude already processed/paid M.R. records

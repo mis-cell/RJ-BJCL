@@ -16,6 +16,13 @@ import {
   isValidFinalMrNo,
   normalizeFinalMrNo
 } from '../lib/mrNumberUtils';
+import {
+  arePoNumbersExactMatch,
+  buildExactPoQueryVariants,
+  extractMismatchRowMrNo,
+  isMaterialMismatchApproved as engineIsMaterialMismatchApproved,
+  normalizePoCanonical
+} from '../lib/contractRelationshipEngine';
 
 export const hasDetailColData = (col?: PaymentDetailColumn): boolean => {
   if (!col) return false;
@@ -424,29 +431,17 @@ export async function resolvePaymentDeductionsForPoAndMr(params: {
   ).trim();
   let deliveryPenaltyRate = Number(po?.delivery_penalty || po?.shipment_penalty || 0);
 
-  // Enrich from saudaCheckPoints or purchaseOrders if missing
+  // Enrich from saudaCheckPoints or purchaseOrders if missing (STRICT exact PO match only — no suffix/substring collision)
   if ((!poDeliveryToDate || deliveryPenaltyRate <= 0) && cleanPoNo) {
-    const upperPo = cleanPoNo.toUpperCase();
-    const extractTailPadded = (val: any): string => {
-      const s = String(val || '').trim().replace(/^#+/, '').replace(/\(PTF\)/gi, '').trim();
-      const seg = s.split(/[\/\-]/).pop()?.replace(/[^0-9]/g, '') || '';
-      const n = seg ? parseInt(seg, 10) : NaN;
-      return !isNaN(n) && n > 0 ? String(n).padStart(4, '0') : '';
-    };
-    const targetTail = extractTailPadded(cleanPoNo);
-    const shortTail = targetTail ? String(parseInt(targetTail, 10)) : '';
-
     const matchInList = (list: any[]) =>
       list.find(item => {
-        const k1 = String(item.po_no || '').trim().replace(/^#/, '').toUpperCase();
-        const k2 = String(item.ptf_no || '').trim().replace(/^#/, '').toUpperCase();
-        const k3 = String(item.sauda_no || '').trim().replace(/^#/, '').toUpperCase();
-        const k4 = String(item.contract_po_no || '').trim().replace(/^#/, '').toUpperCase();
-        if (k1 === upperPo || k2 === upperPo || k3 === upperPo || k4 === upperPo) return true;
-        if (targetTail) {
-          if (extractTailPadded(k1) === targetTail || (k4 && extractTailPadded(k4) === targetTail)) return true;
-        }
-        return false;
+        if (!item) return false;
+        return (
+          arePoNumbersExactMatch(item.po_no, cleanPoNo) ||
+          arePoNumbersExactMatch(item.ptf_no, cleanPoNo) ||
+          arePoNumbersExactMatch(item.sauda_no, cleanPoNo) ||
+          arePoNumbersExactMatch(item.contract_po_no, cleanPoNo)
+        );
       });
 
     const scpMatch = matchInList(saudaCheckPoints);
@@ -477,27 +472,25 @@ export async function resolvePaymentDeductionsForPoAndMr(params: {
 
     if ((!poDeliveryToDate || deliveryPenaltyRate <= 0) && supabase) {
       try {
-        const orParts = [
-          `po_no.eq."${cleanPoNo}"`,
-          `po_no.eq."#${cleanPoNo}"`,
-          `ptf_no.eq."${cleanPoNo}"`,
-          `sauda_no.eq."${cleanPoNo}"`,
-          `contract_po_no.eq."${cleanPoNo}"`
-        ];
-        if (targetTail && shortTail) {
+        const exactVariants = buildExactPoQueryVariants(cleanPoNo);
+        const orParts: string[] = [];
+        for (const v of exactVariants) {
+          const esc = v.replace(/"/g, '\\"');
           orParts.push(
-            `contract_po_no.eq."${targetTail}"`,
-            `contract_po_no.eq."${shortTail}"`,
-            `po_no.ilike."%/${targetTail}"`,
-            `po_no.ilike."%/${shortTail}"`
+            `po_no.eq."${esc}"`,
+            `ptf_no.eq."${esc}"`,
+            `sauda_no.eq."${esc}"`,
+            `contract_po_no.eq."${esc}"`
           );
         }
-        const { data: scpDb } = await supabase
-          .from('sauda_check_point')
-          .select('delivery_to, shipment_date, delivery_penalty, shipment_penalty')
-          .or(orParts.join(','))
-          .limit(1)
-          .maybeSingle();
+        const { data: scpDb } = orParts.length > 0
+          ? await supabase
+              .from('sauda_check_point')
+              .select('delivery_to, shipment_date, delivery_penalty, shipment_penalty')
+              .or(orParts.join(','))
+              .limit(1)
+              .maybeSingle()
+          : { data: null };
         if (scpDb) {
           if (!poDeliveryToDate) {
             poDeliveryToDate = String(scpDb.delivery_to || scpDb.shipment_date || '').trim();
@@ -506,7 +499,7 @@ export async function resolvePaymentDeductionsForPoAndMr(params: {
             deliveryPenaltyRate = Number(scpDb.delivery_penalty || scpDb.shipment_penalty || 0);
           }
         }
-        if (!poDeliveryToDate || deliveryPenaltyRate <= 0) {
+        if ((!poDeliveryToDate || deliveryPenaltyRate <= 0) && orParts.length > 0) {
           const { data: pmDb } = await supabase
             .from('purchase_master')
             .select('delivery_to, delivery_gt_to, shipment_date, delivery_penalty, shipment_penalty')
@@ -1167,48 +1160,48 @@ export const mapItemsToDetailCols = (
   return newCols;
 };
 
-/* Helper to retrieve all verified arrivals / M.Rs linked to a specific P.O */
+/* Helper to retrieve all verified arrivals / M.Rs linked to a specific P.O (STRICT exact canonical PO match ONLY) */
 export function getLinkedMrsForPo(poOrPoNo: any, arrivalsList: any[] = []): any[] {
   if (!poOrPoNo || !arrivalsList || arrivalsList.length === 0) return [];
 
-  const targetPoNo = typeof poOrPoNo === 'string'
-    ? poOrPoNo
-    : (poOrPoNo.po_no || poOrPoNo.new_po_no || poOrPoNo.ptf_no || poOrPoNo.sauda_no || poOrPoNo.contract_po_no || '');
-  const boundMrNo = typeof poOrPoNo === 'object' ? String(poOrPoNo.mr_no || '').trim().toUpperCase() : '';
+  const targetPoIdentifiers: string[] = [];
+  if (typeof poOrPoNo === 'string') {
+    const c = normalizePoCanonical(poOrPoNo);
+    if (c) targetPoIdentifiers.push(c);
+  } else {
+    const fields = [
+      poOrPoNo.po_no,
+      poOrPoNo.new_po_no,
+      poOrPoNo.ptf_no,
+      poOrPoNo.sauda_no,
+      poOrPoNo.contract_po_no,
+    ];
+    for (const f of fields) {
+      const c = normalizePoCanonical(f);
+      if (c && !targetPoIdentifiers.includes(c)) targetPoIdentifiers.push(c);
+    }
+  }
+  const boundMrNo = typeof poOrPoNo === 'object' ? normalizeFinalMrNo(poOrPoNo.mr_no) : '';
 
-  const cleanTarget = String(targetPoNo).trim().toUpperCase().replace(/^#+/, '').trim();
-  if (!cleanTarget || cleanTarget === 'N/A') return [];
-
-  const cleanTargetNoPtf = cleanTarget.replace(/\(PTF\)/gi, '').trim();
-  const targetSuffix = cleanTarget.split('/').pop()?.replace(/^#+/, '').replace(/\(PTF\)/gi, '').trim() || '';
-  const targetDigits = cleanTarget.replace(/[^0-9]/g, '');
+  if (targetPoIdentifiers.length === 0) return [];
 
   return arrivalsList.filter(arr => {
     const arrMr = extractRecordMrNo(arr);
     if (!arrMr) return false;
     if (boundMrNo && areMrNumbersEqual(arrMr, boundMrNo)) return true;
 
-    const arrPo1 = String(arr.po_no || '').trim().toUpperCase().replace(/^#+/, '').trim();
-    const arrPo2 = String(arr.mill_po_no || '').trim().toUpperCase().replace(/^#+/, '').trim();
-    const arrPo3 = String(arr.contract_po_no || arr.sauda_no || arr.po_contract || '').trim().toUpperCase().replace(/^#+/, '').trim();
-    const arrPo4 = String(arr.return_po_no || '').trim().toUpperCase().replace(/^#+/, '').trim();
-    
-    const candidates = [arrPo1, arrPo2, arrPo3, arrPo4].filter(Boolean);
+    const candidates = [
+      arr.po_no,
+      arr.mill_po_no,
+      arr.contract_po_no,
+      arr.sauda_no,
+      arr.po_contract,
+      arr.return_po_no,
+    ];
     for (const cand of candidates) {
-      const candNoPtf = cand.replace(/\(PTF\)/gi, '').trim();
-      if (cand === cleanTarget || candNoPtf === cleanTargetNoPtf) return true;
-      if (cand.includes(cleanTarget) || cleanTarget.includes(cand)) return true;
-      if (candNoPtf.includes(cleanTargetNoPtf) || cleanTargetNoPtf.includes(candNoPtf)) return true;
-
-      const candSuffix = cand.split('/').pop()?.replace(/^#+/, '').replace(/\(PTF\)/gi, '').trim() || '';
-      if (targetSuffix.length >= 3 && (candSuffix === targetSuffix || candSuffix.includes(targetSuffix) || targetSuffix.includes(candSuffix))) {
-        return true;
-      }
-      if (targetDigits.length >= 3) {
-        const candDigits = cand.replace(/[^0-9]/g, '');
-        if (candDigits === targetDigits || (candDigits.length >= 3 && (candDigits.endsWith(targetDigits) || targetDigits.endsWith(candDigits)))) {
-          return true;
-        }
+      if (!cand) continue;
+      for (const target of targetPoIdentifiers) {
+        if (arePoNumbersExactMatch(cand, target)) return true;
       }
     }
     return false;
@@ -1234,8 +1227,8 @@ export function isMrAlreadyProcessed(
   }
 
   const cleanPo = poNo
-    ? String(poNo).trim().toUpperCase()
-    : (typeof mrNoOrArrival === 'object' ? String(mrNoOrArrival.po_no || mrNoOrArrival.mill_po_no || '').trim().toUpperCase() : '');
+    ? normalizePoCanonical(poNo)
+    : (typeof mrNoOrArrival === 'object' ? normalizePoCanonical(mrNoOrArrival.po_no || mrNoOrArrival.mill_po_no) : '');
 
   const matchedPayment = paymentList.find(p => {
     // If editing, ignore current voucher
@@ -1243,27 +1236,21 @@ export function isMrAlreadyProcessed(
       return false;
     }
 
-    // Exclude cancelled or rejected payments
+    // Exclude cancelled, rejected, or reversed payments
     const pStatus = String(p.status || '').toLowerCase().trim();
-    if (pStatus === 'cancelled' || pStatus === 'rejected') {
+    if (pStatus === 'cancelled' || pStatus === 'rejected' || pStatus === 'reversed') {
       return false;
     }
 
     const pMr = extractRecordMrNo(p);
     if (!pMr) return false;
 
-    // Direct / canonical MR match
-    const isMrMatch = areMrNumbersEqual(pMr, cleanMr);
-
-    if (isMrMatch) {
-      if (cleanPo) {
-        const pPo = String(p.po_no || '').trim().toUpperCase();
-        if (pPo) {
-          const pPoSuffix = pPo.split('/').pop()?.replace(/\(PTF\)/gi, '').trim() || '';
-          const cleanPoSuffix = cleanPo.split('/').pop()?.replace(/\(PTF\)/gi, '').trim() || '';
-          if (pPo === cleanPo || pPo.includes(cleanPo) || cleanPo.includes(pPo) || (cleanPoSuffix.length >= 3 && pPoSuffix === cleanPoSuffix)) {
-            return true;
-          }
+    // Canonical MR match — an MR can only be paid once regardless of PO string formatting
+    if (areMrNumbersEqual(pMr, cleanMr)) {
+      if (cleanPo && p.po_no) {
+        // Exact match confirms same PO; even if historical PO differed, duplicate MR payment is still blocked
+        if (arePoNumbersExactMatch(p.po_no, cleanPo)) {
+          return true;
         }
       }
       return true;
@@ -1290,50 +1277,7 @@ export function normalizeMaterialMismatchPoKey(val: any): string {
 }
 
 export function isMaterialMismatchApproved(mm: any): boolean {
-  if (!mm) return false;
-  const st = String(mm.status || mm.resolution_status || '').toLowerCase().trim();
-  if (st === 'rejected' || st === 'cancelled') return false;
-
-  const remarksUpper = String(mm.remarks || '').toUpperCase();
-  const approvedByUpper = String(mm.approved_by || '').trim().toUpperCase();
-  const approvalLevelUpper = String(mm.approval_level || '').trim().toUpperCase();
-
-  const hasApprovedStatus = st === 'resolved' || st === 'approved' || st === 'cleared';
-  const hasApprovedBy = Boolean(approvedByUpper);
-  const hasApprovedTag = remarksUpper.includes('[APPROVED BY');
-  const hasApprovedRemark =
-    hasApprovedTag ||
-    (remarksUpper.includes('APPROVED') &&
-      !remarksUpper.includes('NOT APPROVED') &&
-      !remarksUpper.includes('UNAPPROVED') &&
-      !remarksUpper.includes('PENDING APPROVAL'));
-
-  if (st === 'pending' || st === 'open') {
-    if (!hasApprovedBy && !hasApprovedTag) return false;
-  } else if (!hasApprovedStatus && !hasApprovedBy && !hasApprovedRemark) {
-    return false;
-  }
-
-  // Verify approver authority when explicit level metadata is present (Admin / L3 / L4 / L5 / MAX)
-  const remarkMatch = remarksUpper.match(/\[APPROVED BY\s+([^\]]+?)\s*\(([^)]+)\)/);
-  const remarkApprover = remarkMatch ? remarkMatch[1].trim() : '';
-  const remarkLevel = remarkMatch ? remarkMatch[2].trim() : '';
-  const detectedLevel = approvalLevelUpper || remarkLevel;
-  const detectedApprover = approvedByUpper || remarkApprover;
-
-  if (detectedLevel) {
-    const isAuthorizedLevel =
-      detectedLevel.includes('ADMIN') ||
-      detectedLevel.includes('L3') ||
-      detectedLevel.includes('L4') ||
-      detectedLevel.includes('L5') ||
-      detectedLevel.includes('MAX') ||
-      detectedLevel.includes('SUPER') ||
-      detectedApprover.includes('ADMIN');
-    if (!isAuthorizedLevel) return false;
-  }
-
-  return true;
+  return engineIsMaterialMismatchApproved(mm);
 }
 
 export function annotatePosWithMaterialMismatchStatus(
@@ -1344,31 +1288,34 @@ export function annotatePosWithMaterialMismatchStatus(
   if (!Array.isArray(materialMismatches) || materialMismatches.length === 0) return;
 
   const approvedKeys = new Set<string>();
-  const pendingKeys = new Set<string>();
+  const poLevelPendingKeys = new Set<string>();
+  const mrSpecificPendingByPo = new Map<string, Set<string>>();
+  const mrSpecificApprovedByPo = new Map<string, Set<string>>();
   const approvedRowByKey = new Map<string, any>();
 
   for (const mm of materialMismatches) {
     if (!mm) continue;
-    const keys = [mm.po_no, mm.inspection_no, mm.mismatch_id]
-      .map(normalizeMaterialMismatchPoKey)
-      .filter(Boolean);
-    if (keys.length === 0) continue;
+    const poKey = normalizePoCanonical(mm.po_no || mm.mismatch_id?.replace(/^MIS-/i, '').replace(/-MR\d+.*$/i, ''));
+    const mmMrNo = extractMismatchRowMrNo(mm);
+    if (!poKey) continue;
 
     if (isMaterialMismatchApproved(mm)) {
-      for (const k of keys) {
-        approvedKeys.add(k);
-        if (!approvedRowByKey.has(k)) approvedRowByKey.set(k, mm);
+      approvedKeys.add(poKey);
+      if (!approvedRowByKey.has(poKey)) approvedRowByKey.set(poKey, mm);
+      if (mmMrNo) {
+        if (!mrSpecificApprovedByPo.has(poKey)) mrSpecificApprovedByPo.set(poKey, new Set());
+        mrSpecificApprovedByPo.get(poKey)!.add(mmMrNo);
       }
+    } else if (mmMrNo) {
+      if (!mrSpecificPendingByPo.has(poKey)) mrSpecificPendingByPo.set(poKey, new Set());
+      mrSpecificPendingByPo.get(poKey)!.add(mmMrNo);
     } else {
-      for (const k of keys) {
-        pendingKeys.add(k);
-      }
+      poLevelPendingKeys.add(poKey);
     }
   }
 
-  // Approved takes precedence over any older pending row for the same PO
   for (const k of approvedKeys) {
-    pendingKeys.delete(k);
+    poLevelPendingKeys.delete(k);
   }
 
   const matchedApprovedKeys = new Set<string>();
@@ -1381,12 +1328,37 @@ export function annotatePosWithMaterialMismatchStatus(
       po.ptf_no,
       po.sauda_no
     ]
-      .map(normalizeMaterialMismatchPoKey)
+      .map(normalizePoCanonical)
       .filter(Boolean);
 
     const matchedApproved = poKeys.find(k => approvedKeys.has(k));
+    const matchedPoPending = poKeys.find(k => poLevelPendingKeys.has(k));
+    const matchedMrPendingKey = poKeys.find(k => mrSpecificPendingByPo.has(k));
+
     if (matchedApproved) {
       matchedApprovedKeys.add(matchedApproved);
+    }
+
+    // Check MR-level granularity: if a PO has valid MRs alongside mismatched MRs,
+    // DO NOT hide the entire PO — only individual mismatched MRs are blocked in Layer 2.
+    let allLinkedMrsPending = false;
+    if (matchedMrPendingKey) {
+      const pendingMrs = mrSpecificPendingByPo.get(matchedMrPendingKey)!;
+      const approvedMrs = mrSpecificApprovedByPo.get(matchedMrPendingKey) || new Set<string>();
+      const stillPendingCount = Array.from(pendingMrs).filter(m => !approvedMrs.has(m)).length;
+      if (stillPendingCount > 0) {
+        const linkedMrs = getLinkedMrsForPo(po, arrivalsList);
+        if (linkedMrs.length > 0) {
+          const validUnblockedCount = linkedMrs.filter(arr => {
+            const mr = extractRecordMrNo(arr);
+            return mr && (!pendingMrs.has(mr) || approvedMrs.has(mr));
+          }).length;
+          allLinkedMrsPending = validUnblockedCount === 0;
+        }
+      }
+    }
+
+    if (matchedApproved && !allLinkedMrsPending) {
       combinedPoMap.set(mapKey, {
         ...po,
         material_mismatch_approved: true,
@@ -1396,8 +1368,7 @@ export function annotatePosWithMaterialMismatchStatus(
       continue;
     }
 
-    const matchedPending = poKeys.find(k => pendingKeys.has(k));
-    if (matchedPending) {
+    if (matchedPoPending || allLinkedMrsPending) {
       combinedPoMap.set(mapKey, {
         ...po,
         material_mismatch_approved: false,
@@ -1412,12 +1383,11 @@ export function annotatePosWithMaterialMismatchStatus(
   for (const [poKey, mm] of approvedRowByKey.entries()) {
     if (matchedApprovedKeys.has(poKey)) continue;
     const rawPoNo = String(mm.po_no || '').trim();
-    if (!rawPoNo || normalizeMaterialMismatchPoKey(rawPoNo) !== poKey) continue;
+    if (!rawPoNo || normalizePoCanonical(rawPoNo) !== poKey) continue;
 
-    const matchedArr = (arrivalsList || []).find(a => {
-      const aPo = normalizeMaterialMismatchPoKey(a?.po_no || a?.mill_po_no);
-      return aPo === poKey;
-    });
+    const matchedArr = (arrivalsList || []).find(a =>
+      arePoNumbersExactMatch(a?.po_no || a?.mill_po_no, rawPoNo)
+    );
 
     combinedPoMap.set(poKey, {
       po_no: rawPoNo,
@@ -1482,20 +1452,16 @@ export function isPoEligibleForPayment(
     return unpaidMrs.length > 0;
   }
 
-  // If no arrivals linked in the list yet, check if a completed payment exists for this P.O
+  // If no arrivals linked in the list yet, check if a completed payment exists for this exact P.O
   if (paymentsList && paymentsList.length > 0 && poNo) {
     const directPayment = paymentsList.find(p => {
       if (currentVoucherNo && String(p.voucher_no || '').trim().toUpperCase() === String(currentVoucherNo).trim().toUpperCase()) {
         return false;
       }
       const pStatus = String(p.status || '').toLowerCase().trim();
-      if (pStatus === 'cancelled' || pStatus === 'rejected') return false;
+      if (pStatus === 'cancelled' || pStatus === 'rejected' || pStatus === 'reversed') return false;
 
-      const pPo = String(p.po_no || '').trim().toUpperCase();
-      if (pPo === poNo) return true;
-      const pPoSuffix = pPo.split('/').pop() || '';
-      const poSuffix = poNo.split('/').pop() || '';
-      return (poSuffix.length >= 3 && pPoSuffix === poSuffix);
+      return arePoNumbersExactMatch(p.po_no, poNo);
     });
 
     if (directPayment) {

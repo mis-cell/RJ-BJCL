@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { supabase } from '../../lib/supabase';
 import { dbModule } from '../../services/dbModule';
 import { useLiveAutoRefresh } from '../../hooks/useLiveAutoRefresh';
@@ -34,9 +34,23 @@ import {
   extractFinalArrivalMrNo,
   extractInspectionMrNo,
   extractRecordMrNo,
+  getCanonicalMrCompareKey,
   isValidFinalMrNo,
   normalizeFinalMrNo
 } from '../../lib/mrNumberUtils';
+import {
+  arePoNumbersExactMatch,
+  evaluateMrMaterialMismatchStatus,
+  evaluateMrPaymentEligibility,
+  findExactMatchingPo,
+  MATERIAL_MISMATCH_BLOCK_MESSAGE,
+  MrContractualRelationship,
+  MrMaterialMismatchEvaluation,
+  MrPaymentEligibilityResult,
+  normalizePoCanonical,
+  normalizePoExact,
+  resolveMrContractualRelationship
+} from '../../lib/contractRelationshipEngine';
 
 export function usePaymentData(onSaveSuccess?: () => void) {
   const [loading, setLoading] = useState(false);
@@ -48,6 +62,12 @@ export function usePaymentData(onSaveSuccess?: () => void) {
   const [verifiedArrivals, setVerifiedArrivals] = useState<any[]>([]);
   const [purchaseOrders, setPurchaseOrders] = useState<any[]>([]);
   const [saudaCheckPoints, setSaudaCheckPoints] = useState<any[]>([]);
+  const [materialMismatchRows, setMaterialMismatchRows] = useState<any[]>([]);
+  const [rawFinalArrivals, setRawFinalArrivals] = useState<any[]>([]);
+  const [rawMillInspections, setRawMillInspections] = useState<any[]>([]);
+  const [scpDetailsList, setScpDetailsList] = useState<any[]>([]);
+  const [miDetailsList, setMiDetailsList] = useState<any[]>([]);
+  const [returnLorriesList, setReturnLorriesList] = useState<any[]>([]);
   
   const [selectedPoNo, setSelectedPoNo] = useState<string>('');
   const [selectedPoData, setSelectedPoData] = useState<any>(null);
@@ -55,6 +75,9 @@ export function usePaymentData(onSaveSuccess?: () => void) {
   const [selectedMrNo, setSelectedMrNo] = useState<string>('');
   const [isEdit, setIsEdit] = useState(false);
   const [originalVoucherNo, setOriginalVoucherNo] = useState<string>('');
+
+  // Async sequence guard to prevent stale API responses from overwriting newer PO/MR selections
+  const selectionSeqRef = useRef<number>(0);
 
   const [masterData, setMasterData] = useState<PaymentMaster>(initialMaster());
   const [detailCols, setDetailCols] = useState<PaymentDetailColumn[]>([
@@ -67,8 +90,8 @@ export function usePaymentData(onSaveSuccess?: () => void) {
   const [areaMasterList, setAreaMasterList] = useState<any[]>([]);
   const [sattaDiffsList, setSattaDiffsList] = useState<any[]>([]);
 
-  // Pre-index paid MR numbers and paid PO numbers in O(N) once per paymentList update
-  const { paidMrSet, paidPoSet, arrivalsByPoSuffixMap } = useMemo(() => {
+  // Pre-index paid MR numbers and paid PO numbers in O(N) using STRICT exact/canonical keys ONLY (no suffix collisions)
+  const { paidMrSet, paidPoSet, arrivalsByExactPoMap } = useMemo(() => {
     const mrSet = new Set<string>();
     const poSet = new Set<string>();
     const currVoucher = isEdit && masterData.voucher_no ? String(masterData.voucher_no).trim().toUpperCase() : '';
@@ -76,22 +99,22 @@ export function usePaymentData(onSaveSuccess?: () => void) {
     for (const p of paymentList) {
       if (currVoucher && String(p.voucher_no || '').trim().toUpperCase() === currVoucher) continue;
       const st = String(p.status || '').toLowerCase().trim();
-      if (st === 'cancelled' || st === 'rejected') continue;
+      if (st === 'cancelled' || st === 'rejected' || st === 'reversed') continue;
 
-      const pMr = String(p.mr_no || '').trim().toUpperCase();
-      if (pMr && pMr !== 'N/A') {
+      const pMr = extractRecordMrNo(p);
+      if (pMr) {
         mrSet.add(pMr);
+        const ck = getCanonicalMrCompareKey(pMr);
+        if (ck) mrSet.add(ck);
       }
 
-      const pPo = String(p.po_no || '').trim().toUpperCase().replace(/^#+/, '').replace(/\(PTF\)/gi, '').trim();
-      if (pPo && pPo !== 'N/A') {
-        poSet.add(pPo);
-        const suf = pPo.split('/').pop()?.trim() || '';
-        if (suf.length >= 3) poSet.add(`SUFFIX_${suf}`);
-      }
+      const pPoExact = normalizePoExact(p.po_no);
+      const pPoCanon = normalizePoCanonical(p.po_no);
+      if (pPoExact) poSet.add(pPoExact);
+      if (pPoCanon) poSet.add(pPoCanon);
     }
 
-    // Pre-index verifiedArrivals by normalized PO keys & suffixes in O(M)
+    // Pre-index verifiedArrivals strictly by exact/canonical PO keys (NO suffix-only indexing!)
     const byPoMap = new Map<string, any[]>();
     const addToMap = (key: string, arr: any) => {
       if (!key) return;
@@ -114,18 +137,77 @@ export function usePaymentData(onSaveSuccess?: () => void) {
       ];
       for (const raw of cands) {
         if (!raw) continue;
-        const clean = String(raw).trim().toUpperCase().replace(/^#+/, '').trim();
-        if (!clean || clean === 'N/A') continue;
-        const noPtf = clean.replace(/\(PTF\)/gi, '').trim();
-        addToMap(clean, arr);
-        if (noPtf && noPtf !== clean) addToMap(noPtf, arr);
-        const suf = noPtf.split('/').pop()?.trim() || '';
-        if (suf.length >= 3) addToMap(`SUFFIX_${suf}`, arr);
+        const exact = normalizePoExact(raw);
+        const canon = normalizePoCanonical(raw);
+        if (exact) addToMap(exact, arr);
+        if (canon && canon !== exact) addToMap(canon, arr);
       }
     }
 
-    return { paidMrSet: mrSet, paidPoSet: poSet, arrivalsByPoSuffixMap: byPoMap };
+    return { paidMrSet: mrSet, paidPoSet: poSet, arrivalsByExactPoMap: byPoMap };
   }, [paymentList, verifiedArrivals, isEdit, masterData.voucher_no]);
+
+  // Layer 2: Precompute MR-level Material Mismatch status map (strictly per-MR, exact PO match)
+  const mrMismatchMap = useMemo(() => {
+    const map = new Map<string, MrMaterialMismatchEvaluation>();
+    if (verifiedArrivals.length === 0) return map;
+
+    const scpByPo = new Map<string, any>();
+    for (const scp of saudaCheckPoints) {
+      const k = normalizePoCanonical(scp?.po_no || scp?.contract_po_no || scp?.ptf_no);
+      if (k && !scpByPo.has(k)) scpByPo.set(k, scp);
+    }
+
+    const scpDetailsByPo = new Map<string, any[]>();
+    for (const d of scpDetailsList) {
+      const k = normalizePoCanonical(d?.po_no);
+      if (!k) continue;
+      const list = scpDetailsByPo.get(k) || [];
+      list.push(d);
+      scpDetailsByPo.set(k, list);
+    }
+
+    const miByMr = new Map<string, any>();
+    for (const mi of rawMillInspections) {
+      const mr = getCanonicalMrCompareKey(extractInspectionMrNo(mi));
+      if (mr && !miByMr.has(mr)) miByMr.set(mr, mi);
+    }
+
+    const miDetailsByMr = new Map<string, any[]>();
+    for (const d of miDetailsList) {
+      const mr = getCanonicalMrCompareKey(d?.mr_no);
+      if (!mr) continue;
+      const list = miDetailsByMr.get(mr) || [];
+      list.push(d);
+      miDetailsByMr.set(mr, list);
+    }
+
+    for (const arr of verifiedArrivals) {
+      const mrNo = extractRecordMrNo(arr);
+      const mrKey = getCanonicalMrCompareKey(mrNo);
+      if (!mrNo || !mrKey) continue;
+
+      const miRec = miByMr.get(mrKey) || (arr.source_module === 'material_inspection' ? arr : null);
+      const poNo = normalizePoExact(miRec?.po_no || miRec?.mill_po_no || arr.po_no || arr.mill_po_no);
+      const poCanon = normalizePoCanonical(poNo);
+      if (!poCanon) continue;
+
+      const scpRec = scpByPo.get(poCanon) || null;
+      const evalRes = evaluateMrMaterialMismatchStatus({
+        poNo,
+        mrNo,
+        materialMismatches: materialMismatchRows,
+        saudaCheckPoint: scpRec,
+        saudaDetails: scpDetailsByPo.get(poCanon) || [],
+        millInspection: miRec,
+        millInspectionDetails: miDetailsByMr.get(mrKey) || [],
+      });
+      map.set(mrKey, evalRes);
+      map.set(mrNo, evalRes);
+    }
+
+    return map;
+  }, [verifiedArrivals, saudaCheckPoints, scpDetailsList, rawMillInspections, miDetailsList, materialMismatchRows]);
 
   const isPoEligibleForPaymentLocal = useCallback((po: any): boolean => {
     if (!po) return false;
@@ -156,56 +238,37 @@ export function usePaymentData(onSaveSuccess?: () => void) {
 
     if (!isCompleted || !isPass) return false;
 
-    const rawPoNo = String(po.po_no || po.new_po_no || po.ptf_no || po.sauda_no || po.contract_po_no || '').trim().toUpperCase().replace(/^#+/, '').trim();
-    if (!rawPoNo || rawPoNo === 'N/A') return false;
-    const noPtf = rawPoNo.replace(/\(PTF\)/gi, '').trim();
-    const suf = noPtf.split('/').pop()?.trim() || '';
+    const exactPo = normalizePoExact(po.po_no || po.new_po_no || po.ptf_no || po.sauda_no || po.contract_po_no);
+    const canonPo = normalizePoCanonical(exactPo);
+    if (!canonPo) return false;
 
     const linkedMrs =
-      arrivalsByPoSuffixMap.get(rawPoNo) ||
-      arrivalsByPoSuffixMap.get(noPtf) ||
-      (suf.length >= 3 ? arrivalsByPoSuffixMap.get(`SUFFIX_${suf}`) : undefined) ||
+      arrivalsByExactPoMap.get(exactPo) ||
+      arrivalsByExactPoMap.get(canonPo) ||
       [];
 
     if (linkedMrs.length > 0) {
+      // Eligible if at least one unpaid MR exists on this PO
       return linkedMrs.some((mr: any) => {
-        const mrKey = extractRecordMrNo(mr);
+        const mrKey = getCanonicalMrCompareKey(extractRecordMrNo(mr));
         return mrKey && !paidMrSet.has(mrKey);
       });
     }
 
-    if (paidPoSet.has(rawPoNo) || paidPoSet.has(noPtf) || (suf.length >= 3 && paidPoSet.has(`SUFFIX_${suf}`))) {
+    if (paidPoSet.has(exactPo) || paidPoSet.has(canonPo)) {
       return false;
     }
 
     return true;
-  }, [arrivalsByPoSuffixMap, paidMrSet, paidPoSet]);
+  }, [arrivalsByExactPoMap, paidMrSet, paidPoSet]);
 
   const findMatchingPo = useCallback((targetPoNo: string, poArray: any[]) => {
-    if (!targetPoNo || !poArray || poArray.length === 0) return null;
-    const cleanTarget = String(targetPoNo).trim().toUpperCase();
-    const targetSuffix = cleanTarget.split('/').pop() || '';
-
-    return poArray.find((p: any) => {
-      const pNo = String(p.po_no || p.contract_po_no || '').trim().toUpperCase();
-      const pSuffix = pNo.split('/').pop() || '';
-      const sNo = String(p.sauda_no || p.po_contract || p.contract_no || '').trim().toUpperCase();
-      const sSuffix = sNo.split('/').pop() || '';
-
-      if (pNo === cleanTarget) return true;
-      if (sNo && sNo === cleanTarget) return true;
-      if (pNo && (pNo.includes(cleanTarget) || cleanTarget.includes(pNo))) return true;
-      if (targetSuffix && targetSuffix.length >= 3) {
-        if (pSuffix === targetSuffix || (pNo && pNo.includes(targetSuffix))) return true;
-        if (sSuffix === targetSuffix || (sNo && sNo.includes(targetSuffix))) return true;
-      }
-      return false;
-    });
+    return findExactMatchingPo(targetPoNo, poArray) || null;
   }, []);
 
   const availableArrivals = useMemo(() => {
     return verifiedArrivals.filter(arr => {
-      const mrKey = extractRecordMrNo(arr);
+      const mrKey = getCanonicalMrCompareKey(extractRecordMrNo(arr));
       if (!mrKey) return false;
       return !paidMrSet.has(mrKey);
     });
@@ -214,6 +277,61 @@ export function usePaymentData(onSaveSuccess?: () => void) {
   const eligiblePos = useMemo(() => {
     return purchaseOrders.filter(po => isPoEligibleForPaymentLocal(po));
   }, [purchaseOrders, isPoEligibleForPaymentLocal]);
+
+  // Layer 1 + 2 + 3: Live contractual relationship & payment eligibility for currently selected MR
+  const activeMrRelationship: MrContractualRelationship | null = useMemo(() => {
+    const activeMr = normalizeFinalMrNo(selectedMrNo || masterData.mr_no);
+    if (!activeMr) return null;
+    const explicitRec = verifiedArrivals.find(a => areMrNumbersEqual(extractRecordMrNo(a), activeMr));
+    return resolveMrContractualRelationship({
+      mrNo: activeMr,
+      finalArrivals: rawFinalArrivals,
+      millInspections: rawMillInspections,
+      purchaseOrders,
+      saudaCheckPoints,
+      returnLorries: returnLorriesList,
+      explicitRecord: explicitRec,
+    });
+  }, [selectedMrNo, masterData.mr_no, verifiedArrivals, rawFinalArrivals, rawMillInspections, purchaseOrders, saudaCheckPoints, returnLorriesList]);
+
+  const activeMrEligibility: MrPaymentEligibilityResult | null = useMemo(() => {
+    const activeMr = normalizeFinalMrNo(selectedMrNo || masterData.mr_no);
+    if (!activeMr) return null;
+    const activePo = normalizePoExact(
+      activeMrRelationship?.authoritativePoNo || selectedPoNo || masterData.po_no
+    );
+    const mrKey = getCanonicalMrCompareKey(activeMr);
+    const mismatchEvaluation: MrMaterialMismatchEvaluation =
+      mrMismatchMap.get(mrKey) ||
+      mrMismatchMap.get(activeMr) || {
+        poNo: activePo,
+        mrNo: activeMr,
+        hasMismatch: false,
+        isResolved: false,
+        isUnresolved: false,
+        status: 'none',
+        mismatchId: activePo ? `MIS-${activePo}-${activeMr}` : '',
+        mismatchReasons: [],
+      };
+    const paidCheck = isMrAlreadyProcessed(
+      activeMr,
+      paymentList,
+      isEdit ? masterData.voucher_no : undefined,
+      activePo
+    );
+    const isOriginalPoInEligibleList = Boolean(
+      activePo && eligiblePos.some(p => arePoNumbersExactMatch(p.po_no || p.ptf_no || p.sauda_no, activePo))
+    );
+    return evaluateMrPaymentEligibility({
+      poNo: activePo,
+      mrNo: activeMr,
+      relationship: activeMrRelationship,
+      mismatchEvaluation,
+      isAlreadyPaid: paidCheck.isPaid,
+      paidVoucherNo: paidCheck.paidPayment?.voucher_no,
+      isOriginalPoInEligibleList,
+    });
+  }, [selectedMrNo, masterData.mr_no, masterData.po_no, masterData.voucher_no, selectedPoNo, activeMrRelationship, mrMismatchMap, paymentList, isEdit, eligiblePos]);
 
   const initPage = useCallback(async () => {
     setLoading(true);
@@ -246,7 +364,9 @@ export function usePaymentData(onSaveSuccess?: () => void) {
           miRes,
           mimRes,
           rlRes,
-          mmRes
+          mmRes,
+          scpDetailsRes,
+          miDetailsRes
         ] = await Promise.all([
           supabase.from('grade_master').select('*').then(r => r.data || [], () => []),
           supabase.from('agency_master').select('*').then(r => r.data || [], () => []),
@@ -261,7 +381,9 @@ export function usePaymentData(onSaveSuccess?: () => void) {
           supabase.from('material_inspection').select('*').order('created_at', { ascending: false }).then(r => r.data || [], () => []),
           supabase.from('mill_inspection_master').select('*').order('created_at', { ascending: false }).then(r => r.data || [], () => []),
           supabase.from('return_lorry').select('*').then(r => r.data || [], () => []),
-          supabase.from('material_mismatch').select('*').then(r => r.data || [], () => [])
+          supabase.from('material_mismatch').select('*').then(r => r.data || [], () => []),
+          supabase.from('sauda_check_point_details').select('*').then(r => r.data || [], () => []),
+          supabase.from('material_inspection_details').select('*').then(r => r.data || [], () => [])
         ]);
 
         gData = gRes;
@@ -273,6 +395,13 @@ export function usePaymentData(onSaveSuccess?: () => void) {
         scpList = scpRes;
         returnLorries = rlRes;
         materialMismatchList = mmRes;
+
+        setRawFinalArrivals(faRes || []);
+        setRawMillInspections([...(miRes || []), ...(mimRes || [])]);
+        setMaterialMismatchRows(mmRes || []);
+        setScpDetailsList(scpDetailsRes || []);
+        setMiDetailsList(miDetailsRes || []);
+        setReturnLorriesList(rlRes || []);
 
         if (sattaRes && sattaRes.length > 0) {
           setSattaDiffsList(sattaRes);
@@ -639,13 +768,15 @@ export function usePaymentData(onSaveSuccess?: () => void) {
   };
 
   const handlePoSelection = async (poNo: string) => {
+    const reqId = ++selectionSeqRef.current;
     setSelectedPoNo(poNo);
+    setErrorMessage('');
     if (!poNo) {
       setSelectedPoData(null);
       return;
     }
 
-    const po = purchaseOrders.find(p => p.po_no === poNo || p.ptf_no === poNo || p.sauda_no === poNo || p.contract_po_no === poNo) || findMatchingPo(poNo, purchaseOrders);
+    const po = findExactMatchingPo(poNo, purchaseOrders) || findExactMatchingPo(poNo, saudaCheckPoints);
     if (po) {
       setSelectedPoData(po);
 
@@ -662,6 +793,7 @@ export function usePaymentData(onSaveSuccess?: () => void) {
             supabase.from('marka_master').select('*').then(r => r.data || [], () => []),
             supabase.from('area_master').select('*').then(r => r.data || [], () => [])
           ]);
+          if (reqId !== selectionSeqRef.current) return;
           if (gData.length > 0) { gList = gData; setGradeMasterList(gData); }
           if (agData.length > 0) { agList = agData; setAgencyMasterList(agData); }
           if (aData.length > 0) { aList = aData; setAreaMasterList(aData); }
@@ -670,6 +802,7 @@ export function usePaymentData(onSaveSuccess?: () => void) {
       }
 
       const poItems = await getPoItemDetails(po);
+      if (reqId !== selectionSeqRef.current) return;
       setActivePoItems(poItems);
       setActivePoItemsGlobal(poItems);
 
@@ -697,6 +830,8 @@ export function usePaymentData(onSaveSuccess?: () => void) {
         purchaseOrders,
         verifiedArrivals
       });
+      if (reqId !== selectionSeqRef.current) return;
+
       const defaultPaid = grossVal > 0
         ? calculateNetPaidAmountAfterDeductions(
             grossVal,
@@ -709,29 +844,36 @@ export function usePaymentData(onSaveSuccess?: () => void) {
       setMasterData(prev => ({
         ...prev,
         po_no: po.po_no || poNo,
-        po_date: po.po_date || po.s_date || po.created_at || prev.po_date,
+        po_date: po.po_date || po.s_date || po.created_at || '',
         po_type: po.po_type || 'Standard',
-        supplier: po.supplier || po.party_name || prev.supplier,
-        party_name: po.party_name || po.supplier || prev.party_name,
-        broker: po.broker || po.broker_name || prev.broker,
+        supplier: po.supplier || po.party_name || '',
+        party_name: po.party_name || po.supplier || '',
+        broker: po.broker || po.broker_name || '',
         rate_qntl: Number(po.b_rate || po.rate_qntl || 0),
-        total_amount: grossVal > 0 ? grossVal : Math.round(prev.total_amount || 0),
-        payable_amt: grossVal > 0 ? grossVal : Math.round(prev.payable_amt || 0),
+        total_amount: grossVal > 0 ? grossVal : 0,
+        payable_amt: grossVal > 0 ? grossVal : 0,
         summary_delivery_claim: deductions.deliveryClaim,
         summary_deduction_amount: deductions.totalDeductionsAndPenalties,
         summary_deduction_type: deductions.deductionSummaryText,
         val_ex_short: deductions.extraAndShort,
-        paid_amount: grossVal > 0 ? defaultPaid : Math.round(prev.paid_amount || 0),
+        paid_amount: grossVal > 0 ? defaultPaid : 0,
       }));
 
       setDetailCols(cols);
 
-      // Automatically find matching M.R from linked arrivals
+      // Automatically find matching unpaid (and preferably non-mismatched) M.R from strictly exact linked arrivals
       const linkedMrs = getLinkedMrsForPo(poNo, verifiedArrivals);
-      const matchingArrival = linkedMrs.find(a => {
+      const unpaidLinkedMrs = linkedMrs.filter(a => {
         const { isPaid } = isMrAlreadyProcessed(a, paymentList, isEdit ? masterData.voucher_no : undefined, poNo);
         return !isPaid;
-      }) || linkedMrs[0];
+      });
+      const matchingArrival =
+        unpaidLinkedMrs.find(a => {
+          const mk = getCanonicalMrCompareKey(extractRecordMrNo(a));
+          return !mrMismatchMap.get(mk)?.isUnresolved;
+        }) ||
+        unpaidLinkedMrs[0] ||
+        linkedMrs[0];
 
       if (matchingArrival && !selectedMrNo) {
         const nextMr = extractRecordMrNo(matchingArrival);
@@ -745,7 +887,7 @@ export function usePaymentData(onSaveSuccess?: () => void) {
             if (nextMr) handleMrSelection(nextMr, po);
           } else {
             setSelectedMrNo('');
-            setMasterData(prev => ({ ...prev, mr_no: '', arrival_no: '' }));
+            setMasterData(prev => ({ ...prev, mr_no: '', arrival_no: '', lorry_number: '' }));
           }
         }
       } else if (matchingArrival) {
@@ -756,8 +898,13 @@ export function usePaymentData(onSaveSuccess?: () => void) {
   };
 
   const handleMrSelection = async (mrNo: string, overridePo?: any) => {
+    const reqId = ++selectionSeqRef.current;
     setSelectedMrNo(mrNo);
-    if (!mrNo) return;
+    setErrorMessage('');
+    if (!mrNo) {
+      setMasterData(prev => ({ ...prev, mr_no: '', arrival_no: '', lorry_number: '' }));
+      return;
+    }
 
     const checkPaid = isMrAlreadyProcessed(mrNo, paymentList, isEdit ? masterData.voucher_no : undefined, selectedPoNo);
     if (checkPaid.isPaid && checkPaid.paidPayment) {
@@ -806,19 +953,61 @@ export function usePaymentData(onSaveSuccess?: () => void) {
       }
     }
 
+    if (reqId !== selectionSeqRef.current) return;
+
     if (arrival) {
-      const rawPoNo = arrival.po_no || arrival.mill_po_no || masterData.po_no;
-      const matchedPo = overridePo || findMatchingPo(rawPoNo, purchaseOrders);
-      if (matchedPo) {
-        setSelectedPoNo(matchedPo.po_no || matchedPo.ptf_no || rawPoNo);
-        setSelectedPoData(matchedPo);
-      } else {
-        if (rawPoNo) {
-          setSelectedPoNo(rawPoNo);
-        }
-      }
+      // Layer 1: Resolve authoritative PO from relational records — NEVER substitute another PO via substring matching!
+      const rel = resolveMrContractualRelationship({
+        mrNo,
+        finalArrivals: rawFinalArrivals,
+        millInspections: rawMillInspections,
+        purchaseOrders,
+        saudaCheckPoints,
+        returnLorries: returnLorriesList,
+        explicitRecord: arrival,
+      });
+
+      const rawPoNo = normalizePoExact(rel.authoritativePoNo || arrival.po_no || arrival.mill_po_no);
+
+      // Only accept overridePo if it matches the MR's authoritative PO exactly (preventing cross-PO contamination)
+      const validOverridePo =
+        overridePo && rawPoNo && arePoNumbersExactMatch(overridePo.po_no || overridePo.ptf_no || overridePo.contract_po_no, rawPoNo)
+          ? overridePo
+          : null;
+
+      const matchedPo =
+        validOverridePo ||
+        (rawPoNo ? findExactMatchingPo(rawPoNo, purchaseOrders) : null) ||
+        (rawPoNo ? findExactMatchingPo(rawPoNo, saudaCheckPoints) : null);
+
+      const poNo = matchedPo ? (matchedPo.po_no || matchedPo.ptf_no || rawPoNo) : rawPoNo;
+
+      // Always retain the MR's exact original PO — never clear or substitute a different PO
+      setSelectedPoNo(poNo);
+      setSelectedPoData(matchedPo || null);
+
+      // Clear stale MR-specific fields immediately before async detail fetches complete
+      setMasterData(prev => ({
+        ...prev,
+        mr_no: extractRecordMrNo(arrival) || normalizeFinalMrNo(mrNo),
+        po_no: poNo,
+        supplier: arrival.supplier || matchedPo?.supplier || '',
+        party_name: arrival.supplier || matchedPo?.supplier || '',
+        broker: arrival.broker || matchedPo?.broker || '',
+        lorry_number: arrival.lorry_number || arrival.vehicle_no || '',
+        arrival_no: extractRecordMrNo(arrival) || normalizeFinalMrNo(mrNo),
+        arrival_date: arrival.date || '',
+        total_amount: 0,
+        payable_amt: 0,
+        paid_amount: 0,
+        net_amt: 0,
+        summary_delivery_claim: 0,
+        summary_deduction_amount: 0,
+        summary_deduction_type: '',
+        val_ex_short: 0,
+      }));
+
       const po = matchedPo;
-      const poNo = matchedPo ? (matchedPo.po_no || matchedPo.ptf_no) : rawPoNo;
 
       let gList = gradeMasterList;
       let agList = agencyMasterList;
@@ -833,6 +1022,7 @@ export function usePaymentData(onSaveSuccess?: () => void) {
             supabase.from('marka_master').select('*').then(r => r.data || [], () => []),
             supabase.from('area_master').select('*').then(r => r.data || [], () => [])
           ]);
+          if (reqId !== selectionSeqRef.current) return;
           if (gData.length > 0) { gList = gData; setGradeMasterList(gData); }
           if (agData.length > 0) { agList = agData; setAgencyMasterList(agData); }
           if (aData.length > 0) { aList = aData; setAreaMasterList(aData); }
@@ -890,12 +1080,14 @@ export function usePaymentData(onSaveSuccess?: () => void) {
           console.warn("Failed to fetch inspection details:", e);
         }
       }
+      if (reqId !== selectionSeqRef.current) return;
 
       if (rawArrItems.length === 0) {
         rawArrItems = parseGridOrItems(arrival.grid_details || arrival.items || arrival.details);
       }
 
       const poItems = po ? await getPoItemDetails(po) : [];
+      if (reqId !== selectionSeqRef.current) return;
       setActivePoItems(poItems);
       setActivePoItemsGlobal(poItems);
 
@@ -993,6 +1185,8 @@ export function usePaymentData(onSaveSuccess?: () => void) {
         purchaseOrders,
         verifiedArrivals
       });
+      if (reqId !== selectionSeqRef.current) return;
+
       const defaultPaid = grossVal > 0
         ? calculateNetPaidAmountAfterDeductions(
             grossVal,
@@ -1005,25 +1199,25 @@ export function usePaymentData(onSaveSuccess?: () => void) {
       setMasterData(prev => ({
         ...prev,
         mr_no: resolvedMrNo,
-        po_no: poNo || prev.po_no,
-        po_date: po?.po_date || po?.s_date || arrival.po_date || arrival.date || prev.po_date,
-        supplier: arrival.supplier || po?.supplier || prev.supplier,
-        party_name: arrival.supplier || po?.supplier || prev.party_name,
-        broker: arrival.broker || po?.broker || prev.broker,
+        po_no: poNo,
+        po_date: po?.po_date || po?.s_date || arrival.po_date || arrival.date || '',
+        supplier: arrival.supplier || po?.supplier || '',
+        party_name: arrival.supplier || po?.supplier || '',
+        broker: arrival.broker || po?.broker || '',
         po_type: po?.po_type || 'Standard',
-        lorry_number: arrival.lorry_number || arrival.vehicle_no || prev.lorry_number,
-        arrival_no: resolvedMrNo || prev.arrival_no,
-        arrival_date: arrival.date || deductions.arrivalDate || prev.arrival_date,
-        total_amount: grossVal > 0 ? grossVal : Math.round(prev.total_amount || 0),
-        payable_amt: grossVal > 0 ? grossVal : Math.round(prev.payable_amt || 0),
+        lorry_number: arrival.lorry_number || arrival.vehicle_no || '',
+        arrival_no: resolvedMrNo,
+        arrival_date: arrival.date || deductions.arrivalDate || '',
+        total_amount: grossVal > 0 ? grossVal : 0,
+        payable_amt: grossVal > 0 ? grossVal : 0,
         summary_delivery_claim: deductions.deliveryClaim,
         summary_deduction_amount: deductions.totalDeductionsAndPenalties,
         summary_deduction_type: deductions.deductionSummaryText,
         val_ex_short: deductions.extraAndShort,
-        paid_amount: grossVal > 0 ? defaultPaid : Math.round(prev.paid_amount || 0),
-        net_amt: grossVal > 0 ? grossVal : Math.round(prev.net_amt || 0),
+        paid_amount: grossVal > 0 ? defaultPaid : 0,
+        net_amt: grossVal > 0 ? grossVal : 0,
         electronic_scale_net: mrWeight,
-        challan_weight: Number(arrival.challan_material_weight || prev.challan_weight)
+        challan_weight: Number(arrival.challan_material_weight || 0)
       }));
 
       setDetailCols(cols);
@@ -1045,10 +1239,29 @@ export function usePaymentData(onSaveSuccess?: () => void) {
       return;
     }
 
-    const checkMr = String(masterData.mr_no || selectedMrNo || '').trim().toUpperCase();
-    const checkPo = String(masterData.po_no || selectedPoNo || '').trim().toUpperCase();
+    const checkMr = normalizeFinalMrNo(masterData.mr_no || selectedMrNo);
+    const checkPo = normalizePoExact(masterData.po_no || selectedPoNo);
 
-    if (checkMr && checkMr !== 'N/A') {
+    // Layer 1 & 2 & 3 Frontend Financial Integrity Enforcement
+    if (checkMr) {
+      if (activeMrRelationship?.hasDataIntegrityConflict) {
+        setErrorMessage(activeMrRelationship.conflictReason || `Data Integrity Conflict detected for MR ${checkMr}.`);
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+        return;
+      }
+
+      if (activeMrRelationship?.authoritativePoNo && checkPo && !arePoNumbersExactMatch(activeMrRelationship.authoritativePoNo, checkPo)) {
+        setErrorMessage(`Invalid MR-to-PO Mapping: MR ${checkMr} belongs strictly to P.O ${activeMrRelationship.authoritativePoNo} and cannot be paid under P.O ${checkPo}.`);
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+        return;
+      }
+
+      if (activeMrEligibility?.isMismatchBlocked) {
+        setErrorMessage(MATERIAL_MISMATCH_BLOCK_MESSAGE);
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+        return;
+      }
+
       const localConflict = isMrAlreadyProcessed(checkMr, paymentList, isEdit ? masterData.voucher_no : undefined, checkPo);
       if (localConflict.isPaid && localConflict.paidPayment) {
         const p = localConflict.paidPayment;
@@ -1058,6 +1271,16 @@ export function usePaymentData(onSaveSuccess?: () => void) {
       }
     }
 
+    const payableVal = Number(masterData.payable_amt) || 0;
+    const parsedPaid = (masterData.paid_amount !== undefined && masterData.paid_amount !== null && String(masterData.paid_amount).trim() !== '' && !isNaN(Number(masterData.paid_amount)))
+      ? Number(masterData.paid_amount)
+      : 0;
+    if (parsedPaid < 0) {
+      setErrorMessage("Validation Error: Paid amount cannot be negative.");
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      return;
+    }
+
     setLoading(true);
     setErrorMessage('');
     setSuccessMessage('');
@@ -1065,7 +1288,8 @@ export function usePaymentData(onSaveSuccess?: () => void) {
     try {
       if (!supabase) throw new Error("Supabase client not connected.");
 
-      if (checkMr && checkMr !== 'N/A') {
+      if (checkMr) {
+        // Live DB duplicate check
         try {
           const { data: liveConflicts } = await supabase
             .from('payment_master')
@@ -1078,10 +1302,9 @@ export function usePaymentData(onSaveSuccess?: () => void) {
                 return false;
               }
               const pStatus = String(p.status || '').toLowerCase().trim();
-              if (pStatus === 'cancelled' || pStatus === 'rejected') return false;
+              if (pStatus === 'cancelled' || pStatus === 'rejected' || pStatus === 'reversed') return false;
 
-              const pMr = String(p.mr_no || '').trim().toUpperCase();
-              return pMr === checkMr;
+              return areMrNumbersEqual(extractRecordMrNo(p), checkMr);
             });
 
             if (conflict) {
@@ -1095,34 +1318,39 @@ export function usePaymentData(onSaveSuccess?: () => void) {
           console.warn("Live duplicate check notice:", dbErr);
         }
 
+        // Layer 6: Authoritative Backend Transaction Validation + Concurrency Protection
         try {
-          const apiRes = await fetch('/api/payments/check-duplicate', {
+          const apiRes = await fetch('/api/payments/validate-transaction', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               mr_no: checkMr,
               po_no: checkPo,
-              current_voucher_no: isEdit ? masterData.voucher_no : undefined
+              voucher_no: masterData.voucher_no,
+              is_edit: isEdit,
+              paid_amount: parsedPaid,
+              payable_amt: payableVal
             })
           });
           if (apiRes.ok) {
             const apiData = await apiRes.json();
-            if (apiData.isDuplicate) {
-              setErrorMessage(apiData.message || `Payment has already been processed for M.R. ${checkMr} against P.O. ${checkPo}. This M.R. cannot be selected again.`);
+            if (!apiData.valid) {
+              setErrorMessage(apiData.message || `Backend validation rejected payment for M.R. ${checkMr}.`);
               setLoading(false);
               window.scrollTo({ top: 0, behavior: 'smooth' });
               return;
             }
+          } else if (apiRes.status === 400 || apiRes.status === 409 || apiRes.status === 422) {
+            const errData = await apiRes.json().catch(() => ({}));
+            setErrorMessage(errData.message || `Payment rejected by backend validation (HTTP ${apiRes.status}).`);
+            setLoading(false);
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+            return;
           }
         } catch (apiErr) {
-          console.warn("Backend API duplicate check notice:", apiErr);
+          console.warn("Backend API transaction validation notice:", apiErr);
         }
       }
-
-      const payableVal = Number(masterData.payable_amt) || 0;
-      const parsedPaid = (masterData.paid_amount !== undefined && masterData.paid_amount !== null && String(masterData.paid_amount).trim() !== '' && !isNaN(Number(masterData.paid_amount)))
-        ? Number(masterData.paid_amount)
-        : 0;
 
       const calcStatus = (payableVal > 0 && parsedPaid >= payableVal - 0.01)
         ? 'completed'
@@ -1262,11 +1490,27 @@ export function usePaymentData(onSaveSuccess?: () => void) {
           const dVals = dCols.map(k => sqlVal((row as any)[k]));
           txQueries.push(`INSERT INTO payment_details (${dCols.join(', ')}) VALUES (${dVals.join(', ')});`);
         }
+        // Compute accurate PO-level payment status across ALL linked MRs (never mark multi-MR PO 'Paid' when sibling MRs remain unpaid)
+        let targetPoPaymentStatus = targetArrivalPaymentStatus;
+        if (masterData.po_no) {
+          const linkedForPo = getLinkedMrsForPo(masterData.po_no, verifiedArrivals);
+          if (linkedForPo.length > 1 && targetArrivalPaymentStatus === 'Paid') {
+            const unpaidSiblings = linkedForPo.filter(a => {
+              const aMr = extractRecordMrNo(a);
+              if (!aMr || (checkMr && areMrNumbersEqual(aMr, checkMr))) return false;
+              return !isMrAlreadyProcessed(aMr, paymentList, isEdit ? masterData.voucher_no : undefined, masterData.po_no).isPaid;
+            });
+            if (unpaidSiblings.length > 0) {
+              targetPoPaymentStatus = 'Partially Paid';
+            }
+          }
+        }
+
         if (masterData.mr_no) {
-          txQueries.push(`UPDATE final_arrival SET payment_status = ${sqlVal(targetArrivalPaymentStatus)} WHERE mr_no = ${sqlVal(masterData.mr_no)};`);
+          txQueries.push(`UPDATE final_arrival SET payment_status = ${sqlVal(targetArrivalPaymentStatus)} WHERE final_arrival_no = ${sqlVal(masterData.mr_no)} OR mr_no = ${sqlVal(masterData.mr_no)};`);
         }
         if (masterData.po_no) {
-          txQueries.push(`UPDATE purchase_master SET payment_status = ${sqlVal(targetArrivalPaymentStatus)} WHERE po_no = ${sqlVal(masterData.po_no)};`);
+          txQueries.push(`UPDATE purchase_master SET payment_status = ${sqlVal(targetPoPaymentStatus)} WHERE po_no = ${sqlVal(masterData.po_no)};`);
         }
         await dbModule.executeTransaction(txQueries);
       } catch (_txErr) {
@@ -1293,10 +1537,21 @@ export function usePaymentData(onSaveSuccess?: () => void) {
           }
         }
         if (masterData.mr_no) {
+          await supabase.from('final_arrival').update({ payment_status: targetArrivalPaymentStatus }).eq('final_arrival_no', masterData.mr_no);
           await supabase.from('final_arrival').update({ payment_status: targetArrivalPaymentStatus }).eq('mr_no', masterData.mr_no);
         }
         if (masterData.po_no) {
-          await supabase.from('purchase_master').update({ payment_status: targetArrivalPaymentStatus }).eq('po_no', masterData.po_no);
+          let targetPoPaymentStatus = targetArrivalPaymentStatus;
+          const linkedForPo = getLinkedMrsForPo(masterData.po_no, verifiedArrivals);
+          if (linkedForPo.length > 1 && targetArrivalPaymentStatus === 'Paid') {
+            const unpaidSiblings = linkedForPo.filter(a => {
+              const aMr = extractRecordMrNo(a);
+              if (!aMr || (checkMr && areMrNumbersEqual(aMr, checkMr))) return false;
+              return !isMrAlreadyProcessed(aMr, paymentList, isEdit ? masterData.voucher_no : undefined, masterData.po_no).isPaid;
+            });
+            if (unpaidSiblings.length > 0) targetPoPaymentStatus = 'Partially Paid';
+          }
+          await supabase.from('purchase_master').update({ payment_status: targetPoPaymentStatus }).eq('po_no', masterData.po_no);
         }
       }
 
@@ -1632,6 +1887,9 @@ export function usePaymentData(onSaveSuccess?: () => void) {
     sattaDiffsList,
     availableArrivals,
     eligiblePos,
+    mrMismatchMap,
+    activeMrRelationship,
+    activeMrEligibility,
     isPoEligibleForPaymentLocal,
     findMatchingPo,
     initPage,

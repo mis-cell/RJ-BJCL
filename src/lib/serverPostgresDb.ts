@@ -1918,6 +1918,12 @@ class ServerDbQueryBuilder implements PromiseLike<{ data: any; error: any }> {
     return this;
   }
 
+  in(column: string, values: any[]) {
+    this.payload.filters = this.payload.filters || [];
+    this.payload.filters.push({ column, op: 'in', value: values });
+    return this;
+  }
+
   or(filterStr: string) {
     this.payload.orFilters = this.payload.orFilters || [];
     this.payload.orFilters.push(filterStr);

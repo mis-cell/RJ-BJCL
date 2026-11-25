@@ -87,6 +87,10 @@ import { getApiUrl } from "./lib/utils";
 import { useIdleTimer } from "./hooks/useIdleTimer";
 import { ScreenErrorBoundary } from "./components/ScreenErrorBoundary";
 import { AuthScreen } from "./components/auth/AuthScreen";
+import {
+  NAV_TO_MATERIAL_MISMATCH_EVENT,
+  RETURN_FROM_MATERIAL_MISMATCH_EVENT,
+} from "./lib/contractRelationshipEngine";
 
 const PageLoadingFallback = ({ moduleName }: { moduleName?: string }) => (
   <div className="flex-1 flex flex-col items-center justify-center h-full w-full min-h-[350px] p-8 text-slate-500">
@@ -609,7 +613,11 @@ export default function App() {
     return true;
   };
 
-  // Global Ctrl+K command listener and app-navigate listener
+  // Always keep latest globalNavigate accessible to window event listeners
+  const globalNavigateRef = React.useRef(globalNavigate);
+  globalNavigateRef.current = globalNavigate;
+
+  // Global Ctrl+K command listener, app-navigate listener, and Material Mismatch deep-link listeners
   React.useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key === "k") {
@@ -621,14 +629,25 @@ export default function App() {
     };
     const handleAppNavigate = (e: any) => {
       if (e.detail?.page) {
-        globalNavigate(e.detail.page as Page, e.detail.subId);
+        globalNavigateRef.current(e.detail.page as Page, e.detail.subId);
       }
+    };
+    const handleNavToMismatch = () => {
+      globalNavigateRef.current("material_mismatch");
+    };
+    const handleReturnFromMismatch = (e: any) => {
+      const targetPage = (e?.detail?.returnPage || "payment") as Page;
+      globalNavigateRef.current(targetPage);
     };
     window.addEventListener("keydown", handleKeyDown);
     window.addEventListener("app-navigate", handleAppNavigate);
+    window.addEventListener(NAV_TO_MATERIAL_MISMATCH_EVENT, handleNavToMismatch);
+    window.addEventListener(RETURN_FROM_MATERIAL_MISMATCH_EVENT, handleReturnFromMismatch);
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
       window.removeEventListener("app-navigate", handleAppNavigate);
+      window.removeEventListener(NAV_TO_MATERIAL_MISMATCH_EVENT, handleNavToMismatch);
+      window.removeEventListener(RETURN_FROM_MATERIAL_MISMATCH_EVENT, handleReturnFromMismatch);
     };
   }, []);
 

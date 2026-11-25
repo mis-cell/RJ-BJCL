@@ -2,8 +2,14 @@ import React from "react";
 import { 
   AlertTriangle,
   CheckCircle2,
-  ArrowLeft
+  ArrowLeft,
+  ExternalLink,
+  ShieldAlert
 } from "lucide-react";
+import {
+  MATERIAL_MISMATCH_BLOCK_MESSAGE,
+  navigateToMaterialMismatchRecord
+} from "../lib/contractRelationshipEngine";
 import LegacyLayout from "../components/LegacyLayout";
 import { canEditOrDelete, isL5OrAdmin, enforceEditOrDeletePermission } from "../lib/permissions";
 import { getCachedSattaDiffs } from "../services/sattaCalculation";
@@ -78,6 +84,10 @@ export default function MrSettlement({
     lastSyncTime,
     showSuccessAnim,
     paymentValidationInfo,
+    poUnresolvedMismatches,
+    activeMrMismatch,
+    activeDataConflict,
+    poClosureEligibility,
     showAuditOverwriteModal,
     setShowAuditOverwriteModal,
     auditOverwriteInfo,
@@ -220,6 +230,107 @@ export default function MrSettlement({
               detailCols={detailCols}
               calculateWeightedRatePerMT={calculateWeightedRatePerMT}
             />
+
+            {/* Layer 1: Historical / Cross-Module Data Integrity Conflict Banner */}
+            {activeDataConflict && (
+              <div className="bg-red-50 border-2 border-red-400 p-3 text-red-900 rounded-md shadow-xs flex items-start gap-2.5">
+                <ShieldAlert className="h-4 w-4 shrink-0 text-red-600 mt-0.5" />
+                <div className="space-y-0.5">
+                  <div className="text-xs font-black uppercase tracking-wide flex items-center gap-2">
+                    <span>Data Integrity Conflict — Audit Required</span>
+                    <span className="bg-red-200 text-red-900 text-[10px] px-1.5 py-0.5 rounded font-mono">
+                      Original PO Retained
+                    </span>
+                  </div>
+                  <p className="text-xs font-semibold text-red-800">{activeDataConflict}</p>
+                </div>
+              </div>
+            )}
+
+            {/* Layer 2: Active MR Unresolved Material Mismatch Blocking Banner + Direct Resolution Link */}
+            {activeMrMismatch?.isUnresolved && (
+              <div className="bg-rose-50 border-2 border-rose-400 p-3 text-rose-950 rounded-md shadow-xs flex flex-col sm:flex-row sm:items-start justify-between gap-3">
+                <div className="flex items-start gap-2.5 flex-1">
+                  <AlertTriangle className="h-4 w-4 shrink-0 text-rose-600 mt-0.5" />
+                  <div className="space-y-1">
+                    <div className="text-xs font-black uppercase tracking-wide flex items-center gap-2 flex-wrap">
+                      <span>Material Mismatch — Settlement Blocked</span>
+                      <span className="bg-rose-200 text-rose-900 text-[10px] px-1.5 py-0.5 rounded font-mono">
+                        P.O: {activeMrMismatch.poNo} | M.R: {activeMrMismatch.mrNo}
+                      </span>
+                    </div>
+                    <p className="text-xs font-semibold text-rose-900">{MATERIAL_MISMATCH_BLOCK_MESSAGE}</p>
+                    {activeMrMismatch.mismatchReasons.length > 0 && (
+                      <p className="text-[11px] text-rose-800">
+                        <strong>Mismatched Field(s):</strong> {activeMrMismatch.mismatchReasons.join(" • ")}
+                      </p>
+                    )}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() =>
+                    navigateToMaterialMismatchRecord({
+                      poNo: activeMrMismatch.poNo,
+                      mrNo: activeMrMismatch.mrNo,
+                      returnPage: "mr_settlement",
+                      mismatchId: activeMrMismatch.mismatchId,
+                    })
+                  }
+                  className="shrink-0 px-3 py-2 bg-rose-700 hover:bg-rose-800 text-white text-[11px] font-black uppercase tracking-wide rounded-lg shadow-xs flex items-center gap-1.5 transition-colors cursor-pointer"
+                >
+                  <ExternalLink className="h-3.5 w-3.5" />
+                  <span>Resolve Material Mismatch</span>
+                </button>
+              </div>
+            )}
+
+            {/* Layer 4: PO-Level Unresolved Material Mismatches Summary (Other MRs on Same PO — Blocks Final PO Closure) */}
+            {poUnresolvedMismatches.length > 0 && (!activeMrMismatch?.isUnresolved || poUnresolvedMismatches.length > 1) && (
+              <div className="bg-amber-50 border border-amber-400 p-2.5 text-amber-950 rounded-md shadow-2xs space-y-1.5">
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <div className="flex items-center gap-2 text-xs font-black text-amber-900">
+                    <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0" />
+                    <span>
+                      P.O {selectedPoNo || masterData.po_no} has {poUnresolvedMismatches.length} MR(s) with Unresolved Material Mismatch — Final Contract Closure Blocked Until Resolved
+                    </span>
+                  </div>
+                  {poClosureEligibility && !poClosureEligibility.canClosePo && (
+                    <span className="text-[10px] font-bold bg-amber-200 text-amber-900 px-2 py-0.5 rounded font-mono">
+                      Partial Settlement Only
+                    </span>
+                  )}
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {poUnresolvedMismatches.map((mm) => (
+                    <div
+                      key={mm.mrNo}
+                      className="flex items-center gap-2 bg-white border border-amber-300 rounded px-2 py-1 text-[11px]"
+                    >
+                      <span className="font-mono font-bold text-rose-800">{mm.mrNo}</span>
+                      <span className="text-slate-600 truncate max-w-[240px]">
+                        {mm.mismatchReasons[0] || "Material Mismatch"}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          navigateToMaterialMismatchRecord({
+                            poNo: mm.poNo,
+                            mrNo: mm.mrNo,
+                            returnPage: "mr_settlement",
+                            mismatchId: mm.mismatchId,
+                          })
+                        }
+                        className="px-2 py-0.5 bg-rose-700 hover:bg-rose-800 text-white rounded text-[10px] font-bold flex items-center gap-1 cursor-pointer"
+                      >
+                        <ExternalLink className="h-3 w-3" />
+                        <span>Resolve</span>
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* Error & Success indicators */}
             {errorMessage && (

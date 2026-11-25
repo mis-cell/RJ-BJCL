@@ -5,7 +5,9 @@ import {
   AlertTriangle, 
   Clock, 
   Save, 
-  X 
+  X,
+  ExternalLink,
+  ShieldAlert
 } from 'lucide-react';
 import { cn, formatIndianCurrency, calculate93PctPaidAmount } from '../../lib/utils';
 import { 
@@ -14,6 +16,13 @@ import {
 } from '../../types/payment.types';
 import { calculateNetPaidAmountAfterDeductions } from '../../utils/paymentCalculations';
 import { extractRecordMrNo, areMrNumbersEqual } from '../../lib/mrNumberUtils';
+import {
+  MATERIAL_MISMATCH_BLOCK_MESSAGE,
+  MrContractualRelationship,
+  MrMaterialMismatchEvaluation,
+  MrPaymentEligibilityResult,
+  navigateToMaterialMismatchRecord
+} from '../../lib/contractRelationshipEngine';
 import { SearchablePoSelect } from './SearchablePoSelect';
 import { SearchableMrSelect } from './SearchableMrSelect';
 import { PaymentDetailGrid } from './PaymentDetailGrid';
@@ -49,6 +58,9 @@ export interface PaymentEntryFormProps {
   loading: boolean;
   errorMessage: string;
   setErrorMessage: (msg: string) => void;
+  mrMismatchMap?: Map<string, MrMaterialMismatchEvaluation>;
+  activeMrRelationship?: MrContractualRelationship | null;
+  activeMrEligibility?: MrPaymentEligibilityResult | null;
 }
 
 export function PaymentEntryForm({
@@ -81,7 +93,10 @@ export function PaymentEntryForm({
   onCancel,
   loading,
   errorMessage,
-  setErrorMessage
+  setErrorMessage,
+  mrMismatchMap,
+  activeMrRelationship,
+  activeMrEligibility
 }: PaymentEntryFormProps) {
   const handleTenorChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const tenor = Number(e.target.value);
@@ -184,9 +199,69 @@ export function PaymentEntryForm({
                 verifiedArrivals={availableArrivals}
                 allArrivals={verifiedArrivals}
                 selectedPoNo={selectedPoNo}
+                mrMismatchMap={mrMismatchMap}
               />
             </div>
           </div>
+
+          {/* Layer 1 Data Integrity Conflict Banner */}
+          {activeMrRelationship?.hasDataIntegrityConflict && (
+            <div className="p-3 rounded-lg border border-red-300 bg-red-50 text-red-900 text-xs flex items-start gap-2.5 shadow-xs">
+              <ShieldAlert className="w-4 h-4 text-red-600 mt-0.5 shrink-0" />
+              <div className="flex-1 space-y-1">
+                <div className="font-black uppercase tracking-wide flex items-center gap-2">
+                  <span>Data Integrity Conflict — Payment Blocked</span>
+                  <span className="bg-red-200 text-red-900 text-[10px] px-1.5 py-0.5 rounded font-mono font-bold">
+                    Original PO Retained
+                  </span>
+                </div>
+                <p className="text-[11px] font-semibold text-red-800">
+                  {activeMrRelationship.conflictReason}
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* Layer 2 MR-Level Material Mismatch Blocking Banner + Direct Resolution Link */}
+          {activeMrEligibility?.isMismatchBlocked && (
+            <div className="p-3 rounded-lg border-2 border-rose-300 bg-rose-50 text-rose-950 text-xs flex flex-col sm:flex-row sm:items-start justify-between gap-3 shadow-xs">
+              <div className="flex items-start gap-2.5 flex-1">
+                <AlertTriangle className="w-4 h-4 text-rose-600 mt-0.5 shrink-0" />
+                <div className="space-y-1">
+                  <div className="font-black text-rose-900 flex items-center gap-2 flex-wrap">
+                    <span>Material Mismatch — Payment Blocked</span>
+                    <span className="bg-rose-200 text-rose-900 text-[10px] px-1.5 py-0.5 rounded font-mono font-bold">
+                      P.O: {activeMrEligibility.poNo} | M.R: {activeMrEligibility.mrNo}
+                    </span>
+                  </div>
+                  <p className="text-[11px] font-semibold text-rose-900">
+                    {MATERIAL_MISMATCH_BLOCK_MESSAGE}
+                  </p>
+                  {activeMrEligibility.mismatchEvaluation.mismatchReasons.length > 0 && (
+                    <div className="text-[11px] text-rose-800 pt-0.5">
+                      <strong>Mismatched Field(s):</strong>{' '}
+                      {activeMrEligibility.mismatchEvaluation.mismatchReasons.join(' • ')}
+                    </div>
+                  )}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() =>
+                  navigateToMaterialMismatchRecord({
+                    poNo: activeMrEligibility.poNo,
+                    mrNo: activeMrEligibility.mrNo,
+                    returnPage: 'payment',
+                    mismatchId: activeMrEligibility.mismatchEvaluation.mismatchId,
+                  })
+                }
+                className="shrink-0 px-3 py-2 bg-rose-700 hover:bg-rose-800 text-white text-[11px] font-black uppercase tracking-wide rounded-lg shadow-xs flex items-center gap-1.5 transition-colors cursor-pointer"
+              >
+                <ExternalLink className="w-3.5 h-3.5" />
+                <span>Resolve Material Mismatch</span>
+              </button>
+            </div>
+          )}
 
           {/* Notice if Inspection P.O is in Check Point and not in P.O list */}
           {isPoNotInFinal && (
@@ -194,19 +269,19 @@ export function PaymentEntryForm({
               <AlertTriangle className="w-4 h-4 text-amber-600 mt-0.5 shrink-0" />
               <div className="flex-1">
                 <div className="font-bold flex items-center gap-2">
-                  <span>Inspection P.O ({inspectionPoNo}) is NOT in P.O list yet</span>
+                  <span>Inspection P.O ({inspectionPoNo}) is NOT in Final P.O list yet</span>
                   <span className="bg-amber-200 text-amber-900 text-[10px] px-1.5 py-0.5 rounded font-mono font-bold">
-                    Status: In Sauda Check Point
+                    Original PO Retained
                   </span>
                 </div>
                 <div className="text-[11px] text-amber-800 mt-0.5">
                   {matchedScpPo ? (
                     <span>
-                      This P.O is currently located in <strong>Sauda Check Point / Temporary P.O</strong> (Sauda: {matchedScpPo.sauda_no || matchedScpPo.po_no}). Once mismatches are cleared and approved in Sauda Check Point, click <strong>"Pass ✓"</strong> to promote it to P.O.
+                      This P.O is currently located in <strong>Sauda Check Point / Temporary P.O</strong> (Sauda: {matchedScpPo.sauda_no || matchedScpPo.po_no}). Original PO linkage is preserved; promote it in Sauda Check Point once approved.
                     </span>
                   ) : (
                     <span>
-                      This P.O has not yet been passed/promoted to <strong>P.O</strong> (purchase_master). You can still proceed with Inspection details, or select an existing P.O using "Show All".
+                      This P.O has not yet been passed/promoted to <strong>Final P.O</strong> (purchase_master). Original PO ({inspectionPoNo}) is retained without substitution.
                     </span>
                   )}
                 </div>
@@ -214,7 +289,7 @@ export function PaymentEntryForm({
             </div>
           )}
 
-          {/* Active PO / MR Summary Linkage Banner */}
+          {/* Active PO / MR Summary Linkage Banner + Clear Eligibility Status Badges */}
           {(selectedPoData || selectedMrNo || masterData.po_no || masterData.mr_no) ? (
             <div className="bg-white/90 p-2.5 rounded-lg border border-purple-200 text-xs flex flex-wrap items-center justify-between gap-3 text-slate-700 shadow-xs">
               <div className="flex items-center gap-2 flex-wrap">
@@ -229,6 +304,19 @@ export function PaymentEntryForm({
                     M.R: {masterData.mr_no}
                   </span>
                 )}
+                {activeMrEligibility?.badges.map((badge, idx) => (
+                  <span
+                    key={idx}
+                    className={cn(
+                      "px-2 py-0.5 rounded text-[10px] font-bold border",
+                      badge === 'Payment Eligible' || badge === 'Verified MR' || badge === 'Original PO Linked'
+                        ? "bg-emerald-50 text-emerald-800 border-emerald-200"
+                        : "bg-rose-100 text-rose-900 border-rose-300"
+                    )}
+                  >
+                    {badge}
+                  </span>
+                ))}
               </div>
 
               <div className="flex items-center gap-3 text-[11px] flex-wrap">
@@ -693,11 +781,17 @@ export function PaymentEntryForm({
           </button>
           <button
             onClick={handleSavePayment}
-            disabled={loading}
-            className="px-5 py-2 text-xs font-black text-white bg-purple-700 hover:bg-purple-800 rounded-lg shadow flex items-center gap-2 transition-all disabled:opacity-50 cursor-pointer"
+            disabled={loading || Boolean(activeMrEligibility?.isMismatchBlocked) || Boolean(activeMrRelationship?.hasDataIntegrityConflict)}
+            className="px-5 py-2 text-xs font-black text-white bg-purple-700 hover:bg-purple-800 rounded-lg shadow flex items-center gap-2 transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
           >
             <Save className="w-4 h-4" />
-            {loading ? 'Saving...' : 'Save Payment Record'}
+            {loading
+              ? 'Saving...'
+              : activeMrEligibility?.isMismatchBlocked
+                ? 'Payment Blocked (Mismatch)'
+                : activeMrRelationship?.hasDataIntegrityConflict
+                  ? 'Payment Blocked (Conflict)'
+                  : 'Save Payment Record'}
           </button>
         </div>
       </div>

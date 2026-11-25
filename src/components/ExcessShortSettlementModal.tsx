@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { dbModule } from '../services/dbModule';
+import { arePoNumbersExactMatch, buildExactPoQueryVariants } from '../lib/contractRelationshipEngine';
 import { calculateWeightTolerance, WeightToleranceResult } from '../lib/weightTolerance';
 import { 
   TolerancePolicyItem,
@@ -214,41 +215,41 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
 
         if (!supabase) return;
 
-        // Fetch authoritative PO / Sauda contract quantity & existing deduction record directly from PostgreSQL
-        const poOrConds = [
-          poNo ? `po_no.ilike.%${poNo}%` : '',
-          saudaNo ? `po_no.ilike.%${saudaNo}%` : ''
-        ].filter(Boolean).join(',');
+        // Fetch authoritative PO / Sauda contract quantity & existing deduction record directly from PostgreSQL (exact PO match only)
+        const exactPoVariants = Array.from(new Set([
+          ...(poNo ? buildExactPoQueryVariants(poNo) : []),
+          ...(saudaNo ? buildExactPoQueryVariants(saudaNo) : []),
+        ]));
 
-        const scpQuery = poOrConds
+        const scpQuery = exactPoVariants.length > 0
           ? supabase
               .from('sauda_check_point')
               .select('po_no, sauda_no, total_contract_mt, contract_weight_mt, po_date, s_date, contract_date, date')
-              .or(poOrConds)
+              .in('po_no', exactPoVariants)
               .limit(10)
           : Promise.resolve({ data: [] as any[] });
 
-        const pmQuery = poOrConds
+        const pmQuery = exactPoVariants.length > 0
           ? supabase
               .from('purchase_master')
               .select('po_no, sauda_no, total_contract_mt, contract_weight_mt, po_date, s_date, contract_date, date')
-              .or(poOrConds)
+              .in('po_no', exactPoVariants)
               .limit(10)
           : Promise.resolve({ data: [] as any[] });
 
-        const saudaQuery = saudaNo || poNo
+        const saudaQuery = exactPoVariants.length > 0
           ? supabase
               .from('sauda_master')
               .select('sauda_no, sauda_date, date, total_amount, total_wt_in_ton')
-              .or([saudaNo ? `sauda_no.ilike.%${saudaNo}%` : '', poNo ? `sauda_no.ilike.%${poNo}%` : ''].filter(Boolean).join(','))
+              .in('sauda_no', exactPoVariants)
               .limit(5)
           : Promise.resolve({ data: [] as any[] });
 
-        const deductionQuery = poNo || saudaNo
+        const deductionQuery = exactPoVariants.length > 0
           ? supabase
               .from('sauda_check_point_deductions')
               .select('*')
-              .or([poNo ? `po_no.ilike.%${poNo}%` : '', saudaNo ? `sauda_no.ilike.%${saudaNo}%` : ''].filter(Boolean).join(','))
+              .in('po_no', exactPoVariants)
               .limit(10)
           : Promise.resolve({ data: [] as any[] });
 
@@ -261,19 +262,20 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
 
         if (cancelled) return;
 
+        // Exact PO match only — NEVER fall back to rows[0]
         const findBestPoMatch = (rows: any[]) =>
           (rows || []).find((item: any) => {
-            const cPo = clean(item.po_no);
-            const cSauda = clean(item.sauda_no);
             return (
-              (cPo && (cPo === targetPo || (targetSauda && cPo === targetSauda))) ||
-              (cSauda && (cSauda === targetPo || (targetSauda && cSauda === targetSauda)))
+              (poNo && (arePoNumbersExactMatch(item.po_no, poNo) || arePoNumbersExactMatch(item.sauda_no, poNo))) ||
+              (saudaNo && (arePoNumbersExactMatch(item.po_no, saudaNo) || arePoNumbersExactMatch(item.sauda_no, saudaNo)))
             );
-          }) || (rows || [])[0];
+          }) || null;
 
         const liveScp = findBestPoMatch(scpRes as any[]);
         const livePm = findBestPoMatch(pmRes as any[]);
-        const sMaster = Array.isArray(sMasterRes) ? sMasterRes[0] : sMasterRes;
+        const sMaster = Array.isArray(sMasterRes)
+          ? sMasterRes.find((s: any) => (saudaNo && arePoNumbersExactMatch(s.sauda_no, saudaNo)) || (poNo && arePoNumbersExactMatch(s.sauda_no, poNo))) || null
+          : sMasterRes;
 
         const resolvedPoContractMt =
           Number(liveScp?.total_contract_mt || 0) > 0
@@ -381,17 +383,17 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
             needBaseRates
               ? supabase.from('satta_base_rates').select('*').order('start_date', { ascending: false }).order('created_at', { ascending: false }).then(r => r.data || [], () => [])
               : Promise.resolve(EMPTY_ARRAY),
-            needInspections
-              ? supabase.from('material_inspection').select('*').or([poNo ? `po_no.ilike.%${poNo}%` : '', saudaNo ? `sauda_no.ilike.%${saudaNo}%` : ''].filter(Boolean).join(',')).then(r => r.data || [], () => [])
+            needInspections && exactPoVariants.length > 0
+              ? supabase.from('material_inspection').select('*').in('po_no', exactPoVariants).then(r => r.data || [], () => [])
               : Promise.resolve(EMPTY_ARRAY),
-            needInspections
-              ? supabase.from('mill_inspection_master').select('*').or([poNo ? `po_no.ilike.%${poNo}%` : '', saudaNo ? `sauda_no.ilike.%${saudaNo}%` : ''].filter(Boolean).join(',')).then(r => r.data || [], () => [])
+            needInspections && exactPoVariants.length > 0
+              ? supabase.from('mill_inspection_master').select('*').in('po_no', exactPoVariants).then(r => r.data || [], () => [])
               : Promise.resolve(EMPTY_ARRAY),
-            needTempArrivals
-              ? supabase.from('temporary_material_received').select('*').or([poNo ? `po_no.ilike.%${poNo}%` : '', saudaNo ? `sauda_no.ilike.%${saudaNo}%` : ''].filter(Boolean).join(',')).then(r => r.data || [], () => [])
+            needTempArrivals && exactPoVariants.length > 0
+              ? supabase.from('temporary_material_received').select('*').in('po_no', exactPoVariants).then(r => r.data || [], () => [])
               : Promise.resolve(EMPTY_ARRAY),
-            needFinalArrivals
-              ? supabase.from('final_arrival').select('*').or([poNo ? `po_no.ilike.%${poNo}%` : '', saudaNo ? `sauda_no.ilike.%${saudaNo}%` : ''].filter(Boolean).join(',')).then(r => r.data || [], () => [])
+            needFinalArrivals && exactPoVariants.length > 0
+              ? supabase.from('final_arrival').select('*').in('po_no', exactPoVariants).then(r => r.data || [], () => [])
               : Promise.resolve(EMPTY_ARRAY),
           ]);
 

@@ -1,6 +1,7 @@
 import { supabase } from '../lib/supabase';
 import { invalidateTableCache } from './dbModule';
 import { normalizeToYMD, formatDisplayDate } from '../components/excess-short/excessShortUtils';
+import { arePoNumbersExactMatch, buildExactPoQueryVariants } from '../lib/contractRelationshipEngine';
 
 export interface NormalizedBaseRate {
   ymd: string;
@@ -751,32 +752,39 @@ export async function syncExcessShortDeductionForSinglePo(poNo: string): Promise
 
   const task = (async () => {
     try {
+      const poVariants = buildExactPoQueryVariants(cleanTarget);
+      if (poVariants.length === 0) return null;
+
       const [scpRes, pmRes, saudaRes, matInspRes, millInspRes, sBasesRes, dedRes] = await Promise.all([
-        supabase.from('sauda_check_point').select('*').ilike('po_no', `%${cleanTarget}%`).limit(10).then((r) => r.data || [], () => []),
-        supabase.from('purchase_master').select('*').ilike('po_no', `%${cleanTarget}%`).limit(10).then((r) => r.data || [], () => []),
-        supabase.from('sauda_master').select('*').ilike('sauda_no', `%${cleanTarget}%`).limit(5).then((r) => r.data || [], () => []),
-        supabase.from('material_inspection').select('*').ilike('po_no', `%${cleanTarget}%`).then((r) => r.data || [], () => []),
-        supabase.from('mill_inspection_master').select('*').ilike('po_no', `%${cleanTarget}%`).then((r) => r.data || [], () => []),
+        supabase.from('sauda_check_point').select('*').in('po_no', poVariants).limit(10).then((r) => r.data || [], () => []),
+        supabase.from('purchase_master').select('*').in('po_no', poVariants).limit(10).then((r) => r.data || [], () => []),
+        supabase.from('sauda_master').select('*').in('sauda_no', poVariants).limit(5).then((r) => r.data || [], () => []),
+        supabase.from('material_inspection').select('*').in('po_no', poVariants).then((r) => r.data || [], () => []),
+        supabase.from('mill_inspection_master').select('*').in('po_no', poVariants).then((r) => r.data || [], () => []),
         supabase.from('satta_base_rates').select('*').order('start_date', { ascending: false }).order('created_at', { ascending: false }).then((r) => r.data || [], () => []),
-        supabase.from('sauda_check_point_deductions').select('*').ilike('po_no', `%${cleanTarget}%`).limit(10).then((r) => r.data || [], () => []),
+        supabase.from('sauda_check_point_deductions').select('*').in('po_no', poVariants).limit(10).then((r) => r.data || [], () => []),
       ]);
 
+      // Exact PO match only — NEVER fall back to rows[0] (which could belong to a sibling prefix PO like 07013)
       const pickExact = (rows: any[]) =>
-        rows.find((r) => cleanAlnumUpper(r?.po_no || r?.contract_po_no) === targetNorm) || rows[0];
+        rows.find((r) => arePoNumbersExactMatch(r?.po_no || r?.contract_po_no, cleanTarget)) || null;
 
       const scpRow = pickExact(scpRes as any[]);
       const pmRow = pickExact(pmRes as any[]);
-      let sRow = (saudaRes as any[])[0];
+      let sRow = (saudaRes as any[]).find((r) => arePoNumbersExactMatch(r?.sauda_no, cleanTarget)) || null;
 
       const linkedSaudaNo = String(scpRow?.sauda_no || pmRow?.sauda_no || '').trim();
-      if (!sRow && linkedSaudaNo && cleanAlnumUpper(linkedSaudaNo) !== targetNorm) {
-        const extraSauda = await supabase
-          .from('sauda_master')
-          .select('*')
-          .ilike('sauda_no', `%${linkedSaudaNo}%`)
-          .limit(5)
-          .then((r) => r.data || [], () => []);
-        sRow = (extraSauda as any[])[0];
+      if (!sRow && linkedSaudaNo && !arePoNumbersExactMatch(linkedSaudaNo, cleanTarget)) {
+        const saudaVariants = buildExactPoQueryVariants(linkedSaudaNo);
+        if (saudaVariants.length > 0) {
+          const extraSauda = await supabase
+            .from('sauda_master')
+            .select('*')
+            .in('sauda_no', saudaVariants)
+            .limit(5)
+            .then((r) => r.data || [], () => []);
+          sRow = (extraSauda as any[]).find((r) => arePoNumbersExactMatch(r?.sauda_no, linkedSaudaNo)) || null;
+        }
       }
 
       const mergedPo = scpRow || pmRow || sRow
@@ -806,7 +814,9 @@ export async function syncExcessShortDeductionForSinglePo(poNo: string): Promise
 
       if (!mergedPo || Number(mergedPo.total_contract_mt || 0) <= 0) return null;
 
-      const combinedInsps = [...(matInspRes as any[]), ...(millInspRes as any[])];
+      const combinedInsps = [...(matInspRes as any[]), ...(millInspRes as any[])].filter((i: any) =>
+        arePoNumbersExactMatch(i?.po_no || i?.mill_po_no, cleanTarget)
+      );
       if (combinedInsps.length === 0) return null;
 
       const mrArray = Array.from(

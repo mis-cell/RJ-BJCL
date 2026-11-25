@@ -2,6 +2,11 @@ import { supabase } from '../../lib/supabase';
 import { dbModule } from '../dbModule';
 import { resolveGradeName, resolveAgencyName } from './settlementResolvers';
 import { syncExcessShortDeductionForSinglePo } from '../excessShortAutoSyncService';
+import {
+  arePoNumbersExactMatch,
+  buildExactPoQueryVariants,
+  normalizePoCanonical,
+} from '../../lib/contractRelationshipEngine';
 
 const parseGridOrItems = (raw: any): any[] => {
   if (!raw) return [];
@@ -107,45 +112,26 @@ export const fetchPoAndItemDetails = async (
       const shortNum = !isNaN(numVal) && numVal > 0 ? String(numVal) : '';
       const paddedNum = shortNum ? shortNum.padStart(4, '0') : '';
 
-      const pmOrParts = [
-        `po_no.eq."${cleanPo}"`,
-        `po_no.eq."${withHash}"`,
-        `po_no.eq."${poNo}"`,
-        `po_no.eq."${noPtfPo}"`,
-        `po_no.eq."${ptfPo}"`,
-        `contract_po_no.eq."${cleanPo}"`,
-        `contract_po_no.eq."${noPtfPo}"`
-      ];
-      const scpOrParts = [
-        `po_no.eq."${cleanPo}"`,
-        `po_no.eq."${withHash}"`,
-        `po_no.eq."${poNo}"`,
-        `po_no.eq."${noPtfPo}"`,
-        `po_no.eq."${ptfPo}"`,
-        `ptf_no.eq."${cleanPo}"`,
-        `ptf_no.eq."${noPtfPo}"`,
-        `sauda_no.eq."${cleanPo}"`,
-        `sauda_no.eq."${noPtfPo}"`,
-        `contract_po_no.eq."${cleanPo}"`,
-        `contract_po_no.eq."${noPtfPo}"`
-      ];
-
-      if (shortNum && paddedNum) {
-        pmOrParts.push(
-          `contract_po_no.eq."${paddedNum}"`,
-          `contract_po_no.eq."${shortNum}"`,
-          `po_no.ilike."%/${paddedNum}"`,
-          `po_no.ilike."%/${shortNum}"`,
-          `po_no.ilike."%/${paddedNum}(PTF)"`
-        );
+      const exactVariants = buildExactPoQueryVariants(cleanPo);
+      const pmOrParts: string[] = [];
+      const scpOrParts: string[] = [];
+      for (const v of exactVariants) {
+        const esc = v.replace(/"/g, '\\"');
+        pmOrParts.push(`po_no.eq."${esc}"`, `contract_po_no.eq."${esc}"`);
         scpOrParts.push(
-          `contract_po_no.eq."${paddedNum}"`,
-          `contract_po_no.eq."${shortNum}"`,
-          `po_no.ilike."%/${paddedNum}"`,
-          `po_no.ilike."%/${shortNum}"`,
-          `po_no.ilike."%/${paddedNum}(PTF)"`,
-          `ptf_no.ilike."%/${paddedNum}%"`
+          `po_no.eq."${esc}"`,
+          `ptf_no.eq."${esc}"`,
+          `sauda_no.eq."${esc}"`,
+          `contract_po_no.eq."${esc}"`
         );
+      }
+
+      // Only allow bare numeric contract lookup if caller explicitly passed a short bare number (no slash / financial year).
+      // NEVER use trailing wildcard % (e.g. %/0701%) or strip financial year from a full PO number!
+      const isBareNumericInput = /^\d+$/.test(cleanPo);
+      if (isBareNumericInput && shortNum && paddedNum) {
+        pmOrParts.push(`contract_po_no.eq."${paddedNum}"`, `contract_po_no.eq."${shortNum}"`);
+        scpOrParts.push(`contract_po_no.eq."${paddedNum}"`, `contract_po_no.eq."${shortNum}"`);
       }
 
       const [pmRes, scpRes, smRes, rlRes] = await Promise.all([
@@ -370,23 +356,10 @@ export const fetchPoAndItemDetails = async (
       }
     }
 
-    const extractTailDigits = (val: any): string => {
-      const s = String(val || '').trim().replace(/^#+/, '').replace(/\(PTF\)/gi, '').trim();
-      const seg = s.split(/[\/\-]/).pop()?.replace(/[^0-9]/g, '') || '';
-      const n = seg ? parseInt(seg, 10) : NaN;
-      return !isNaN(n) && n > 0 ? String(n).padStart(4, '0') : '';
-    };
-    const targetTailDigits = extractTailDigits(cleanPo);
-
+    // STRICT exact canonical PO matching ONLY — never match by numeric tail digits alone
     const matchesPoCandidate = (recPo: any, recContractPo?: any): boolean => {
-      const uClean = cleanPo.toUpperCase();
-      const p1 = String(recPo || '').trim().toUpperCase().replace(/^#/, '');
-      const p2 = String(recContractPo || '').trim().toUpperCase().replace(/^#/, '');
-      if (p1 === uClean || (p2 && p2 === uClean)) return true;
-      if (targetTailDigits) {
-        if (extractTailDigits(p1) === targetTailDigits) return true;
-        if (p2 && extractTailDigits(p2) === targetTailDigits) return true;
-      }
+      if (arePoNumbersExactMatch(recPo, cleanPo)) return true;
+      if (recContractPo && arePoNumbersExactMatch(recContractPo, cleanPo)) return true;
       return false;
     };
 
@@ -516,19 +489,31 @@ export const fetchSaudaCheckpointDeduction = async (cleanPoNo: string) => {
         return synced;
       }
 
-      // 2. Fallback: read existing sauda_check_point_deductions row directly if no Mill Inspection rows exist yet
-      const { data: directList } = await supabase
-        .from('sauda_check_point_deductions')
-        .select('*')
-        .ilike('po_no', `%${rawPoNo}%`)
-        .limit(10);
+      // 2. Fallback: read existing sauda_check_point_deductions row strictly via exact PO variants (NO %substring% wildcard!)
+      const exactVariants = buildExactPoQueryVariants(rawPoNo);
+      const orClause = exactVariants
+        .map(v => `po_no.eq."${v.replace(/"/g, '\\"')}"`)
+        .join(',');
+      const { data: directList } = orClause
+        ? await supabase
+            .from('sauda_check_point_deductions')
+            .select('*')
+            .or(orClause)
+            .limit(10)
+        : { data: [] };
 
-      const found = findMatchingDeduction(directList || []);
+      const found = (directList || []).find((item: any) =>
+        arePoNumbersExactMatch(item.po_no, rawPoNo) ||
+        arePoNumbersExactMatch(item.sauda_no || item.po_contract, rawPoNo)
+      ) || null;
       if (found) return found;
     } else {
       const localRecords = await dbModule.fetchAll('sauda_check_point_deductions').catch(() => []);
       if (Array.isArray(localRecords) && localRecords.length > 0) {
-        return findMatchingDeduction(localRecords);
+        return (localRecords || []).find((item: any) =>
+          arePoNumbersExactMatch(item.po_no, rawPoNo) ||
+          arePoNumbersExactMatch(item.sauda_no || item.po_contract, rawPoNo)
+        ) || findMatchingDeduction(localRecords);
       }
     }
   } catch (err) {
