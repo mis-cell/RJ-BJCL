@@ -514,17 +514,15 @@ export const InspectionDetailRowItem: React.FC<InspectionDetailRowItemProps> = m
         />
       </td>
 
-      {/* Tot. Wt. Grd% (moved from Ropes to Grade Down %) */}
-      <td className="p-1.5 border-r border-slate-200">
+      {/* Tolerable */}
+      <td className="p-1.5 border-r border-slate-200 text-center">
         <input
-          type="number"
-          step="0.01"
-          readOnly={isRopesTotWtGrdBlocked}
-          tabIndex={isRopesTotWtGrdBlocked ? -1 : 0}
-          title={isRopesTotWtGrdBlocked ? "Auto-populated (Manual edit blocked)" : undefined}
-          value={row.ropes_tot_wt_grd || 0}
-          onChange={(e) => !isRopesTotWtGrdBlocked && onDetailChange(index, "ropes_tot_wt_grd", Number(e.target.value))}
-          className={getFieldInputStyle(isRopesTotWtGrdBlocked)}
+          type="checkbox"
+          checked={row.tolerable === "Yes"}
+          onChange={(e) =>
+            onDetailChange(index, "tolerable", e.target.checked ? "Yes" : "No")
+          }
+          className="h-4 w-4 cursor-pointer accent-blue-600"
         />
       </td>
 
@@ -629,6 +627,18 @@ export const InspectionDetailRowItem: React.FC<InspectionDetailRowItemProps> = m
       </td>
       <td className="p-1.5 border-r border-slate-200">
         <input
+          type="number"
+          step="0.01"
+          readOnly={isRopesTotWtGrdBlocked}
+          tabIndex={isRopesTotWtGrdBlocked ? -1 : 0}
+          title={isRopesTotWtGrdBlocked ? "Auto-populated (Manual edit blocked)" : undefined}
+          value={row.ropes_tot_wt_grd || 0}
+          onChange={(e) => !isRopesTotWtGrdBlocked && onDetailChange(index, "ropes_tot_wt_grd", Number(e.target.value))}
+          className={getFieldInputStyle(isRopesTotWtGrdBlocked)}
+        />
+      </td>
+      <td className="p-1.5 border-r border-slate-200">
+        <input
           type="text"
           readOnly={isRopesGradeBlocked}
           tabIndex={isRopesGradeBlocked ? -1 : 0}
@@ -673,28 +683,6 @@ export const InspectionDetailRowItem: React.FC<InspectionDetailRowItemProps> = m
           value={row.chotta_grade || ""}
           onChange={(e) => !isChottaGradeBlocked && onDetailChange(index, "chotta_grade", e.target.value)}
           className={getFieldInputStyle(isChottaGradeBlocked)}
-        />
-      </td>
-
-      {/* Tolerable */}
-      {/* <td className="p-1.5 border-r border-slate-200">
-        <select
-          value={row.tolerable || "Yes"}
-          onChange={(e) => onDetailChange(index, "tolerable", e.target.value)}
-          className="w-full border border-slate-300 rounded px-1.5 py-1 text-xs bg-white font-medium focus:ring-1 focus:ring-blue-500"
-        >
-          <option value="Yes">Yes</option>
-          <option value="No">No</option>
-        </select>
-      </td> */}
-      <td className="p-1.5 border-r border-slate-200 text-center">
-        <input
-          type="checkbox"
-          checked={row.tolerable === "Yes"}
-          onChange={(e) =>
-            onDetailChange(index, "tolerable", e.target.checked ? "Yes" : "No")
-          }
-          className="h-4 w-4 cursor-pointer accent-blue-600"
         />
       </td>
 

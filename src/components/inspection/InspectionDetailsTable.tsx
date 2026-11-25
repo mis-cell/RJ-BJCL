@@ -146,7 +146,8 @@ export const InspectionDetailsTable: React.FC<InspectionDetailsTableProps> = ({
               </th>
               <th colSpan={2} className="p-2 border-r border-white/20 text-center bg-[#1d4ed8]">Dust %</th>
               <th colSpan={2} className="p-2 border-r border-white/20 text-center bg-[#1e40af]">NCV %</th>
-              <th colSpan={3} className="p-2 border-r border-white/20 text-center bg-[#1d4ed8]">Grade Down %</th>
+              <th colSpan={2} className="p-2 border-r border-white/20 text-center bg-[#1d4ed8]">Grade Down %</th>
+              <th rowSpan={2} className="p-2 border-r border-white/20 text-center min-w-[90px]">Tolerable</th>
               <th rowSpan={2} className="p-2 border-r border-white/20 text-center min-w-[140px]">Final Receipt Wt. (Claim)</th>
               <th colSpan={4} className="p-2 border-r border-emerald-400 text-center bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-700 text-white font-black shadow-inner">
                 <div className="flex items-center justify-center gap-1">
@@ -154,9 +155,8 @@ export const InspectionDetailsTable: React.FC<InspectionDetailsTableProps> = ({
                   <span className="tracking-wide">Mill Settlement %</span>
                 </div>
               </th>
-              <th colSpan={2} className="p-2 border-r border-white/20 text-center bg-[#1d4ed8]">Ropes</th>
+              <th colSpan={3} className="p-2 border-r border-white/20 text-center bg-[#1d4ed8]">Ropes</th>
               <th colSpan={3} className="p-2 border-r border-white/20 text-center bg-[#1e40af]">Chotta &amp; Habi Jabi</th>
-              <th rowSpan={2} className="p-2 border-r border-white/20 text-center min-w-[90px]">Tolerable</th>
               <th rowSpan={2} className="p-2 border-r border-white/20 text-center min-w-[130px] bg-gradient-to-b from-[#1d4ed8] to-[#1e3a8a] text-amber-300">
                 <div className="flex flex-col items-center justify-center gap-0.5">
                   <span className="font-black flex items-center gap-1">
@@ -193,12 +193,12 @@ export const InspectionDetailsTable: React.FC<InspectionDetailsTableProps> = ({
               <th className="p-1.5 border-r border-white/10 text-center min-w-[90px]">Claim</th>
               <th className="p-1.5 border-r border-white/10 text-center min-w-[90px]">Act.</th>
               <th className="p-1.5 border-r border-white/10 text-center min-w-[90px]">Claim</th>
-              <th className="p-1.5 border-r border-white/10 text-center min-w-[100px]">Tot. Wt. Grd%</th>
               <th className="p-1.5 border-r border-emerald-500 text-center min-w-[90px] bg-emerald-800 text-emerald-100 font-black" title="Auto-pulled from Moisture % Act.">Moisture</th>
               <th className="p-1.5 border-r border-emerald-500 text-center min-w-[90px] bg-emerald-800 text-emerald-100 font-black" title="Auto-pulled from Grade Down % Act.">Gr. Down</th>
               <th className="p-1.5 border-r border-emerald-500 text-center min-w-[90px] bg-emerald-800 text-emerald-100 font-black" title="Auto-pulled from Dust % Act.">Dust</th>
               <th className="p-1.5 border-r border-emerald-500 text-center min-w-[90px] bg-emerald-800 text-emerald-100 font-black" title="Auto-pulled from NCV % Act.">NCV</th>
               <th className="p-1.5 border-r border-white/10 text-center min-w-[90px]">Weight (Kg)</th>
+              <th className="p-1.5 border-r border-white/10 text-center min-w-[100px]">Tot. Wt. Grd%</th>
               <th className="p-1.5 border-r border-white/10 text-center min-w-[90px]">Grade</th>
               <th className="p-1.5 border-r border-white/10 text-center min-w-[90px]">Weight (Kg)</th>
               <th className="p-1.5 border-r border-white/10 text-center min-w-[100px]">Tot. Wt. Grd%</th>
