@@ -39,7 +39,7 @@ import {
   isManualLockedDeduction,
   saveDeductionRowRealtime
 } from '../services/excessShortAutoSyncService';
-import { extractInspectionMrNo } from '../lib/mrNumberUtils';
+import { extractFinalArrivalMrNo, extractInspectionMrNo } from '../lib/mrNumberUtils';
 
 interface ExcessShortSettlementModalProps {
   po: any;
@@ -399,11 +399,6 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
 
           if (cancelled) return;
           if (needBaseRates && sBases.length > 0) setLiveBaseRates(sBases);
-          if (needInspections) {
-            const combined = [...matInspRes, ...inspMasterRes];
-            activeInsps = combined;
-            if (combined.length > 0) setLiveInspections(combined);
-          }
           if (needTempArrivals && tArrivals.length > 0) {
             activeTemp = tArrivals;
             setLiveTempArrivals(tArrivals);
@@ -412,10 +407,66 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
             activeFinal = fArrivals;
             setLiveFinalArrivals(fArrivals);
           }
+
+          // Also fetch Mill Inspection rows linked via final_arrival.final_arrival_no -> material_inspection.mr_no
+          // in case material_inspection.po_no was saved as NULL/blank (e.g. historical rows backfilled in Mill Inspection UI).
+          if (needInspections) {
+            const combined = [...matInspRes, ...inspMasterRes];
+            const existingMrKeys = new Set<string>(
+              combined.map((i: any) => extractInspectionMrNo(i)).filter(Boolean)
+            );
+            const missingFaMrs = Array.from(
+              new Set(
+                (activeFinal || [])
+                  .filter((fa: any) =>
+                    (poNo && arePoNumbersExactMatch(fa?.po_no, poNo)) ||
+                    (saudaNo && arePoNumbersExactMatch(fa?.po_no, saudaNo))
+                  )
+                  .map((fa: any) => extractFinalArrivalMrNo(fa))
+                  .filter((mr: string) => Boolean(mr) && !existingMrKeys.has(mr))
+              )
+            );
+            if (missingFaMrs.length > 0) {
+              const [extraMat, extraMill] = await Promise.all([
+                supabase.from('material_inspection').select('*').in('mr_no', missingFaMrs).then(r => r.data || [], () => []),
+                supabase.from('mill_inspection_master').select('*').in('mr_no', missingFaMrs).then(r => r.data || [], () => []),
+              ]);
+              if (!cancelled) {
+                const isBlankPo = (v: any) => {
+                  const s = String(v || '').trim().toUpperCase();
+                  return !s || s === 'NO' || s === 'N/A' || s === 'NONE' || s === 'NULL';
+                };
+                [...extraMat, ...extraMill].forEach((row: any) => {
+                  // Only include when po_no is blank OR exact match (never override a conflicting non-blank PO)
+                  if (
+                    (isBlankPo(row?.po_no) && isBlankPo(row?.mill_po_no)) ||
+                    (poNo && arePoNumbersExactMatch(row?.po_no || row?.mill_po_no, poNo))
+                  ) {
+                    combined.push({ ...row, po_no: isBlankPo(row?.po_no) ? poNo : row.po_no });
+                  }
+                });
+              }
+            }
+            activeInsps = combined;
+            if (combined.length > 0) setLiveInspections(combined);
+          }
         }
 
         // 4. Identify matched MR numbers for this PO first, then fetch ONLY their inspection details
         const matchedMrSet = new Set<string>();
+        const isBlankPoVal = (v: any) => {
+          const s = String(v || '').trim().toUpperCase();
+          return !s || s === 'NO' || s === 'N/A' || s === 'NONE' || s === 'NULL';
+        };
+        const linkedFinalMrSet = new Set<string>(
+          (activeFinal || [])
+            .filter((fa: any) =>
+              (poNo && arePoNumbersExactMatch(fa?.po_no, poNo)) ||
+              (saudaNo && arePoNumbersExactMatch(fa?.po_no, saudaNo))
+            )
+            .map((fa: any) => extractFinalArrivalMrNo(fa))
+            .filter(Boolean)
+        );
         const matchesTarget = (rPo: any, rSauda: any) => {
           const cPo = clean(rPo);
           const cSauda = clean(rSauda);
@@ -426,11 +477,15 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
         };
 
         (activeInsps || []).forEach((insp: any) => {
-          if (matchesTarget(insp.po_no, insp.sauda_no || insp.contract_po_no || insp.po_contract)) {
-            const num = extractInspectionMrNo(insp);
-            if (num) {
-              matchedMrSet.add(num);
-            }
+          const num = extractInspectionMrNo(insp);
+          const directMatch = matchesTarget(insp.po_no || insp.mill_po_no, insp.sauda_no || insp.contract_po_no || insp.po_contract);
+          const blankPoLinkedViaFinalArrival =
+            Boolean(num) &&
+            isBlankPoVal(insp.po_no) &&
+            isBlankPoVal(insp.mill_po_no) &&
+            linkedFinalMrSet.has(num);
+          if ((directMatch || blankPoLinkedViaFinalArrival) && num) {
+            matchedMrSet.add(num);
           }
         });
 
@@ -531,13 +586,33 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
     const targetPo = clean(poNo);
     const targetSauda = clean(saudaNo);
 
+    // Build exact Final Arrival M.R. set for this PO so blank-PO Mill Inspections still resolve via final_arrival_no -> mr_no
+    const isBlankPoVal = (v: any) => {
+      const s = String(v || '').trim().toUpperCase();
+      return !s || s === 'NO' || s === 'N/A' || s === 'NONE' || s === 'NULL';
+    };
+    const poolFinalArrivals = liveFinalArrivals.length > 0 ? liveFinalArrivals : allFinalArrivals;
+    const linkedFinalMrSet = new Set<string>(
+      (poolFinalArrivals || [])
+        .filter((fa: any) =>
+          (poNo && arePoNumbersExactMatch(fa?.po_no, poNo)) ||
+          (saudaNo && arePoNumbersExactMatch(fa?.po_no, saudaNo))
+        )
+        .map((fa: any) => extractFinalArrivalMrNo(fa))
+        .filter(Boolean)
+    );
+
     // Find all matching inspections for this PO strictly from Mill Inspection Section
     const poolInspections = liveInspections.length > 0 ? liveInspections : allInspections;
     const matchingInsps = (poolInspections || []).filter((insp: any) => {
-      const iPo = clean(insp.po_no);
+      const iPo = clean(insp.po_no || insp.mill_po_no);
       const iSauda = clean(insp.sauda_no || insp.contract_po_no || insp.po_contract);
       if (iPo && (iPo === targetPo || iPo === targetSauda)) return true;
       if (iSauda && (iSauda === targetPo || iSauda === targetSauda)) return true;
+      if (isBlankPoVal(insp.po_no) && isBlankPoVal(insp.mill_po_no)) {
+        const mr = extractInspectionMrNo(insp);
+        if (mr && linkedFinalMrSet.has(mr)) return true;
+      }
       return false;
     });
 

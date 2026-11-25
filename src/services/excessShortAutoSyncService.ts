@@ -2,6 +2,7 @@ import { supabase } from '../lib/supabase';
 import { invalidateTableCache } from './dbModule';
 import { normalizeToYMD, formatDisplayDate } from '../components/excess-short/excessShortUtils';
 import { arePoNumbersExactMatch, buildExactPoQueryVariants } from '../lib/contractRelationshipEngine';
+import { extractFinalArrivalMrNo, extractInspectionMrNo } from '../lib/mrNumberUtils';
 
 export interface NormalizedBaseRate {
   ymd: string;
@@ -755,12 +756,13 @@ export async function syncExcessShortDeductionForSinglePo(poNo: string): Promise
       const poVariants = buildExactPoQueryVariants(cleanTarget);
       if (poVariants.length === 0) return null;
 
-      const [scpRes, pmRes, saudaRes, matInspRes, millInspRes, sBasesRes, dedRes] = await Promise.all([
+      const [scpRes, pmRes, saudaRes, matInspRes, millInspRes, faRes, sBasesRes, dedRes] = await Promise.all([
         supabase.from('sauda_check_point').select('*').in('po_no', poVariants).limit(10).then((r) => r.data || [], () => []),
         supabase.from('purchase_master').select('*').in('po_no', poVariants).limit(10).then((r) => r.data || [], () => []),
         supabase.from('sauda_master').select('*').in('sauda_no', poVariants).limit(5).then((r) => r.data || [], () => []),
         supabase.from('material_inspection').select('*').in('po_no', poVariants).then((r) => r.data || [], () => []),
         supabase.from('mill_inspection_master').select('*').in('po_no', poVariants).then((r) => r.data || [], () => []),
+        supabase.from('final_arrival').select('*').in('po_no', poVariants).then((r) => r.data || [], () => []),
         supabase.from('satta_base_rates').select('*').order('start_date', { ascending: false }).order('created_at', { ascending: false }).then((r) => r.data || [], () => []),
         supabase.from('sauda_check_point_deductions').select('*').in('po_no', poVariants).limit(10).then((r) => r.data || [], () => []),
       ]);
@@ -817,6 +819,38 @@ export async function syncExcessShortDeductionForSinglePo(poNo: string): Promise
       const combinedInsps = [...(matInspRes as any[]), ...(millInspRes as any[])].filter((i: any) =>
         arePoNumbersExactMatch(i?.po_no || i?.mill_po_no, cleanTarget)
       );
+
+      // Also include Mill Inspection rows whose po_no is blank in DB but linked via final_arrival.final_arrival_no -> material_inspection.mr_no
+      const alreadyFoundMrs = new Set<string>(
+        combinedInsps.map((i: any) => extractInspectionMrNo(i)).filter(Boolean)
+      );
+      const missingFaMrs = Array.from(
+        new Set(
+          (faRes as any[])
+            .filter((fa: any) => arePoNumbersExactMatch(fa?.po_no, cleanTarget))
+            .map((fa: any) => extractFinalArrivalMrNo(fa))
+            .filter((mr: string) => Boolean(mr) && !alreadyFoundMrs.has(mr))
+        )
+      );
+      if (missingFaMrs.length > 0) {
+        const [extraMat, extraMill] = await Promise.all([
+          supabase.from('material_inspection').select('*').in('mr_no', missingFaMrs).then((r) => r.data || [], () => []),
+          supabase.from('mill_inspection_master').select('*').in('mr_no', missingFaMrs).then((r) => r.data || [], () => []),
+        ]);
+        const isBlankPo = (v: any) => {
+          const s = String(v || '').trim().toUpperCase();
+          return !s || s === 'NO' || s === 'N/A' || s === 'NONE' || s === 'NULL';
+        };
+        [...(extraMat as any[]), ...(extraMill as any[])].forEach((row: any) => {
+          if (
+            (isBlankPo(row?.po_no) && isBlankPo(row?.mill_po_no)) ||
+            arePoNumbersExactMatch(row?.po_no || row?.mill_po_no, cleanTarget)
+          ) {
+            combinedInsps.push({ ...row, po_no: isBlankPo(row?.po_no) ? cleanTarget : row.po_no });
+          }
+        });
+      }
+
       if (combinedInsps.length === 0) return null;
 
       const mrArray = Array.from(

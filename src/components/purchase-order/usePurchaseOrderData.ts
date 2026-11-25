@@ -335,7 +335,31 @@ export function usePurchaseOrderData({
       };
 
       const nowIso = new Date().toISOString();
-      const allMergedInspections = [...(matInspections || []), ...(inspections || [])];
+      const isBlankPoVal = (v: any) => {
+        const s = String(v || '').trim().toUpperCase();
+        return !s || s === 'NO' || s === 'N/A' || s === 'NONE' || s === 'NULL';
+      };
+      // Build exact Final M.R. No. -> P.O. No. lookup from final_arrival (same pattern as Mill Inspection UI)
+      // so Mill Inspection rows saved with blank po_no (e.g. MR01339) still link to their authoritative PO.
+      const faPoByFinalMr = new Map<string, string>();
+      (finalArrivals || []).forEach((fa: any) => {
+        if (!isBlankPoVal(fa?.po_no)) {
+          const finalMr = extractFinalArrivalMrNo(fa);
+          if (finalMr && !faPoByFinalMr.has(finalMr)) {
+            faPoByFinalMr.set(finalMr, String(fa.po_no).trim());
+          }
+        }
+      });
+      const allMergedInspections = [...(matInspections || []), ...(inspections || [])].map((insp: any) => {
+        if (insp && isBlankPoVal(insp.po_no) && isBlankPoVal(insp.mill_po_no)) {
+          const mr = extractInspectionMrNo(insp);
+          const boundPo = mr ? faPoByFinalMr.get(mr) : undefined;
+          if (boundPo) {
+            return { ...insp, po_no: boundPo };
+          }
+        }
+        return insp;
+      });
       const pos = initialPos || [];
       setAllTempArrivals(arrivals || []);
       setAllFinalArrivals(finalArrivals || []);
