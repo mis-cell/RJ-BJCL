@@ -27,6 +27,14 @@ import {
   calculateNetPaidAmountAfterDeductions,
   resolvePaymentDeductionsForPoAndMr
 } from '../utils/paymentCalculations';
+import {
+  areMrNumbersEqual,
+  extractFinalArrivalMrNo,
+  extractInspectionMrNo,
+  extractRecordMrNo,
+  isValidFinalMrNo,
+  normalizeFinalMrNo
+} from '../lib/mrNumberUtils';
 import { 
   exportPaymentReportCsv, 
   exportPaymentReportPdf 
@@ -329,18 +337,28 @@ export default function PaymentReport({ onClose }: { onClose?: () => void }) {
           const combinedMap = new Map<string, any>();
 
           (aRes || []).forEach((item: any) => {
-            const key = item.mr_no || item.final_arrival_no || item.arrival_no;
-            if (key) combinedMap.set(key, { ...item, source_module: 'final_arrival' });
+            const key = extractFinalArrivalMrNo(item);
+            if (key) {
+              combinedMap.set(key, {
+                ...item,
+                mr_no: key,
+                final_arrival_no: key,
+                arrival_no: key,
+                source_module: 'final_arrival'
+              });
+            }
           });
 
           (miRes || []).forEach((item: any) => {
-            const key = item.mr_no || item.arrival_no || item.final_arrival_no;
+            const key = extractInspectionMrNo(item);
             if (key) {
               const existing = combinedMap.get(key) || {};
               combinedMap.set(key, {
                 ...existing,
                 ...item,
                 mr_no: key,
+                final_arrival_no: existing.final_arrival_no || key,
+                arrival_no: key,
                 supplier: item.supplier_name || item.supplier || existing.supplier,
                 broker: item.broker_name || item.broker || existing.broker,
                 po_no: item.po_no || item.mill_po_no || existing.po_no,
@@ -372,39 +390,34 @@ export default function PaymentReport({ onClose }: { onClose?: () => void }) {
           mmList = await dbModule.fetchAll('material_mismatch').catch(() => []);
         }
 
-        const [localArr, localInsp, localMillInsp, localTempArr] = await Promise.all([
+        const [localArr, localInsp, localMillInsp] = await Promise.all([
           dbModule.fetchAll('final_arrival').catch(() => []),
           dbModule.fetchAll('material_inspection').catch(() => []),
-          dbModule.fetchAll('mill_inspection_master').catch(() => []),
-          dbModule.fetchAll('temporary_material_received').catch(() => [])
+          dbModule.fetchAll('mill_inspection_master').catch(() => [])
         ]);
 
         const mergedMap = new Map<string, any>();
-        
-        // 1. Temporary Material Received
-        (localTempArr || []).forEach((t: any) => {
-          const k = t.temporary_arrival_no || t.amad_no || t.arrival_no;
-          if (k) mergedMap.set(k, { ...t, mr_no: k, arrival_no: k, source_module: 'temporary_material_received' });
-        });
 
-        // 2. Final Arrival
+        // 1. Final Arrival (strictly keyed by final_arrival_no = MR...)
         (localArr || []).forEach((a: any) => {
-          const k = a.mr_no || a.final_arrival_no || a.arrival_no;
+          const k = extractFinalArrivalMrNo(a);
           if (k) {
             const existing = mergedMap.get(k) || {};
-            mergedMap.set(k, { ...existing, ...a, mr_no: k, source_module: 'final_arrival' });
+            mergedMap.set(k, { ...existing, ...a, mr_no: k, final_arrival_no: k, arrival_no: k, source_module: 'final_arrival' });
           }
         });
 
-        // 3. Mill Inspection Master
+        // 2. Mill Inspection Master (strictly keyed by mr_no = MR...)
         (localMillInsp || []).forEach((a: any) => {
-          const k = a.mr_no || a.arrival_no;
+          const k = extractInspectionMrNo(a);
           if (k) {
             const existing = mergedMap.get(k) || {};
             mergedMap.set(k, {
               ...existing,
               ...a,
               mr_no: k,
+              final_arrival_no: existing.final_arrival_no || k,
+              arrival_no: k,
               supplier: a.supplier_name || a.supplier || existing.supplier,
               broker: a.broker_name || a.broker || existing.broker,
               po_no: a.po_no || a.mill_po_no || existing.po_no
@@ -412,15 +425,17 @@ export default function PaymentReport({ onClose }: { onClose?: () => void }) {
           }
         });
 
-        // 4. Material Inspection
+        // 3. Material Inspection (strictly keyed by mr_no = MR...)
         (localInsp || []).forEach((a: any) => {
-          const k = a.mr_no || a.arrival_no;
+          const k = extractInspectionMrNo(a);
           if (k) {
             const existing = mergedMap.get(k) || {};
             mergedMap.set(k, {
               ...existing,
               ...a,
               mr_no: k,
+              final_arrival_no: existing.final_arrival_no || k,
+              arrival_no: k,
               supplier: a.supplier_name || a.supplier || existing.supplier,
               broker: a.broker_name || a.broker || existing.broker,
               po_no: a.po_no || a.mill_po_no || existing.po_no,
@@ -429,15 +444,17 @@ export default function PaymentReport({ onClose }: { onClose?: () => void }) {
           }
         });
 
-        // 5. Supabase Real-Time Overrides
+        // 4. Supabase Real-Time Overrides
         (arrList || []).forEach((a: any) => {
-          const k = a.mr_no || a.final_arrival_no || a.arrival_no;
+          const k = extractRecordMrNo(a);
           if (k) {
             const existing = mergedMap.get(k) || {};
             mergedMap.set(k, {
               ...existing,
               ...a,
               mr_no: k,
+              final_arrival_no: existing.final_arrival_no || k,
+              arrival_no: k,
               supplier: a.supplier_name || a.supplier || existing.supplier,
               broker: a.broker_name || a.broker || existing.broker,
               po_no: a.po_no || a.mill_po_no || existing.po_no
@@ -633,10 +650,9 @@ export default function PaymentReport({ onClose }: { onClose?: () => void }) {
         return !isPaid;
       }) || linkedMrs[0];
 
-      if (matchingArrival && !selectedMrNo) {
-        handleMrSelection(matchingArrival.mr_no || matchingArrival.final_arrival_no || matchingArrival.arrival_no, po);
-      } else if (matchingArrival) {
-        handleMrSelection(matchingArrival.mr_no || matchingArrival.final_arrival_no || matchingArrival.arrival_no, po);
+      if (matchingArrival) {
+        const nextMr = extractRecordMrNo(matchingArrival);
+        if (nextMr) handleMrSelection(nextMr, po);
       }
     }
   };
@@ -645,7 +661,7 @@ export default function PaymentReport({ onClose }: { onClose?: () => void }) {
     setSelectedMrNo(mrNo);
     if (!mrNo) return;
 
-    const arrival = verifiedArrivals.find(a => (a.mr_no === mrNo || a.final_arrival_no === mrNo));
+    const arrival = verifiedArrivals.find(a => areMrNumbersEqual(extractRecordMrNo(a), mrNo));
     if (arrival) {
       const rawPoNo = arrival.po_no || arrival.mill_po_no || masterData.po_no;
       const matchedPo = overridePo || findMatchingPo(rawPoNo, purchaseOrders);
@@ -662,12 +678,12 @@ export default function PaymentReport({ onClose }: { onClose?: () => void }) {
       let rawArrItems: any[] = [];
       if (supabase) {
         try {
-          const targetMr = arrival.mr_no || arrival.final_arrival_no || arrival.arrival_no || mrNo;
+          const targetMr = extractRecordMrNo(arrival) || normalizeFinalMrNo(mrNo);
           const cleanMr = targetMr.replace(/^MR[-_ ]?/i, '');
           const candidateKeys = Array.from(new Set([
-            targetMr, mrNo, arrival.mr_no, arrival.final_arrival_no, arrival.arrival_no,
-            cleanMr, `MR${cleanMr}`, `MR-${cleanMr}`, `MR0${cleanMr}`
-          ].filter(Boolean)));
+            targetMr, normalizeFinalMrNo(mrNo), extractRecordMrNo(arrival),
+            cleanMr ? `MR${cleanMr}` : '', cleanMr ? `MR-${cleanMr}` : '', cleanMr ? `MR0${cleanMr}` : '', cleanMr ? `MR00${cleanMr}` : ''
+          ].filter(k => isValidFinalMrNo(k))));
 
           for (const key of candidateKeys) {
             const midRes = await supabase
@@ -726,11 +742,12 @@ export default function PaymentReport({ onClose }: { onClose?: () => void }) {
       );
       const mrWeight = Number(arrival.electronic_net_weight || arrival.weight_qtl || 0);
 
+      const resolvedMrNo = extractRecordMrNo(arrival) || normalizeFinalMrNo(mrNo);
       const deductions = await resolvePaymentDeductionsForPoAndMr({
         po,
         poNo,
         arrival,
-        mrNo: arrival.mr_no || arrival.final_arrival_no || mrNo,
+        mrNo: resolvedMrNo,
         cols,
         saudaCheckPoints,
         purchaseOrders,
@@ -747,7 +764,7 @@ export default function PaymentReport({ onClose }: { onClose?: () => void }) {
 
       setMasterData(prev => ({
         ...prev,
-        mr_no: arrival.mr_no || arrival.final_arrival_no || mrNo,
+        mr_no: resolvedMrNo,
         po_no: poNo || prev.po_no,
         po_date: po?.po_date || po?.s_date || arrival.po_date || arrival.date || prev.po_date,
         supplier: arrival.supplier || po?.supplier || prev.supplier,
@@ -755,7 +772,7 @@ export default function PaymentReport({ onClose }: { onClose?: () => void }) {
         broker: arrival.broker || po?.broker || prev.broker,
         po_type: po?.po_type || 'Standard',
         lorry_number: arrival.lorry_number || arrival.vehicle_no || prev.lorry_number,
-        arrival_no: arrival.final_arrival_no || arrival.mr_no || prev.arrival_no,
+        arrival_no: resolvedMrNo || prev.arrival_no,
         arrival_date: arrival.date || deductions.arrivalDate || prev.arrival_date,
         total_amount: grossVal > 0 ? grossVal : Math.round(prev.total_amount || 0),
         payable_amt: grossVal > 0 ? grossVal : Math.round(prev.payable_amt || 0),

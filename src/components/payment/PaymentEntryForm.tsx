@@ -13,6 +13,7 @@ import {
   PaymentDetailColumn 
 } from '../../types/payment.types';
 import { calculateNetPaidAmountAfterDeductions } from '../../utils/paymentCalculations';
+import { extractRecordMrNo, areMrNumbersEqual } from '../../lib/mrNumberUtils';
 import { SearchablePoSelect } from './SearchablePoSelect';
 import { SearchableMrSelect } from './SearchableMrSelect';
 import { PaymentDetailGrid } from './PaymentDetailGrid';
@@ -107,11 +108,9 @@ export function PaymentEntryForm({
     }
   };
 
-  const selectedArrival = verifiedArrivals.find(a => {
-    const arrMr = String(a.mr_no || a.final_arrival_no || '').trim().toUpperCase();
-    const target = String(selectedMrNo).trim().toUpperCase();
-    return Boolean(arrMr && target && (arrMr === target || (arrMr.startsWith('MR') && target.startsWith('MR') && arrMr.replace(/^MR0*/, '') === target.replace(/^MR0*/, ''))));
-  });
+  const selectedArrival = verifiedArrivals.find(a =>
+    areMrNumbersEqual(extractRecordMrNo(a), selectedMrNo)
+  );
   const inspectionPoNo = selectedArrival?.po_no || selectedArrival?.mill_po_no || '';
   const matchedFinalPo = inspectionPoNo ? findMatchingPo(inspectionPoNo, purchaseOrders) : null;
   const matchedScpPo = (!matchedFinalPo && inspectionPoNo) ? findMatchingPo(inspectionPoNo, saudaCheckPoints) : null;

@@ -13,6 +13,7 @@ import {
   normalizeSattaBaseRates,
   isManualLockedDeduction
 } from '../../services/excessShortAutoSyncService';
+import { extractFinalArrivalMrNo, extractInspectionMrNo } from '../../lib/mrNumberUtils';
 
 interface UsePurchaseOrderDataOptions {
   isTempPo: boolean;
@@ -576,7 +577,7 @@ export function usePurchaseOrderData({
         const rawMatchingFinal = queryRecordIndex(finalArrivalsIndex, poKeys);
         const seenFinalKeys = new Set<string>();
         const matchingFinal = rawMatchingFinal.filter((f: any) => {
-          const key = String(f.final_arrival_no || f.arrival_no || f.mr_no || f.temporary_arrival_no || f.id || '').trim().toUpperCase();
+          const key = extractFinalArrivalMrNo(f) || String(f.final_arrival_no || f.id || '').trim().toUpperCase();
           if (!key) return true;
           if (seenFinalKeys.has(key)) return false;
           seenFinalKeys.add(key);
@@ -636,7 +637,7 @@ export function usePurchaseOrderData({
           };
           const uniqueInspByMr = new Map<string, any>();
           matchingMatReceipts.forEach((insp: any) => {
-            const rawMr = String(insp.mr_no || insp.arrival_no || '').trim();
+            const rawMr = extractInspectionMrNo(insp);
             if (!rawMr) return;
             const mrKey = canonicalKey(rawMr);
             const existing = uniqueInspByMr.get(mrKey);
@@ -647,8 +648,8 @@ export function usePurchaseOrderData({
             }
           });
           const sortedInsps = Array.from(uniqueInspByMr.values()).sort((a: any, b: any) => {
-            const seqA = extractSeq(a.mr_no || a.arrival_no || '');
-            const seqB = extractSeq(b.mr_no || b.arrival_no || '');
+            const seqA = extractSeq(extractInspectionMrNo(a));
+            const seqB = extractSeq(extractInspectionMrNo(b));
             if (seqA > 0 && seqB > 0 && seqA !== seqB) return seqA - seqB;
             return String(a.arrival_date || a.mr_date || a.date || '').localeCompare(String(b.arrival_date || b.mr_date || b.date || ''));
           });
@@ -662,7 +663,7 @@ export function usePurchaseOrderData({
             sortedInsps.forEach((insp: any, idx: number) => {
               const isLast = idx === sortedInsps.length - 1;
               const isFirst = idx === 0;
-              const mrKey = canonicalKey(insp.mr_no || insp.arrival_no || '');
+              const mrKey = canonicalKey(extractInspectionMrNo(insp));
               let gMt = 0;
               let nMt = 0;
               let gItems: any[] = [];
@@ -718,7 +719,7 @@ export function usePurchaseOrderData({
               sumShortClaimMt += shortClaimMt;
               sumExcessClaimMt += excessClaimMt;
               if (isLast) {
-                lastInspMrNo = String(insp.mr_no || insp.arrival_no || '').trim();
+                lastInspMrNo = extractInspectionMrNo(insp);
                 lastInspMrDate = String(insp.arrival_date || insp.mr_date || insp.date || '').trim();
               }
             });

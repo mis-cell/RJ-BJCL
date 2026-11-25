@@ -17,7 +17,8 @@ import {
 import { cn, canApproveMismatch } from '../lib/utils';
 import { dbModule } from '../services/dbModule';
 import { supabase } from '../lib/supabase';
-import { comparePoInspection, compareSaudaTempArrival, PoMismatchDetail, PoMatchMasterMaps } from '../lib/poMatch';
+import { compareSaudaMillInspection, PoMatchKnownCodes } from '../lib/poMatch';
+import { isMaterialMismatchApproved } from '../utils/paymentCalculations';
 import LegacyLayout from '../components/LegacyLayout';
 import { getCurrentUserContext } from '../lib/permissions';
 import { resolveSattaRate } from '../services/sattaRateService';
@@ -126,146 +127,268 @@ export default function MismatchCase({ onClose, variant = 'satta' }: { onClose?:
     setLoading(true);
     try {
       // Direct fresh queries from database (no browser cache dependency)
-      const [scpRows, scpDetailRows, amadRows, matInspRows, millInspRows, dbMismatches, purchaseMasterRows, purchaseDetailRows, sattaBaseRows, sattaDiffRows, gradeRows, agencyRows, markaRows, areaRows, brokerRows, supplyRows, dbSattaMismatches, saudaMasterRows, saudaQualityRows, sattaMasterRows, sattaQualityRows, smsSaudaDbRows] = await Promise.all([
-        supabase ? supabase.from('sauda_check_point').select('*').then(res => res.data || []) : dbModule.fetchAll('sauda_check_point').catch(() => []),
-        supabase ? supabase.from('sauda_check_point_details').select('*').then(res => res.data || []) : dbModule.fetchAll('sauda_check_point_details').catch(() => []),
-        dbModule.fetchAll('temporary_material_received').catch(() => []),
-        dbModule.fetchAll('material_inspection').catch(() => []),
-        dbModule.fetchAll('mill_inspection_master').catch(() => []),
-        supabase ? supabase.from('material_mismatch').select('*').then(res => res.data || []) : dbModule.fetchAll('material_mismatch').catch(() => []),
-        supabase ? supabase.from('purchase_master').select('*').then(res => res.data || []) : dbModule.fetchAll('purchase_master').catch(() => []),
-        supabase ? supabase.from('purchase_detail_master').select('*').then(res => res.data || []) : Promise.resolve([]),
-        supabase ? supabase.from('satta_base_rates').select('*').then(res => res.data || []) : Promise.resolve([]),
-        supabase ? supabase.from('satta_differentials').select('*').then(res => res.data || []) : Promise.resolve([]),
+      const [
+        scpRows,
+        scpDetailRows,
+        matInspRows,
+        matInspDetailRows,
+        millInspRows,
+        millInspDetailRows,
+        dbMismatches,
+        purchaseMasterRows,
+        purchaseDetailRows,
+        sattaBaseRows,
+        sattaDiffRows,
+        gradeRows,
+        agencyRows,
+        markaRows,
+        areaRows,
+        brokerRows,
+        supplyRows,
+        dbSattaMismatches,
+        saudaMasterRows,
+        saudaQualityRows,
+        sattaMasterRows,
+        sattaQualityRows,
+        smsSaudaDbRows
+      ] = await Promise.all([
+        supabase ? supabase.from('sauda_check_point').select('*').then(res => res.data || [], () => []) : dbModule.fetchAll('sauda_check_point').catch(() => []),
+        supabase ? supabase.from('sauda_check_point_details').select('*').then(res => res.data || [], () => []) : dbModule.fetchAll('sauda_check_point_details').catch(() => []),
+        supabase ? supabase.from('material_inspection').select('*').order('created_at', { ascending: false }).then(res => res.data || [], () => []) : dbModule.fetchAll('material_inspection').catch(() => []),
+        supabase ? supabase.from('material_inspection_details').select('*').order('srl_no', { ascending: true }).then(res => res.data || [], () => []) : dbModule.fetchAll('material_inspection_details').catch(() => []),
+        supabase ? supabase.from('mill_inspection_master').select('*').order('created_at', { ascending: false }).then(res => res.data || [], () => []) : dbModule.fetchAll('mill_inspection_master').catch(() => []),
+        supabase ? supabase.from('mill_inspection_detail').select('*').order('srl_no', { ascending: true }).then(res => res.data || [], () => []) : dbModule.fetchAll('mill_inspection_detail').catch(() => []),
+        supabase ? supabase.from('material_mismatch').select('*').then(res => res.data || [], () => []) : dbModule.fetchAll('material_mismatch').catch(() => []),
+        supabase ? supabase.from('purchase_master').select('*').then(res => res.data || [], () => []) : dbModule.fetchAll('purchase_master').catch(() => []),
+        supabase ? supabase.from('purchase_detail_master').select('*').then(res => res.data || [], () => []) : Promise.resolve([]),
+        supabase ? supabase.from('satta_base_rates').select('*').then(res => res.data || [], () => []) : Promise.resolve([]),
+        supabase ? supabase.from('satta_differentials').select('*').then(res => res.data || [], () => []) : Promise.resolve([]),
         dbModule.fetchAll('grade_master').catch(() => []),
         dbModule.fetchAll('agency_master').catch(() => []),
         dbModule.fetchAll('marka_master').catch(() => []),
         dbModule.fetchAll('area_master').catch(() => []),
         dbModule.fetchAll('broker_master').catch(() => []),
         dbModule.fetchAll('supply_master').catch(() => []),
-        supabase ? supabase.from('satta_mismatch').select('*').then(res => res.data || []) : dbModule.fetchAll('satta_mismatch').catch(() => []),
-        supabase ? supabase.from('sauda_master').select('*').then(res => res.data || []) : dbModule.fetchAll('sauda_master').catch(() => []),
-        supabase ? supabase.from('sauda_quality_details').select('*').then(res => res.data || []) : dbModule.fetchAll('sauda_quality_details').catch(() => []),
-        supabase ? supabase.from('satta_master').select('*').then(res => res.data || []) : dbModule.fetchAll('satta_master').catch(() => []),
-        supabase ? supabase.from('satta_quality_details').select('*').then(res => res.data || []) : dbModule.fetchAll('satta_quality_details').catch(() => []),
-        supabase ? supabase.from('sms_sauda').select('*').then(res => res.data || []) : Promise.resolve([]),
+        supabase ? supabase.from('satta_mismatch').select('*').then(res => res.data || [], () => []) : dbModule.fetchAll('satta_mismatch').catch(() => []),
+        supabase ? supabase.from('sauda_master').select('*').then(res => res.data || [], () => []) : dbModule.fetchAll('sauda_master').catch(() => []),
+        supabase ? supabase.from('sauda_quality_details').select('*').then(res => res.data || [], () => []) : dbModule.fetchAll('sauda_quality_details').catch(() => []),
+        supabase ? supabase.from('satta_master').select('*').then(res => res.data || [], () => []) : dbModule.fetchAll('satta_master').catch(() => []),
+        supabase ? supabase.from('satta_quality_details').select('*').then(res => res.data || [], () => []) : dbModule.fetchAll('satta_quality_details').catch(() => []),
+        supabase ? supabase.from('sms_sauda').select('*').then(res => res.data || [], () => []) : Promise.resolve([]),
       ]);
 
-      // Build one-way Code -> Name master lookup maps so Material Mismatch compares strictly by Name (not Code)
-      const masterMaps: PoMatchMasterMaps = {
-        gradeCodeToName: {},
-        agencyCodeToName: {},
-        markaCodeToName: {},
-        areaCodeToName: {},
-        brokerCodeToName: {},
-        supplierCodeToName: {},
+      // Build sets of known non-name master codes so codes/numbers are NEVER compared as names
+      const buildKnownCodeSet = (rows: any[], codeGetter: (r: any) => any, nameGetter: (r: any) => any): Set<string> => {
+        const names = new Set<string>();
+        const codes = new Set<string>();
+        (rows || []).forEach((r: any) => {
+          const n = String(nameGetter(r) ?? '').trim().toUpperCase();
+          if (n) names.add(n);
+        });
+        (rows || []).forEach((r: any) => {
+          const c = String(codeGetter(r) ?? '').trim().toUpperCase();
+          if (c && !names.has(c)) codes.add(c);
+        });
+        return codes;
       };
-      const addMasterEntry = (map: Record<string, string>, code: any, name: any) => {
-        const c = String(code ?? '').trim().toUpperCase();
-        const n = String(name ?? '').trim().toUpperCase();
-        if (!c || !n || c === n) return;
-        map[c] = n;
-        const stripped = /^\d+$/.test(c) ? c.replace(/^0+/, '') : '';
-        if (stripped) map[stripped] = n;
-      };
-      (gradeRows || []).forEach((g: any) => addMasterEntry(masterMaps.gradeCodeToName!, g.grade_code ?? g.code, g.grade_name ?? g.name));
-      (agencyRows || []).forEach((a: any) => addMasterEntry(masterMaps.agencyCodeToName!, a.agency_code ?? a.AGENCY_CODE ?? a.code, a.agency_name ?? a.AGENCY_NAME ?? a.name));
-      (markaRows || []).forEach((m: any) => addMasterEntry(masterMaps.markaCodeToName!, m.marka_code ?? m.code, m.marka_name ?? m.mark_name ?? m.name));
-      (areaRows || []).forEach((ar: any) => addMasterEntry(masterMaps.areaCodeToName!, ar.area_code ?? ar.code, ar.area_name ?? ar.name));
-      (brokerRows || []).forEach((b: any) => addMasterEntry(masterMaps.brokerCodeToName!, b.brok_code ?? b.broker_code ?? b.code, b.brok_name ?? b.broker_name ?? b.name));
-      (supplyRows || []).forEach((s: any) => addMasterEntry(masterMaps.supplierCodeToName!, s.supp_code ?? s.sup_code ?? s.supplier_code ?? s.code, s.supp_name ?? s.sup_name ?? s.supplier_name ?? s.name));
 
-      const inspMasterRows = [...(matInspRows || []), ...(millInspRows || [])];
+      const knownCodes: PoMatchKnownCodes = {
+        gradeCodes: buildKnownCodeSet(gradeRows, g => g.grade_code ?? g.code, g => g.grade_name ?? g.name),
+        agencyCodes: buildKnownCodeSet(agencyRows, a => a.agency_code ?? a.AGENCY_CODE ?? a.code, a => a.agency_name ?? a.AGENCY_NAME ?? a.name),
+        markaCodes: buildKnownCodeSet(markaRows, m => m.marka_code ?? m.code, m => m.marka_name ?? m.mark_name ?? m.name),
+        areaCodes: buildKnownCodeSet(areaRows, ar => ar.area_code ?? ar.code, ar => ar.area_name ?? ar.name),
+        brokerCodes: buildKnownCodeSet(brokerRows, b => b.brok_code ?? b.broker_code ?? b.code, b => b.brok_name ?? b.broker_name ?? b.name),
+        supplierCodes: buildKnownCodeSet(supplyRows, s => s.supp_code ?? s.sup_code ?? s.supplier_code ?? s.code, s => s.supp_name ?? s.sup_name ?? s.supplier_name ?? s.name),
+      };
 
       const combinedSmsSaudas = [...smsSaudaDbRows];
 
       const items: MaterialMismatchItem[] = [];
 
-      // Combine PO sources: sauda_check_point + purchase_master + sauda_master + satta_master
-      const allPoRecords = [...scpRows, ...purchaseMasterRows, ...saudaMasterRows, ...sattaMasterRows];
-      const poMap = new Map<string, any>();
-      allPoRecords.forEach(p => {
-        const pNo = String(p.po_no || p.contract_po_no || p.sauda_no || p.satta_no || '').trim().toUpperCase();
-        if (pNo && !poMap.has(pNo)) poMap.set(pNo, p);
+      // 1. Index Sauda Check Point ONLY (sauda_check_point + sauda_check_point_details)
+      const normalizePoKey = (v: any) => String(v || '').trim().toUpperCase().replace(/^#+/, '').trim();
+      const scpMap = new Map<string, any>();
+      (scpRows || []).forEach((p: any) => {
+        const primaryPo = normalizePoKey(p.po_no);
+        if (primaryPo && !scpMap.has(primaryPo)) scpMap.set(primaryPo, p);
+        const contractPo = normalizePoKey(p.contract_po_no);
+        if (contractPo && !scpMap.has(contractPo)) scpMap.set(contractPo, p);
+        const ptfPo = normalizePoKey(p.ptf_no);
+        if (ptfPo && !scpMap.has(ptfPo)) scpMap.set(ptfPo, p);
       });
 
-      const allDetailRecords = [...scpDetailRows, ...purchaseDetailRows, ...saudaQualityRows, ...sattaQualityRows];
+      const scpDetailsByPo = new Map<string, any[]>();
+      (scpDetailRows || []).forEach((d: any) => {
+        const dPo = normalizePoKey(d.po_no);
+        if (!dPo) return;
+        const list = scpDetailsByPo.get(dPo) || [];
+        list.push(d);
+        scpDetailsByPo.set(dPo, list);
+      });
 
-      poMap.forEach((po, poNo) => {
-        const matchingInspections = inspMasterRows.filter((i: any) => {
-          const iPo = String(i.po_no || '').trim().toUpperCase();
-          const mPo = String(i.mill_po_no || '').trim().toUpperCase();
-          return (iPo && iPo === poNo) || (mPo && mPo === poNo);
+      // 2. Deduplicate Mill Inspection records MR-wise (material_inspection + mill_inspection_master)
+      const mrMap = new Map<string, any>();
+      (millInspRows || []).forEach((row: any) => {
+        const st = String(row?.status || '').toLowerCase().trim();
+        if (st === 'cancelled' || st === 'rejected') return;
+        const mrKey = String(row?.mr_no || '').trim().toUpperCase();
+        if (!mrKey || mrKey.startsWith('AR')) return;
+        mrMap.set(mrKey, { ...row, mr_no: mrKey });
+      });
+      (matInspRows || []).forEach((row: any) => {
+        const st = String(row?.status || '').toLowerCase().trim();
+        if (st === 'cancelled' || st === 'rejected') return;
+        const mrKey = String(row?.mr_no || '').trim().toUpperCase();
+        if (!mrKey || mrKey.startsWith('AR')) return;
+        const existing = mrMap.get(mrKey) || {};
+        mrMap.set(mrKey, { ...existing, ...row, mr_no: mrKey });
+      });
+
+      // Index Mill Inspection detail rows by MR No.
+      const matDetailsByMr = new Map<string, any[]>();
+      (matInspDetailRows || []).forEach((d: any) => {
+        const mrKey = String(d?.mr_no || '').trim().toUpperCase();
+        if (!mrKey) return;
+        const list = matDetailsByMr.get(mrKey) || [];
+        list.push(d);
+        matDetailsByMr.set(mrKey, list);
+      });
+      const millDetailsByMr = new Map<string, any[]>();
+      (millInspDetailRows || []).forEach((d: any) => {
+        const mrKey = String(d?.mr_no || '').trim().toUpperCase();
+        if (!mrKey) return;
+        const list = millDetailsByMr.get(mrKey) || [];
+        list.push(d);
+        millDetailsByMr.set(mrKey, list);
+      });
+
+      // Group all Mill Inspection MRs by PO for lorry progress count
+      const millInspectionsByPo = new Map<string, any[]>();
+      mrMap.forEach((insp) => {
+        const inspPoKey = normalizePoKey(insp.po_no || insp.mill_po_no);
+        if (!inspPoKey) return;
+        const list = millInspectionsByPo.get(inspPoKey) || [];
+        list.push(insp);
+        millInspectionsByPo.set(inspPoKey, list);
+      });
+
+      const parseMrDetails = (insp: any, mrKey: string): any[] => {
+        const rawGrid = insp.grid_details || insp.details;
+        if (rawGrid) {
+          try {
+            const parsed = typeof rawGrid === 'string' ? JSON.parse(rawGrid) : rawGrid;
+            if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+          } catch (_e) {}
+        }
+        const matRows = matDetailsByMr.get(mrKey);
+        if (matRows && matRows.length > 0) return matRows;
+        const millRows = millDetailsByMr.get(mrKey);
+        if (millRows && millRows.length > 0) return millRows;
+        return [];
+      };
+
+      const findDbMismatchForMr = (scpPoNo: string, mrKey: string) => {
+        const poUpper = normalizePoKey(scpPoNo);
+        const mrUpper = mrKey.trim().toUpperCase();
+        const exactItemId = `MIS-${poUpper}-${mrUpper}`;
+
+        // 1. Prefer exact MR-specific record
+        const mrSpecific = (dbMismatches || []).find((m: any) => {
+          const mPo = normalizePoKey(m.po_no);
+          const mInsp = String(m.inspection_no || '').trim().toUpperCase();
+          const mArr = String(m.arrival_no || '').trim().toUpperCase();
+          const mId = String(m.mismatch_id || m.id || '').trim().toUpperCase();
+          const mMr = String(m.mr_no || '').trim().toUpperCase();
+          return (
+            mId === exactItemId ||
+            mInsp === exactItemId ||
+            (mPo === poUpper && (mMr === mrUpper || mInsp === mrUpper || mArr === mrUpper))
+          );
         });
-        const matchingAmads = amadRows.filter((a: any) => String(a.po_no || '').trim().toUpperCase() === poNo);
-        const poDetails = allDetailRecords.filter((d: any) => {
-          const dPo = String(d.po_no || d.sauda_no || '').trim().toUpperCase();
-          if (dPo && dPo === poNo) return true;
-          if (po.sauda_id && d.sauda_id && d.sauda_id === po.sauda_id) return true;
-          if (po.sauda_no && d.sauda_no && String(d.sauda_no).trim().toUpperCase() === String(po.sauda_no).trim().toUpperCase()) return true;
-          return false;
+        if (mrSpecific) return mrSpecific;
+
+        // 2. Fallback to legacy PO-level approval record (only if NOT tied to a different MR)
+        return (dbMismatches || []).find((m: any) => {
+          const mPo = normalizePoKey(m.po_no);
+          const mInsp = String(m.inspection_no || '').trim().toUpperCase();
+          const mArr = String(m.arrival_no || '').trim().toUpperCase();
+          const mId = String(m.mismatch_id || '').trim().toUpperCase();
+          const mMr = String(m.mr_no || '').trim().toUpperCase();
+          const boundMr =
+            mMr ||
+            (mInsp.match(/MR\d+/i)?.[0] || '') ||
+            (mArr.match(/MR\d+/i)?.[0] || '') ||
+            (mId.match(/MR\d+/i)?.[0] || '');
+          if (boundMr && boundMr.toUpperCase() !== mrUpper) return false;
+          return mPo === poUpper || mInsp === `MIS-${poUpper}` || mId === `MIS-${poUpper}`;
         });
+      };
 
-        const latestInsp = matchingAmads[0] || matchingInspections[0] || null;
-        if (!latestInsp) return;
+      // 3. Match Mill Inspection MR-wise strictly against Sauda Check Point ONLY (Name-only)
+      mrMap.forEach((insp, mrNo) => {
+        const rawInspPo = normalizePoKey(insp.po_no || insp.mill_po_no);
+        if (!rawInspPo) return;
 
-        const enrichedInsp = {
-          ...(matchingInspections[0] || {}),
-          ...(matchingAmads[0] || {}),
-        };
+        const po = scpMap.get(rawInspPo);
+        if (!po) return; // Strictly Sauda Check Point ONLY
 
-        const allLorryReceipts = [...matchingInspections];
+        const scpPoNo = normalizePoKey(po.po_no || rawInspPo);
+        const poDetails =
+          scpDetailsByPo.get(scpPoNo) ||
+          scpDetailsByPo.get(rawInspPo) ||
+          [];
+        const mrDetailRows = parseMrDetails(insp, mrNo);
+        const allPoMillInspections =
+          millInspectionsByPo.get(scpPoNo) ||
+          millInspectionsByPo.get(rawInspPo) ||
+          [insp];
 
-        const matchRes = compareSaudaTempArrival(po, poDetails, enrichedInsp, allLorryReceipts, masterMaps);
+        const matchRes = compareSaudaMillInspection(
+          po,
+          poDetails,
+          insp,
+          mrDetailRows,
+          allPoMillInspections,
+          knownCodes
+        );
 
         if (matchRes.hasInspection && matchRes.status === 'mismatch' && matchRes.mismatches.length > 0) {
-          const dbMm = (dbMismatches || []).find((m: any) => {
-            const mPo = String(m.po_no || '').trim().toUpperCase();
-            const mId = String(m.mismatch_id || m.id || '').toUpperCase();
-            const poUpper = poNo.toUpperCase();
-            const poSuffix = poUpper.split('/').pop() || '';
-            return (
-              (mPo && (mPo === poUpper || poUpper.includes(mPo) || mPo.includes(poUpper) || (poSuffix && mPo.includes(poSuffix)))) ||
-              mId === `MIS-${poUpper}` ||
-              mId.includes(poUpper) ||
-              (poSuffix && mId.includes(poSuffix))
-            );
-          });
-          
+          const dbMm = findDbMismatchForMr(scpPoNo, mrNo);
           const isCleared = Boolean(
-            po.mismatch_cleared === true || 
-            (dbMm && (
-              dbMm.status === 'resolved' || 
-              dbMm.status === 'approved' ||
-              dbMm.status === 'cleared' ||
-              Boolean(dbMm.approved_by) ||
-              String(dbMm.remarks || '').toLowerCase().includes('approved') ||
-              String(dbMm.remarks || '').toLowerCase().includes('resolved')
-            ))
+            po.mismatch_cleared === true ||
+            (dbMm && isMaterialMismatchApproved(dbMm))
           );
 
           const mismatchedLabels = matchRes.mismatches.map(m => m.mismatchLabel || `${m.field} mismatch`);
+          const detailGrades = Array.from(
+            new Set(poDetails.map((d: any) => String(d.grade_name || '').trim()).filter(g => g && !/^\d+$/.test(g)))
+          );
+          const detailAgencies = Array.from(
+            new Set(poDetails.map((d: any) => String(d.agency_name || '').trim()).filter(a => a && !/^\d+$/.test(a)))
+          );
 
           items.push({
-            id: `MIS-${poNo}`,
-            poNo: poNo,
-            saudaNo: po.po_contract || po.contract_no || po.sauda_no || 'N/A',
+            id: `MIS-${scpPoNo}-${mrNo}`,
+            poNo: scpPoNo,
+            mrNo: mrNo,
+            mrDate: String(insp.mr_date || insp.date || insp.created_at || '').split('T')[0] || undefined,
+            saudaNo: po.po_contract || po.contract_po_no || po.sauda_no || 'N/A',
             supplierName: safeStr(po.supplier || po.supplier_name, 'N/A'),
             brokerName: safeStr(po.broker || po.broker_name, 'N/A'),
             area: safeStr(po.area, 'N/A'),
-            grade: safeStr(po.grade || po.quality, 'N/A'),
-            agency: safeStr(po.agency || po.agency_name, 'N/A'),
+            grade: safeStr(po.grade || po.quality, '') || detailGrades.join(', ') || 'N/A',
+            agency: safeStr(po.agency || po.agency_name, '') || detailAgencies.join(', ') || 'N/A',
             ptfMode: po.ptf_mode || po.po_type || 'N/A',
-            poContract: po.po_contract || po.contract_no || 'N/A',
+            poContract: po.po_contract || po.contract_po_no || 'N/A',
             challanSupplier: safeStr(po.challan_supplier, 'N/A'),
             ratePerMt: po.b_rate ? `₹ ${po.b_rate}` : (poDetails[0]?.rate_qntl ? `₹ ${poDetails[0].rate_qntl * 10}` : 'N/A'),
-            lorryNumber: enrichedInsp.lorry_number || enrichedInsp.lorry_no || 'N/A',
+            lorryNumber: insp.lorry_number || insp.lorry_no || 'N/A',
             lorryProgress: matchRes.lorryProgress || { totalLorries: 1, receivedLorries: 1, remainingLorries: 0 },
             mismatchedFields: mismatchedLabels,
             mismatchDetailsList: matchRes.mismatches,
-            detectedAt: String(enrichedInsp.created_at || po.created_at || new Date().toISOString()).split('T')[0],
-            issueDescription: `Mismatched fields detected: ${mismatchedLabels.join(', ')}.`,
-            severity: matchRes.mismatches.some(m => m.field.includes('Weight') || m.field.includes('Rate')) ? 'high' : 'medium',
+            detectedAt: String(insp.mr_date || insp.date || insp.created_at || po.created_at || new Date().toISOString()).split('T')[0],
+            issueDescription: `MR ${mrNo} mismatched fields: ${mismatchedLabels.join(', ')}.`,
+            severity: 'medium',
             status: isCleared ? 'resolved' : 'pending',
             isClosed: Boolean(po.is_closed),
             resolutionNotes: (dbMm && dbMm.remarks) || po.mismatch_remarks || undefined,
@@ -276,36 +399,42 @@ export default function MismatchCase({ onClose, variant = 'satta' }: { onClose?:
         }
       });
 
-      // Also include standalone records from material_mismatch table in DB
-      dbMismatches.forEach((r: any) => {
-        const poNo = String(r.po_no || '').trim().toUpperCase();
-        if (poNo && !items.some(i => i.poNo === poNo)) {
-          const labels = r.mismatched_fields ? r.mismatched_fields.split(', ') : ['Material mismatch'];
+      // Preserve already-resolved Sauda Check Point records from material_mismatch DB if not already listed
+      (dbMismatches || []).forEach((r: any) => {
+        if (!isMaterialMismatchApproved(r)) return;
+        const poNo = normalizePoKey(r.po_no);
+        if (!poNo || !scpMap.has(poNo)) return;
+        const rMrNo = String(r.mr_no || (String(r.inspection_no || '').match(/MR\d+/i)?.[0] || '') || (String(r.arrival_no || '').match(/MR\d+/i)?.[0] || '')).trim().toUpperCase();
+        const alreadyListed = items.some(i => i.poNo === poNo && (!rMrNo || i.mrNo === rMrNo));
+        if (!alreadyListed) {
+          const scpPo = scpMap.get(poNo);
+          const labels = r.mismatched_fields ? r.mismatched_fields.split(', ') : (r.field ? [r.field] : ['Material mismatch']);
           items.push({
-            id: r.mismatch_id || `MIS-${poNo}`,
+            id: r.mismatch_id || (rMrNo ? `MIS-${poNo}-${rMrNo}` : `MIS-${poNo}`),
             poNo: poNo,
-            saudaNo: 'N/A',
-            supplierName: safeStr(r.supplier, 'N/A'),
-            brokerName: safeStr(r.broker, 'N/A'),
-            area: safeStr(r.area, 'N/A'),
+            mrNo: rMrNo || undefined,
+            saudaNo: scpPo?.contract_po_no || 'N/A',
+            supplierName: safeStr(r.supplier || scpPo?.supplier, 'N/A'),
+            brokerName: safeStr(r.broker || scpPo?.broker, 'N/A'),
+            area: safeStr(r.area || scpPo?.area, 'N/A'),
             grade: safeStr(r.grade, 'N/A'),
             agency: safeStr(r.agency, 'N/A'),
-            ptfMode: r.ptf_mode || 'N/A',
-            poContract: 'N/A',
-            challanSupplier: safeStr(r.challan_supplier, 'N/A'),
+            ptfMode: r.ptf_mode || scpPo?.po_type || 'N/A',
+            poContract: scpPo?.contract_po_no || 'N/A',
+            challanSupplier: safeStr(r.challan_supplier || scpPo?.challan_supplier, 'N/A'),
             ratePerMt: r.rate_per_mt || 'N/A',
             lorryNumber: r.lorry_number || 'N/A',
-            lorryProgress: { totalLorries: 1, receivedLorries: 1, remainingLorries: 0 },
+            lorryProgress: { totalLorries: Number(scpPo?.total_lorries || 1), receivedLorries: 1, remainingLorries: 0 },
             mismatchedFields: labels,
             mismatchDetailsList: [],
             detectedAt: r.created_at ? String(r.created_at).split('T')[0] : new Date().toISOString().split('T')[0],
             issueDescription: r.issue_description || `Mismatched fields: ${labels.join(', ')}.`,
             severity: (r.severity as any) || 'medium',
-            status: r.status === 'resolved' ? 'resolved' : 'pending',
-            isClosed: Boolean(poMap.get(poNo)?.is_closed || r.is_closed),
+            status: 'resolved',
+            isClosed: Boolean(scpPo?.is_closed || r.is_closed),
             resolutionNotes: r.remarks,
-            resolvedBy: r.approved_by,
-            resolvedAt: r.approved_at ? String(r.approved_at).split('T')[0] : undefined,
+            resolvedBy: r.approved_by || 'L3/L5 User',
+            resolvedAt: r.approved_at ? String(r.approved_at).split('T')[0] : (r.created_at ? String(r.created_at).split('T')[0] : undefined),
             approvalLevel: r.approval_level || 'L3/L5',
           });
         }
@@ -723,9 +852,23 @@ export default function MismatchCase({ onClose, variant = 'satta' }: { onClose?:
     }
   };
 
-  useLiveAutoRefresh(loadMismatches, [], { tables: ['material_mismatch', 'satta_mismatch', 'sauda_check_point', 'purchase_master', 'sauda_master', 'satta_master'] });
+  useLiveAutoRefresh(loadMismatches, [], {
+    tables: [
+      'material_mismatch',
+      'satta_mismatch',
+      'sauda_check_point',
+      'sauda_check_point_details',
+      'material_inspection',
+      'material_inspection_details',
+      'mill_inspection_master',
+      'mill_inspection_detail',
+      'purchase_master',
+      'sauda_master',
+      'satta_master'
+    ]
+  });
 
-  const handleResolve = async (itemId: string, itemPoNo: string) => {
+  const handleResolve = async (itemId: string, itemPoNo: string, itemMrNo?: string) => {
     const rawRemarks = remarksMap[itemId] || '';
     const remarks = rawRemarks.trim() || 'Approved and cleared by Administrator';
 
@@ -734,7 +877,8 @@ export default function MismatchCase({ onClose, variant = 'satta' }: { onClose?:
     const approvalLevel = (ctx.userLevel || ctx.userRole || 'ADMIN').toUpperCase();
     const nowIso = new Date().toISOString();
 
-    const targetItem = mismatchList.find(i => i.id === itemId || i.poNo === itemPoNo);
+    const targetItem = mismatchList.find(i => i.id === itemId || (itemMrNo ? (i.poNo === itemPoNo && i.mrNo === itemMrNo) : i.poNo === itemPoNo));
+    const resolvedMrNo = (itemMrNo || targetItem?.mrNo || '').trim().toUpperCase();
 
     const poTokens = [
       itemPoNo,
@@ -748,8 +892,8 @@ export default function MismatchCase({ onClose, variant = 'satta' }: { onClose?:
     // 1. Base record (compatible with standard PostgreSQL table schema)
     const baseMaterialRecord: Record<string, any> = {
       po_no: itemPoNo,
-      arrival_no: targetItem?.lorryNumber && targetItem.lorryNumber !== 'N/A' ? targetItem.lorryNumber : 'N/A',
-      inspection_no: itemId,
+      arrival_no: resolvedMrNo || (targetItem?.lorryNumber && targetItem.lorryNumber !== 'N/A' ? targetItem.lorryNumber : 'N/A'),
+      inspection_no: resolvedMrNo || itemId,
       area: targetItem?.area || 'DAISEE',
       grade: targetItem?.grade || 'N/A',
       field: Array.isArray(targetItem?.mismatchedFields) ? targetItem.mismatchedFields.join(', ') : (targetItem?.mismatchedFields || 'Material Mismatch'),
@@ -781,15 +925,24 @@ export default function MismatchCase({ onClose, variant = 'satta' }: { onClose?:
     let savedMaterialToDb = false;
     if (supabase) {
       try {
-        // First check existing rows using select('*') which never fails
-        const searchSuffix = itemPoNo.split('/').pop() || itemPoNo;
+        // Look up exact MR-specific row first so approving one MR does not overwrite another MR on the same PO
         const { data: existingRows } = await supabase
           .from('material_mismatch')
           .select('*')
-          .or(`po_no.ilike.%${searchSuffix}%,mismatch_id.ilike.%${searchSuffix}%`);
+          .eq('po_no', itemPoNo);
 
-        if (existingRows && existingRows.length > 0) {
-          const rowId = existingRows[0].id;
+        const matchedExisting = (existingRows || []).find((r: any) => {
+          const rInsp = String(r.inspection_no || '').trim().toUpperCase();
+          const rArr = String(r.arrival_no || '').trim().toUpperCase();
+          const rId = String(r.mismatch_id || '').trim().toUpperCase();
+          if (resolvedMrNo) {
+            return rInsp === resolvedMrNo || rArr === resolvedMrNo || rId === itemId.toUpperCase() || rInsp === itemId.toUpperCase();
+          }
+          return rId === itemId.toUpperCase() || rInsp === itemId.toUpperCase();
+        });
+
+        if (matchedExisting) {
+          const rowId = matchedExisting.id;
           const { error: updErr } = await supabase.from('material_mismatch').update(extendedMaterialRecord).eq('id', rowId);
           if (updErr) {
             const { error: baseUpdErr } = await supabase.from('material_mismatch').update(baseMaterialRecord).eq('id', rowId);
@@ -964,7 +1117,7 @@ export default function MismatchCase({ onClose, variant = 'satta' }: { onClose?:
 
     // Optimistically update local state immediately so user sees it resolved on screen
     setMismatchList(prev => prev.map(m => {
-      if (m.id === itemId || m.poNo === itemPoNo) {
+      if (m.id === itemId || (resolvedMrNo ? (m.poNo === itemPoNo && m.mrNo === resolvedMrNo) : m.poNo === itemPoNo)) {
         return {
           ...m,
           status: 'resolved',
@@ -978,13 +1131,13 @@ export default function MismatchCase({ onClose, variant = 'satta' }: { onClose?:
     }));
 
     // Dispatch global live update events
-    window.dispatchEvent(new CustomEvent('mismatch_resolved', { detail: { poNo: itemPoNo } }));
+    window.dispatchEvent(new CustomEvent('mismatch_resolved', { detail: { poNo: itemPoNo, mrNo: resolvedMrNo || undefined } }));
     window.dispatchEvent(new CustomEvent('app-data-updated', { detail: { table: 'material_mismatch', tables: ['material_mismatch', 'sauda_check_point', 'purchase_master'] } }));
 
     // Refetch fresh data from database
     await loadMismatches();
 
-    setSuccessToast(`Purchase Order [${itemPoNo}] Material Mismatch approved and cleared by ${approvalLevel} level user.`);
+    setSuccessToast(`Purchase Order [${itemPoNo}]${resolvedMrNo ? ` (MR: ${resolvedMrNo})` : ''} Material Mismatch approved and cleared by ${approvalLevel} level user.`);
     setTimeout(() => setSuccessToast(null), 4000);
   };
 
@@ -1359,13 +1512,15 @@ export default function MismatchCase({ onClose, variant = 'satta' }: { onClose?:
   ).sort();
 
   const filteredMismatchList = mismatchList.filter(item => {
+    const q = searchQuery.toLowerCase();
     const matchesSearch = 
-      item.supplierName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      item.poNo.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      item.brokerName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      item.area.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      item.grade.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      item.issueDescription.toLowerCase().includes(searchQuery.toLowerCase());
+      item.supplierName.toLowerCase().includes(q) ||
+      item.poNo.toLowerCase().includes(q) ||
+      (item.mrNo ? item.mrNo.toLowerCase().includes(q) : false) ||
+      item.brokerName.toLowerCase().includes(q) ||
+      item.area.toLowerCase().includes(q) ||
+      item.grade.toLowerCase().includes(q) ||
+      item.issueDescription.toLowerCase().includes(q);
 
     const matchesStatus = 
       filterStatus === 'all' ? true : item.status === filterStatus;
@@ -1520,9 +1675,9 @@ export default function MismatchCase({ onClose, variant = 'satta' }: { onClose?:
           )).join("\n");
     } else {
       csvContent = "data:text/csv;charset=utf-8," 
-        + ["P.O. Number,Supplier,Broker,Area,Grade,Mismatched Fields,Status,Approved By,Remarks"]
+        + ["P.O. Number,M.R. Number,Supplier,Broker,Area,Grade,Mismatched Fields,Status,Approved By,Remarks"]
           .concat(mismatchList.map(item => 
-            `"${item.poNo}","${item.supplierName}","${item.brokerName}","${item.area}","${item.grade}","${item.mismatchedFields.join('; ')}","${item.status}","${item.resolvedBy || 'N/A'}","${item.resolutionNotes || 'N/A'}"`
+            `"${item.poNo}","${item.mrNo || 'N/A'}","${item.supplierName}","${item.brokerName}","${item.area}","${item.grade}","${item.mismatchedFields.join('; ')}","${item.status}","${item.resolvedBy || 'N/A'}","${item.resolutionNotes || 'N/A'}"`
           )).join("\n");
     }
     const encodedUri = encodeURI(csvContent);
@@ -1549,7 +1704,7 @@ export default function MismatchCase({ onClose, variant = 'satta' }: { onClose?:
             </h2>
             <p className="text-xs text-slate-500 font-medium mt-0.5">
               {variant === 'material' 
-                ? "Comparison across Sauda Check Point, Temporary P.O., and Material Inspections. Always fetched fresh from database."
+                ? "MR-wise comparison between Mill Inspection and Sauda Check Point only (Name-only matching, no numbers or codes). Always fetched fresh from database."
                 : "Validating contract rates registered in sauda_master (Sauda Desk) against active Satta Chart limits."}
             </p>
           </div>

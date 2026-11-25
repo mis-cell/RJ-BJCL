@@ -10,6 +10,12 @@ import {
   getPoContractLorryCount,
   getUniquePoLorryGroups
 } from '../services/settlementService';
+import {
+  areMrNumbersEqual,
+  extractRecordMrNo,
+  isValidFinalMrNo,
+  normalizeFinalMrNo
+} from '../lib/mrNumberUtils';
 
 export const hasDetailColData = (col?: PaymentDetailColumn): boolean => {
   if (!col) return false;
@@ -126,12 +132,10 @@ export async function resolvePaymentDeductionsForPoAndMr(params: {
   ).trim();
   const cleanPoNo = rawPoNo.replace(/^#/, '').trim();
 
-  const rawMrNo = String(
-    mrNo ||
-    arrival?.mr_no ||
-    arrival?.final_arrival_no ||
-    ''
-  ).trim();
+  const rawMrNo =
+    normalizeFinalMrNo(mrNo) ||
+    extractRecordMrNo(arrival) ||
+    '';
 
   // Rule: "Extra & Short" deduction MUST ONLY be deducted from the P.O. against the Last M.R. of that P.O.
   // All other per-MR deductions (Delivery Claim and Mill Inspection Deductions & Penalties) are resolved and displayed for every M.R.
@@ -270,28 +274,25 @@ export async function resolvePaymentDeductionsForPoAndMr(params: {
     new Set(
       [
         rawMrNo,
-        arrival?.mr_no,
-        arrival?.final_arrival_no,
+        extractRecordMrNo(arrival),
         mrNumPart ? `MR${mrNumPart}` : '',
         mrNumPart ? `MR-${mrNumPart}` : '',
         mrNumPart ? `MR0${mrNumPart}` : '',
         mrNumPart ? `MR00${mrNumPart}` : ''
       ]
         .map(v => String(v || '').trim())
-        .filter(v => Boolean(v) && !v.toUpperCase().startsWith('AR'))
+        .filter(v => isValidFinalMrNo(v))
     )
   );
 
-  // If no MR was explicitly passed and PO has only a single linked arrival, use that arrival's M.R. No.
+  // If no MR was explicitly passed and PO has only a single linked arrival, use that arrival's Final M.R. No.
   if (mrCandidateKeys.length === 0 && cleanPoNo && verifiedArrivals.length > 0) {
     const linked = getLinkedMrsForPo(cleanPoNo, verifiedArrivals);
     if (linked.length === 1) {
-      [linked[0].mr_no, linked[0].final_arrival_no]
-        .map(v => String(v || '').trim())
-        .filter(v => Boolean(v) && !v.toUpperCase().startsWith('AR'))
-        .forEach(k => {
-          if (!mrCandidateKeys.includes(k)) mrCandidateKeys.push(k);
-        });
+      const singleMr = extractRecordMrNo(linked[0]);
+      if (singleMr && !mrCandidateKeys.includes(singleMr)) {
+        mrCandidateKeys.push(singleMr);
+      }
     }
   }
 
@@ -1183,8 +1184,9 @@ export function getLinkedMrsForPo(poOrPoNo: any, arrivalsList: any[] = []): any[
   const targetDigits = cleanTarget.replace(/[^0-9]/g, '');
 
   return arrivalsList.filter(arr => {
-    const arrMr = String(arr.mr_no || arr.final_arrival_no || '').trim().toUpperCase();
-    if (boundMrNo && arrMr && arrMr === boundMrNo) return true;
+    const arrMr = extractRecordMrNo(arr);
+    if (!arrMr) return false;
+    if (boundMrNo && areMrNumbersEqual(arrMr, boundMrNo)) return true;
 
     const arrPo1 = String(arr.po_no || '').trim().toUpperCase().replace(/^#+/, '').trim();
     const arrPo2 = String(arr.mill_po_no || '').trim().toUpperCase().replace(/^#+/, '').trim();
@@ -1224,12 +1226,10 @@ export function isMrAlreadyProcessed(
     return { isPaid: false };
   }
 
-  const mrStr = typeof mrNoOrArrival === 'string'
-    ? mrNoOrArrival
-    : (mrNoOrArrival.mr_no || mrNoOrArrival.final_arrival_no || '');
-  
-  const cleanMr = String(mrStr).trim().toUpperCase();
-  if (!cleanMr || cleanMr === 'N/A') {
+  const cleanMr = typeof mrNoOrArrival === 'string'
+    ? normalizeFinalMrNo(mrNoOrArrival)
+    : extractRecordMrNo(mrNoOrArrival);
+  if (!cleanMr) {
     return { isPaid: false };
   }
 
@@ -1249,11 +1249,11 @@ export function isMrAlreadyProcessed(
       return false;
     }
 
-    const pMr = String(p.mr_no || '').trim().toUpperCase();
+    const pMr = extractRecordMrNo(p);
     if (!pMr) return false;
 
-    // Direct MR match
-    const isMrMatch = pMr === cleanMr;
+    // Direct / canonical MR match
+    const isMrMatch = areMrNumbersEqual(pMr, cleanMr);
 
     if (isMrMatch) {
       if (cleanPo) {

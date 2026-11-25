@@ -29,6 +29,14 @@ import {
   calculateNetPaidAmountAfterDeductions,
   resolvePaymentDeductionsForPoAndMr
 } from '../../utils/paymentCalculations';
+import {
+  areMrNumbersEqual,
+  extractFinalArrivalMrNo,
+  extractInspectionMrNo,
+  extractRecordMrNo,
+  isValidFinalMrNo,
+  normalizeFinalMrNo
+} from '../../lib/mrNumberUtils';
 
 export function usePaymentData(onSaveSuccess?: () => void) {
   const [loading, setLoading] = useState(false);
@@ -161,7 +169,7 @@ export function usePaymentData(onSaveSuccess?: () => void) {
 
     if (linkedMrs.length > 0) {
       return linkedMrs.some((mr: any) => {
-        const mrKey = String(mr.mr_no || mr.final_arrival_no || '').trim().toUpperCase();
+        const mrKey = extractRecordMrNo(mr);
         return mrKey && !paidMrSet.has(mrKey);
       });
     }
@@ -197,8 +205,8 @@ export function usePaymentData(onSaveSuccess?: () => void) {
 
   const availableArrivals = useMemo(() => {
     return verifiedArrivals.filter(arr => {
-      const mrKey = String(arr.mr_no || arr.final_arrival_no || '').trim().toUpperCase();
-      if (!mrKey || mrKey === 'N/A') return true;
+      const mrKey = extractRecordMrNo(arr);
+      if (!mrKey) return false;
       return !paidMrSet.has(mrKey);
     });
   }, [verifiedArrivals, paidMrSet]);
@@ -311,16 +319,17 @@ export function usePaymentData(onSaveSuccess?: () => void) {
 
         const combinedMap = new Map<string, any>();
 
-        // Strictly key verified arrivals by M.R. No. (never Arrival No. / AR...)
+        // Strictly key verified arrivals by Final M.R. No. (final_arrival.final_arrival_no / material_inspection.mr_no — never AR...)
         (faRes || []).forEach((item: any) => {
-          const key = String(item.mr_no || item.final_arrival_no || '').trim();
-          if (key && !key.toUpperCase().startsWith('AR')) {
+          const key = extractFinalArrivalMrNo(item);
+          if (key) {
             const existing = combinedMap.get(key) || {};
             combinedMap.set(key, {
               ...existing,
               ...item,
               mr_no: key,
-              arrival_no: item.arrival_no || item.temporary_arrival_no || existing.arrival_no || '',
+              final_arrival_no: key,
+              arrival_no: key,
               supplier: item.supplier || item.supplier_name || item.party_name || existing.supplier,
               broker: item.broker || item.broker_name || existing.broker,
               po_no: item.po_no || item.mill_po_no || existing.po_no,
@@ -330,14 +339,15 @@ export function usePaymentData(onSaveSuccess?: () => void) {
         });
 
         (mimRes || []).forEach((item: any) => {
-          const key = String(item.mr_no || '').trim();
-          if (key && !key.toUpperCase().startsWith('AR')) {
+          const key = extractInspectionMrNo(item);
+          if (key) {
             const existing = combinedMap.get(key) || {};
             combinedMap.set(key, {
               ...existing,
               ...item,
               mr_no: key,
-              arrival_no: item.arrival_no || existing.arrival_no || '',
+              final_arrival_no: existing.final_arrival_no || key,
+              arrival_no: key,
               supplier: item.supplier_name || item.supplier || existing.supplier,
               broker: item.broker_name || item.broker || existing.broker,
               po_no: item.po_no || item.mill_po_no || existing.po_no,
@@ -347,14 +357,15 @@ export function usePaymentData(onSaveSuccess?: () => void) {
         });
 
         (miRes || []).forEach((item: any) => {
-          const key = String(item.mr_no || '').trim();
-          if (key && !key.toUpperCase().startsWith('AR')) {
+          const key = extractInspectionMrNo(item);
+          if (key) {
             const existing = combinedMap.get(key) || {};
             combinedMap.set(key, {
               ...existing,
               ...item,
               mr_no: key,
-              arrival_no: item.arrival_no || existing.arrival_no || '',
+              final_arrival_no: existing.final_arrival_no || key,
+              arrival_no: key,
               supplier: item.supplier_name || item.supplier || existing.supplier,
               broker: item.broker_name || item.broker || existing.broker,
               po_no: item.po_no || item.mill_po_no || existing.po_no,
@@ -368,7 +379,7 @@ export function usePaymentData(onSaveSuccess?: () => void) {
 
       const rlByMrMap = new Map<string, any>();
       (returnLorries || []).forEach((rl: any) => {
-        const mrKey = String(rl.mr_no || rl.final_arrival_no || '').trim().toUpperCase();
+        const mrKey = extractRecordMrNo(rl);
         if (mrKey) rlByMrMap.set(mrKey, rl);
       });
 
@@ -409,7 +420,7 @@ export function usePaymentData(onSaveSuccess?: () => void) {
           return status !== 'cancelled' && status !== 'rejected';
         })
         .map(item => {
-          const mrKey = String(item.mr_no || item.final_arrival_no || '').trim().toUpperCase();
+          const mrKey = extractRecordMrNo(item);
           const matchedRl = mrKey ? rlByMrMap.get(mrKey) : null;
           if (matchedRl) {
             return {
@@ -723,18 +734,14 @@ export function usePaymentData(onSaveSuccess?: () => void) {
       }) || linkedMrs[0];
 
       if (matchingArrival && !selectedMrNo) {
-        const nextMr = matchingArrival.mr_no || matchingArrival.final_arrival_no || '';
+        const nextMr = extractRecordMrNo(matchingArrival);
         if (nextMr) handleMrSelection(nextMr, po);
       } else if (selectedMrNo) {
         const isCurrentPaid = isMrAlreadyProcessed(selectedMrNo, paymentList, isEdit ? masterData.voucher_no : undefined, poNo).isPaid;
-        const isCurrentLinked = linkedMrs.some(a => {
-          const arrMr = String(a.mr_no || a.final_arrival_no || '').trim().toUpperCase();
-          const target = String(selectedMrNo).trim().toUpperCase();
-          return arrMr === target || (arrMr.startsWith('MR') && target.startsWith('MR') && arrMr.replace(/^MR0*/, '') === target.replace(/^MR0*/, ''));
-        });
+        const isCurrentLinked = linkedMrs.some(a => areMrNumbersEqual(extractRecordMrNo(a), selectedMrNo));
         if (isCurrentPaid || !isCurrentLinked) {
           if (matchingArrival) {
-            const nextMr = matchingArrival.mr_no || matchingArrival.final_arrival_no || '';
+            const nextMr = extractRecordMrNo(matchingArrival);
             if (nextMr) handleMrSelection(nextMr, po);
           } else {
             setSelectedMrNo('');
@@ -742,7 +749,7 @@ export function usePaymentData(onSaveSuccess?: () => void) {
           }
         }
       } else if (matchingArrival) {
-        const nextMr = matchingArrival.mr_no || matchingArrival.final_arrival_no || '';
+        const nextMr = extractRecordMrNo(matchingArrival);
         if (nextMr) handleMrSelection(nextMr, po);
       }
     }
@@ -761,11 +768,7 @@ export function usePaymentData(onSaveSuccess?: () => void) {
       return;
     }
 
-    let arrival = verifiedArrivals.find(a => {
-      const arrMr = String(a.mr_no || a.final_arrival_no || '').trim().toUpperCase();
-      const target = String(mrNo).trim().toUpperCase();
-      return Boolean(arrMr && target && (arrMr === target || (arrMr.startsWith('MR') && target.startsWith('MR') && arrMr.replace(/^MR0*/, '') === target.replace(/^MR0*/, ''))));
-    });
+    let arrival = verifiedArrivals.find(a => areMrNumbersEqual(extractRecordMrNo(a), mrNo));
 
     // Fallback if not found in verifiedArrivals (strictly match mr_no, never arrival_no)
     if (!arrival && supabase) {
@@ -841,18 +844,17 @@ export function usePaymentData(onSaveSuccess?: () => void) {
       
       if (supabase) {
         try {
-          const targetMr = String(arrival.mr_no || arrival.final_arrival_no || mrNo || '').trim();
+          const targetMr = extractRecordMrNo(arrival) || normalizeFinalMrNo(mrNo);
           const mrNum = /^MR/i.test(targetMr) ? targetMr.replace(/^MR[-_ ]?/i, '') : '';
           const candidateKeys = Array.from(new Set([
             targetMr,
-            mrNo,
-            arrival.mr_no,
-            arrival.final_arrival_no,
+            normalizeFinalMrNo(mrNo),
+            extractRecordMrNo(arrival),
             mrNum ? `MR${mrNum}` : '',
             mrNum ? `MR-${mrNum}` : '',
             mrNum ? `MR0${mrNum}` : '',
             mrNum ? `MR00${mrNum}` : ''
-          ].map(v => String(v || '').trim()).filter(v => v && !v.toUpperCase().startsWith('AR'))));
+          ].map(v => String(v || '').trim()).filter(v => isValidFinalMrNo(v))));
 
           for (const key of candidateKeys) {
             const midRes = await supabase
@@ -980,11 +982,12 @@ export function usePaymentData(onSaveSuccess?: () => void) {
       );
       const mrWeight = Number(arrival.electronic_net_weight || arrival.weight_qtl || 0);
 
+      const resolvedMrNo = extractRecordMrNo(arrival) || normalizeFinalMrNo(mrNo);
       const deductions = await resolvePaymentDeductionsForPoAndMr({
         po,
         poNo,
         arrival,
-        mrNo: arrival.mr_no || arrival.final_arrival_no || mrNo,
+        mrNo: resolvedMrNo,
         cols,
         saudaCheckPoints,
         purchaseOrders,
@@ -1001,7 +1004,7 @@ export function usePaymentData(onSaveSuccess?: () => void) {
 
       setMasterData(prev => ({
         ...prev,
-        mr_no: arrival.mr_no || arrival.final_arrival_no || mrNo,
+        mr_no: resolvedMrNo,
         po_no: poNo || prev.po_no,
         po_date: po?.po_date || po?.s_date || arrival.po_date || arrival.date || prev.po_date,
         supplier: arrival.supplier || po?.supplier || prev.supplier,
@@ -1009,7 +1012,7 @@ export function usePaymentData(onSaveSuccess?: () => void) {
         broker: arrival.broker || po?.broker || prev.broker,
         po_type: po?.po_type || 'Standard',
         lorry_number: arrival.lorry_number || arrival.vehicle_no || prev.lorry_number,
-        arrival_no: arrival.arrival_no || prev.arrival_no,
+        arrival_no: resolvedMrNo || prev.arrival_no,
         arrival_date: arrival.date || deductions.arrivalDate || prev.arrival_date,
         total_amount: grossVal > 0 ? grossVal : Math.round(prev.total_amount || 0),
         payable_amt: grossVal > 0 ? grossVal : Math.round(prev.payable_amt || 0),

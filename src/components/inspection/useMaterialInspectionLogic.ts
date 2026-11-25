@@ -24,6 +24,7 @@ import {
   calculateInspectionWeightMt,
   fetchAllReturnLorries,
 } from "../../services/returnLorryService";
+import { areMrNumbersEqual, extractFinalArrivalMrNo, extractInspectionMrNo } from "../../lib/mrNumberUtils";
 
 export function useMaterialInspectionLogic(onLogEvent?: (event: string, details: string) => void) {
   // Autocomplete lists from database
@@ -637,10 +638,14 @@ export function useMaterialInspectionLogic(onLogEvent?: (event: string, details:
             } catch (e) {}
           }
         }
-        const matchedFa = (arrivalsData || []).find((f: any) => norm(f.final_arrival_no || f.mr_no) === norm(updated.mr_no));
+        const inspMrNo = extractInspectionMrNo(updated);
+        const matchedFa = (arrivalsData || []).find((f: any) => {
+          const faMr = extractFinalArrivalMrNo(f);
+          return Boolean(faMr && inspMrNo && areMrNumbersEqual(faMr, inspMrNo));
+        });
         const wtMt = calculateInspectionWeightMt(updated, parsedGrid, matchedFa);
         updated.received_weight_mt = wtMt;
-        const matchedRl = rlByMr.get(norm(updated.mr_no));
+        const matchedRl = rlByMr.get(inspMrNo || norm(updated.mr_no));
         if (matchedRl) {
           updated.is_return_lorry = true;
           updated.return_po_no = matchedRl.new_po_no || matchedRl.po_no;
@@ -726,36 +731,21 @@ export function useMaterialInspectionLogic(onLogEvent?: (event: string, details:
           }
         }
 
-        const { data: tempArrival } = await supabase
-          .from("temporary_material_received")
-          .select("temporary_arrival_no")
+        const { data: finalArrival } = await supabase
+          .from("final_arrival")
+          .select("final_arrival_no, arrival_no, mr_no")
           .eq("po_no", masterData.po_no.trim())
           .limit(1)
           .maybeSingle();
 
-        if (tempArrival && tempArrival.temporary_arrival_no) {
+        const resolvedFinalMr = extractFinalArrivalMrNo(finalArrival);
+        if (resolvedFinalMr) {
           setMasterData((prev) => {
-            if (!prev.arrival_no && !prev.mr_no && prev.arrival_no !== tempArrival.temporary_arrival_no) {
-              return { ...prev, arrival_no: tempArrival.temporary_arrival_no };
+            if (!prev.arrival_no && !prev.mr_no && prev.arrival_no !== resolvedFinalMr) {
+              return { ...prev, arrival_no: resolvedFinalMr, mr_no: resolvedFinalMr };
             }
             return prev;
           });
-        } else {
-          const { data: finalArrival } = await supabase
-            .from("final_arrival")
-            .select("temporary_arrival_no")
-            .eq("po_no", masterData.po_no.trim())
-            .limit(1)
-            .maybeSingle();
-
-          if (finalArrival && finalArrival.temporary_arrival_no) {
-            setMasterData((prev) => {
-              if (!prev.arrival_no && !prev.mr_no && prev.arrival_no !== finalArrival.temporary_arrival_no) {
-                return { ...prev, arrival_no: finalArrival.temporary_arrival_no };
-              }
-              return prev;
-            });
-          }
         }
       } catch (err) {
         console.warn("Failed to fetch exact PO and Temporary Arrival No:", err);

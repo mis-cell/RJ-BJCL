@@ -38,6 +38,7 @@ import {
   isManualLockedDeduction,
   saveDeductionRowRealtime
 } from '../services/excessShortAutoSyncService';
+import { extractInspectionMrNo } from '../lib/mrNumberUtils';
 
 interface ExcessShortSettlementModalProps {
   po: any;
@@ -424,8 +425,8 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
 
         (activeInsps || []).forEach((insp: any) => {
           if (matchesTarget(insp.po_no, insp.sauda_no || insp.contract_po_no || insp.po_contract)) {
-            const num = String(insp.mr_no || '').trim();
-            if (num && num.toUpperCase() !== 'NO' && num.toUpperCase() !== 'N/A' && num !== '-') {
+            const num = extractInspectionMrNo(insp);
+            if (num) {
               matchedMrSet.add(num);
             }
           }
@@ -555,8 +556,8 @@ export const ExcessShortSettlementModal: React.FC<ExcessShortSettlementModalProp
     const uniqueMrMap = new Map<string, { mrNo: string; date: string; rawDate: string; source: any }>();
 
     matchingInsps.forEach((insp: any) => {
-      const num = String(insp.mr_no || '').trim();
-      if (num && num.toUpperCase() !== 'NO' && num.toUpperCase() !== 'N/A' && num !== '-') {
+      const num = extractInspectionMrNo(insp);
+      if (num) {
         const rawD = normalizeToYMD(insp.arrival_date || insp.mr_date || insp.inspection_date || insp.date || insp.created_at || '');
         const key = canonicalMrKey(num);
         const existing = uniqueMrMap.get(key);

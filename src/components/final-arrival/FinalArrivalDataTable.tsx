@@ -16,6 +16,7 @@ import {
   getLowestNetWeight, 
   getQualityParams 
 } from './finalArrivalTypes';
+import { extractFinalArrivalMrNo } from '../../lib/mrNumberUtils';
 
 interface FinalArrivalDataTableProps {
   loading: boolean;
@@ -128,7 +129,8 @@ export function FinalArrivalDataTable({
                 const formattedDate = r.date ? new Date(r.date).toLocaleDateString('en-GB') : '--';
                 const bales = getRcptQty(r);
                 const weightMt = getLowestNetWeight(r);
-                const isPending = !r.mr_no || r.mr_no.trim() === '' || r.mr_no.trim().toUpperCase() === 'DIRECT REGISTER';
+                const canonicalMrNo = extractFinalArrivalMrNo(r);
+                const isPending = !canonicalMrNo;
                 const isVoid = r.status === 'cancelled';
                 
                 return (
@@ -171,7 +173,7 @@ export function FinalArrivalDataTable({
 
                     {/* M.R. No. (from final_arrival.final_arrival_no) */}
                     <td className={cn("text-center font-black font-mono px-2 border-r border-gray-200 whitespace-nowrap", isSelected ? "text-indigo-950" : isPending ? "text-amber-700" : "text-emerald-800")}>
-                      {String(r.final_arrival_no || (!isPending && r.mr_no ? r.mr_no : '') || '--').replace(/^#+/, '').trim() || '--'}
+                      {canonicalMrNo || '--'}
                     </td>
 
                     {/* PO No */}

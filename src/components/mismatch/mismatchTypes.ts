@@ -35,6 +35,8 @@ export const GRADE_SATTA_VARIANCE_LIMITS: Record<string, number> = {
 export interface MaterialMismatchItem {
   id: string;
   poNo: string;
+  mrNo?: string;
+  mrDate?: string;
   saudaNo: string;
   supplierName: string;
   brokerName: string;

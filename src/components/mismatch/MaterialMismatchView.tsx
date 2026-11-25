@@ -30,7 +30,7 @@ interface MaterialMismatchViewProps {
   setPageSize: (size: number) => void;
   remarksMap: Record<string, string>;
   setRemarksMap: React.Dispatch<React.SetStateAction<Record<string, string>>>;
-  handleResolve: (itemId: string, itemPoNo: string) => void;
+  handleResolve: (itemId: string, itemPoNo: string, itemMrNo?: string) => void;
 }
 
 export const MaterialMismatchView: React.FC<MaterialMismatchViewProps> = ({
@@ -193,7 +193,7 @@ export const MaterialMismatchView: React.FC<MaterialMismatchViewProps> = ({
                 type="text"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="PO, Area, Grade, Discrepancy..."
+                placeholder="PO, MR No, Area, Grade, Discrepancy..."
                 className="w-full text-xs pl-8 pr-3 py-1.5 border border-slate-300 rounded bg-white focus:outline-none focus:border-indigo-600 text-slate-800 font-medium"
               />
             </div>
@@ -221,7 +221,7 @@ export const MaterialMismatchView: React.FC<MaterialMismatchViewProps> = ({
             <table className="w-full text-left border-collapse text-xs">
               <thead>
                 <tr className="bg-slate-100 border-b border-slate-300 text-slate-700 font-bold uppercase text-[10.5px] tracking-wider">
-                  <th className="p-3 border-r border-slate-200">P.O. Number & Date</th>
+                  <th className="p-3 border-r border-slate-200">P.O. / M.R. Number & Date</th>
                   <th className="p-3 border-r border-slate-200">Supplier & Broker</th>
                   <th className="p-3 border-r border-slate-200">Area & Grade</th>
                   <th className="p-3 border-r border-slate-200 bg-indigo-50/50 text-indigo-950 font-black">
@@ -235,7 +235,7 @@ export const MaterialMismatchView: React.FC<MaterialMismatchViewProps> = ({
               <tbody className="divide-y divide-slate-200">
                 {filteredMismatchList.slice((currentPage - 1) * pageSize, currentPage * pageSize).map(item => (
                   <tr key={item.id} className="hover:bg-slate-50/80 transition align-top">
-                    {/* PO Number & Date */}
+                    {/* PO & MR Number & Date */}
                     <td className="p-3 border-r border-slate-200 font-mono">
                       <div className="font-extrabold text-slate-900 text-sm flex items-center gap-1.5 flex-wrap">
                         <span>{item.poNo}</span>
@@ -246,6 +246,18 @@ export const MaterialMismatchView: React.FC<MaterialMismatchViewProps> = ({
                           </span>
                         )}
                       </div>
+                      {item.mrNo && (
+                        <div className="mt-1 flex items-center gap-1.5 flex-wrap">
+                          <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-900 border border-indigo-200">
+                            M.R: {item.mrNo}
+                          </span>
+                          {item.lorryNumber && item.lorryNumber !== 'N/A' && (
+                            <span className="text-[9.5px] font-semibold text-slate-500">
+                              {item.lorryNumber}
+                            </span>
+                          )}
+                        </div>
+                      )}
                       <div className="text-[10px] text-slate-500 font-semibold mt-0.5">
                         Detected: {item.detectedAt}
                       </div>
@@ -360,7 +372,7 @@ export const MaterialMismatchView: React.FC<MaterialMismatchViewProps> = ({
                               className="w-full text-xs p-1.5 border border-slate-300 rounded focus:ring-1 focus:ring-emerald-600 focus:border-emerald-600 bg-white"
                             />
                             <button
-                              onClick={() => handleResolve(item.id, item.poNo)}
+                              onClick={() => handleResolve(item.id, item.poNo, item.mrNo)}
                               className="w-full bg-emerald-700 hover:bg-emerald-800 text-white font-black uppercase px-3 py-1.5 rounded text-[10.5px] tracking-wider transition flex items-center justify-center gap-1.5 shadow-xs"
                             >
                               <Check className="h-4 w-4" />

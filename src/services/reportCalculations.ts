@@ -21,6 +21,7 @@ import {
   extractContractNumber,
   isPtfRecord
 } from './reportHelpers';
+import { extractFinalArrivalMrNo } from '../lib/mrNumberUtils';
 
 
 // Compile all raw transactional tables into structured, accurate percentage data
@@ -171,12 +172,13 @@ export function compileReportData(
     if (!mrByPO[cleanKey]) {
       mrByPO[cleanKey] = { finalMT: 0, tempMT: 0, finalMRs: [], tempMRs: [], lastDate: '', arrivals: [] };
     }
-    const mrUniqueId = String(mrObj.id || mrObj.final_arrival_id || mrObj.mr_no || mrObj.final_arrival_no || mrObj.amad_no || '');
-    if (mrUniqueId && mrByPO[cleanKey].arrivals.some((a: any) => String(a.id || a.final_arrival_id || a.mr_no || a.final_arrival_no || a.amad_no || '') === mrUniqueId)) {
+    const canonicalMr = extractFinalArrivalMrNo(mrObj);
+    const mrUniqueId = String(mrObj.id || mrObj.final_arrival_id || canonicalMr || mrObj.final_arrival_no || '');
+    if (mrUniqueId && mrByPO[cleanKey].arrivals.some((a: any) => String(a.id || a.final_arrival_id || extractFinalArrivalMrNo(a) || a.final_arrival_no || '') === mrUniqueId)) {
       return;
     }
     mrByPO[cleanKey].finalMT += wtMT;
-    const mrNum = mrObj.mr_no || mrObj.final_arrival_no || mrObj.amad_no;
+    const mrNum = canonicalMr || mrObj.final_arrival_no || '';
     if (mrNum && !mrByPO[cleanKey].finalMRs.includes(mrNum)) {
       mrByPO[cleanKey].finalMRs.push(mrNum);
     }
@@ -206,7 +208,7 @@ export function compileReportData(
     // Index under deduplicated contract keys so overlapping aliases (e.g. cleanDigits === contractNum) never double-count
     const rawPo = String(mr.po_no || '').trim().toUpperCase();
     const rawId = String(mr.po_id || '').trim().toUpperCase();
-    const rawAmad = String(mr.amad_no || mr.mr_no || mr.final_arrival_no || '').trim().toUpperCase();
+    const rawAmad = String(extractFinalArrivalMrNo(mr) || mr.final_arrival_no || '').trim().toUpperCase();
     const cleanDigits = getCleanDigits(rawPo);
     const contractNum = extractContractNumber(rawPo);
 

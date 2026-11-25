@@ -14,6 +14,7 @@ import {
   calculateNetWeightVal 
 } from './finalArrivalTypes';
 import { parseMonthKey } from '../common/MonthWiseCardsRibbon';
+import { areMrNumbersEqual, extractFinalArrivalMrNo, extractInspectionMrNo, isValidFinalMrNo } from '../../lib/mrNumberUtils';
 
 interface UseFinalArrivalRegisterLogicProps {
   isArchiveView?: boolean;
@@ -157,15 +158,17 @@ export function useFinalArrivalRegisterLogic({ isArchiveView = false }: UseFinal
       }
 
       loadedRecords = loadedRecords.map(r => {
-        const keys = [(r as any).temporary_arrival_no, r.final_arrival_no, (r as any).arrival_no, r.mr_no]
+        const keys = [r.final_arrival_no, (r as any).arrival_no, r.mr_no, (r as any).temporary_arrival_no]
           .map(k => String(k || '').trim().toUpperCase())
           .filter(Boolean);
 
-        let resolvedMrNo = r.mr_no && r.mr_no.trim().toUpperCase() !== 'DIRECT REGISTER' ? r.mr_no.trim() : '';
+        // Authoritative M.R. No. comes strictly from final_arrival.final_arrival_no (MR...)
+        let resolvedMrNo = extractFinalArrivalMrNo(r);
         if (!resolvedMrNo) {
           for (const k of keys) {
-            if (inspMrByArrival.has(k)) {
-              resolvedMrNo = inspMrByArrival.get(k)!;
+            const candidate = inspMrByArrival.get(k);
+            if (candidate && isValidFinalMrNo(candidate)) {
+              resolvedMrNo = candidate.trim().toUpperCase();
               break;
             }
           }
@@ -246,15 +249,17 @@ export function useFinalArrivalRegisterLogic({ isArchiveView = false }: UseFinal
 
       const conflictsList: DetectedConflict[] = [];
       arrivals.forEach((record) => {
+        const recFinalMr = extractFinalArrivalMrNo(record);
         const match = inspections.find(ins => {
-          if (record?.mr_no && ins?.mr_no && String(record.mr_no).trim().toUpperCase() === String(ins.mr_no).trim().toUpperCase()) {
+          const insMr = extractInspectionMrNo(ins);
+          if (recFinalMr && insMr && areMrNumbersEqual(recFinalMr, insMr)) {
             return true;
           }
           const insArrivalNo = String(ins?.arrival_no || '').trim().toUpperCase();
           const recTempArrivalNo = String(record?.temporary_arrival_no || '').trim().toUpperCase();
           const recFinalArrivalNo = String(record?.final_arrival_no || '').trim().toUpperCase();
           
-          const amadMatch = insArrivalNo && (insArrivalNo === recTempArrivalNo || insArrivalNo === recFinalArrivalNo);
+          const amadMatch = insArrivalNo && (insArrivalNo === recFinalArrivalNo || insArrivalNo === recTempArrivalNo);
           
           const insSupplier = String(ins?.supplier_name || '').trim().toUpperCase();
           const recSupplier = String(record?.supplier || '').trim().toUpperCase();
@@ -345,7 +350,7 @@ export function useFinalArrivalRegisterLogic({ isArchiveView = false }: UseFinal
       }
 
       const pendingRecords = arrivals.filter(r => {
-        const isPending = !r.mr_no || r.mr_no.trim() === '' || r.mr_no.trim().toUpperCase() === 'DIRECT REGISTER';
+        const isPending = !isValidFinalMrNo(r.mr_no);
         return isPending;
       });
 

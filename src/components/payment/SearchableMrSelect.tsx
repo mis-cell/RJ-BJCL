@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Search, X, ChevronRight, CheckCircle2 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { getLinkedMrsForPo } from '../../utils/paymentCalculations';
+import { areMrNumbersEqual, extractRecordMrNo } from '../../lib/mrNumberUtils';
 
 export interface SearchableMrSelectProps {
   selectedMrNo: string;
@@ -47,15 +48,13 @@ export const SearchableMrSelect: React.FC<SearchableMrSelectProps> = ({
 
 
   const filteredList = baseList.filter((arr) => {
-    const mrNo = String(
-      arr.mr_no || arr.final_arrival_no || ""
-    ).toLowerCase();
-
-    // Show only MR series
-    if (!mrNo.startsWith("mr")) return false;
+    const canonicalMr = extractRecordMrNo(arr);
+    // Show only valid Final M.R. numbers (never AR...)
+    if (!canonicalMr) return false;
 
     if (!normalizedSearch) return true;
 
+    const mrNo = canonicalMr.toLowerCase();
     const supp = String(arr.supplier || arr.supplier_name || "").toLowerCase();
     const poNo = String(arr.po_no || arr.mill_po_no || "").toLowerCase();
     const lorry = String(arr.lorry_number || "").toLowerCase();
@@ -68,25 +67,12 @@ export const SearchableMrSelect: React.FC<SearchableMrSelectProps> = ({
     );
   });
 
-  /* const filteredList = baseList.filter(arr => {
-    if (!normalizedSearch) return true;zz
-    const mrNo = String(arr.mr_no || arr.final_arrival_no || arr.arrival_no || '').toLowerCase();
-    const supp = String(arr.supplier || arr.supplier_name || '').toLowerCase();
-    const poNo = String(arr.po_no || arr.mill_po_no || '').toLowerCase();
-    const lorry = String(arr.lorry_number || '').toLowerCase();
-    return mrNo.includes(normalizedSearch) || supp.includes(normalizedSearch) || poNo.includes(normalizedSearch) || lorry.includes(normalizedSearch);
-  }); */
-
   const masterListToFind = allArrivals || verifiedArrivals;
-  const selectedArr = masterListToFind.find(a => {
-    const arrMr = String(a.mr_no || a.final_arrival_no || '').trim().toUpperCase();
-    const target = String(selectedMrNo).trim().toUpperCase();
-    return Boolean(arrMr && target && (arrMr === target || (arrMr.startsWith('MR') && target.startsWith('MR') && arrMr.replace(/^MR0*/, '') === target.replace(/^MR0*/, ''))));
-  });
+  const selectedArr = masterListToFind.find(a => areMrNumbersEqual(extractRecordMrNo(a), selectedMrNo));
 
   const getLabel = () => {
     if (selectedArr) {
-      const mr = selectedArr.mr_no || selectedArr.final_arrival_no || selectedMrNo;
+      const mr = extractRecordMrNo(selectedArr) || selectedMrNo;
       const supp = selectedArr.supplier || selectedArr.supplier_name || selectedArr.party_name || 'N/A';
       const po = selectedArr.po_no || selectedArr.mill_po_no || 'N/A';
       const lorry = (selectedArr.lorry_number || selectedArr.lorry_no) ? ` | Lorry: ${selectedArr.lorry_number || selectedArr.lorry_no}` : '';
@@ -169,8 +155,8 @@ export const SearchableMrSelect: React.FC<SearchableMrSelectProps> = ({
             </div>
 
             {filteredList.map((arr, i) => {
-              const mr = arr.mr_no || arr.final_arrival_no || '';
-              const isSelected = selectedMrNo === mr;
+              const mr = extractRecordMrNo(arr);
+              const isSelected = areMrNumbersEqual(selectedMrNo, mr);
 
               return (
                 <div

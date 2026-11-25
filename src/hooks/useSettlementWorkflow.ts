@@ -11,6 +11,13 @@ import LegacyLayout from "../components/LegacyLayout";
 import { supabase } from "../lib/supabase";
 import { dbModule } from "../services/dbModule";
 import { cn, sanitizeCsvData } from "../lib/utils";
+import {
+  extractFinalArrivalMrNo,
+  extractInspectionMrNo,
+  extractRecordMrNo,
+  normalizeFinalMrNo,
+  areMrNumbersEqual
+} from "../lib/mrNumberUtils";
 import { enforceEditOrDeletePermission, canEditOrDelete, canViewCompletedData, isL5OrAdmin } from "../lib/permissions";
 import { findMatchedPoItem, parseGridOrItems, getColSettRate, calculateSattaDeduction } from "../utils/paymentCalculations";
 import { setCachedSattaDiffs, getCachedSattaDiffs } from "../services/sattaCalculation";
@@ -635,12 +642,11 @@ export function useSettlementWorkflow({ onClose, onLogEvent }: { onClose?: () =>
             const normLorry = (v: any) => String(v || '').replace(/[^A-Za-z0-9]/g, '').toUpperCase();
             const expectedLorry = normLorry(inspRecord?.lorry_number || activeMaster.lorry_number);
             const matchedFa =
-              faCandidates.find((f: any) => String(f.final_arrival_no || '').trim().toUpperCase() === cleanTargetMr.toUpperCase()) ||
+              faCandidates.find((f: any) => areMrNumbersEqual(extractFinalArrivalMrNo(f), cleanTargetMr)) ||
               faCandidates.find((f: any) => {
                 const fLorry = normLorry(f.lorry_number || f.lorry_no || f.vehicle_no);
                 if (expectedLorry && fLorry && expectedLorry !== fLorry) return false;
-                const fMr = String(f.mr_no || f.final_arrival_no || '').trim().toUpperCase();
-                return fMr === cleanTargetMr.toUpperCase();
+                return areMrNumbersEqual(extractFinalArrivalMrNo(f), cleanTargetMr);
               });
             if (matchedFa) faRecord = matchedFa;
           }
@@ -917,8 +923,8 @@ export function useSettlementWorkflow({ onClose, onLogEvent }: { onClose?: () =>
       }
     });
     purchaseOrders.forEach((po: any) => {
-      const mr = String(po.mr_no || po.final_arrival_no || '').trim().toUpperCase();
-      if (mr && mr !== 'NO' && mr !== 'N/A' && mr !== 'NONE') {
+      const mr = extractRecordMrNo(po);
+      if (mr) {
         const p = String(po.po_no || '').trim().replace(/^#/, '').toUpperCase();
         if (p) {
           boundPoSet.add(p);
@@ -985,7 +991,7 @@ export function useSettlementWorkflow({ onClose, onLogEvent }: { onClose?: () =>
       seen.add(key);
 
       const matchedInsp = inspections.find(
-        (insp: any) => String(insp.mr_no || insp.final_arrival_no || '').trim().toUpperCase() === key
+        (insp: any) => areMrNumbersEqual(extractRecordMrNo(insp), key)
       );
       const lorryVal =
         pay.lorry_number ||
@@ -1009,8 +1015,8 @@ export function useSettlementWorkflow({ onClose, onLogEvent }: { onClose?: () =>
 
     // Secondary Fallback: also include inspected arrivals (material_inspection / final_arrival) matching selectedPoNo
     inspections.forEach((insp: any) => {
-      const mrVal = String(insp.mr_no || insp.final_arrival_no || '').trim();
-      if (!mrVal || mrVal.toUpperCase() === 'NO' || mrVal.toUpperCase() === 'N/A' || mrVal === '-' || mrVal.toUpperCase().startsWith('AR')) return;
+      const mrVal = extractRecordMrNo(insp);
+      if (!mrVal) return;
       const key = mrVal.toUpperCase();
       if (seen.has(key)) return;
 
@@ -1276,26 +1282,26 @@ export function useSettlementWorkflow({ onClose, onLogEvent }: { onClose?: () =>
           return false;
         };
 
-        // Priority 1: material_inspection (Mill Inspection primary — strictly by M.R. No.)
+        // Priority 1: material_inspection (Mill Inspection primary — strictly by material_inspection.mr_no)
         if (matInspRes) {
           for (const item of matInspRes) {
-            const mrKey = String(item.mr_no || item.final_arrival_no || '').trim();
-            if (mrKey && !mrKey.toUpperCase().startsWith('AR') && !checkAndMarkSeen(item)) {
+            const mrKey = extractInspectionMrNo(item);
+            if (mrKey && !checkAndMarkSeen(item)) {
               const boundPo = resolveBoundPoForItem(item);
-              combinedInspections.push(boundPo ? { ...item, po_no: boundPo } : item);
+              const normalizedItem = { ...item, mr_no: mrKey, final_arrival_no: mrKey };
+              combinedInspections.push(boundPo ? { ...normalizedItem, po_no: boundPo } : normalizedItem);
             }
           }
         }
 
-        // Priority 2: final_arrival (strictly by M.R. No.)
+        // Priority 2: final_arrival (strictly by final_arrival.final_arrival_no — overwrite legacy AR... mr_no)
         if (faRes) {
           for (const item of faRes) {
-            const mrKey = String(item.final_arrival_no || item.mr_no || '').trim();
-            if (mrKey && !mrKey.toUpperCase().startsWith('AR') && !checkAndMarkSeen(item)) {
-              if (!item.mr_no) item.mr_no = mrKey;
-              if (!item.final_arrival_no) item.final_arrival_no = mrKey;
+            const mrKey = extractFinalArrivalMrNo(item);
+            if (mrKey && !checkAndMarkSeen(item)) {
               const boundPo = resolveBoundPoForItem(item);
-              combinedInspections.push(boundPo ? { ...item, po_no: boundPo } : item);
+              const normalizedItem = { ...item, mr_no: mrKey, final_arrival_no: mrKey };
+              combinedInspections.push(boundPo ? { ...normalizedItem, po_no: boundPo } : normalizedItem);
             }
           }
         }
@@ -2562,19 +2568,12 @@ export function useSettlementWorkflow({ onClose, onLogEvent }: { onClose?: () =>
       // 2. Build new settlement prioritizing material_inspection (inspMaster) and payment_master (payMasterRec) over final_arrival (faMaster)
       if (inspMaster || payMasterRec || faMaster) {
         setIsEdit(false);
-        const isMrSeriesStr = (s: any) => Boolean(s && String(s).trim().toUpperCase().startsWith('MR'));
-        let resolvedMrNo = targetMrNo;
-        if (isMrSeriesStr(targetMrNo)) {
-          resolvedMrNo = targetMrNo;
-        } else if (isMrSeriesStr(inspMaster?.mr_no)) {
-          resolvedMrNo = inspMaster.mr_no;
-        } else if (isMrSeriesStr(payMasterRec?.mr_no)) {
-          resolvedMrNo = payMasterRec.mr_no;
-        } else if (isMrSeriesStr(faMaster?.mr_no)) {
-          resolvedMrNo = faMaster.mr_no;
-        } else {
-          resolvedMrNo = inspMaster?.mr_no || payMasterRec?.mr_no || targetMrNo || faMaster?.mr_no || faMaster?.final_arrival_no || faMaster?.arrival_no || '';
-        }
+        const resolvedMrNo =
+          normalizeFinalMrNo(targetMrNo) ||
+          extractInspectionMrNo(inspMaster) ||
+          normalizeFinalMrNo(payMasterRec?.mr_no) ||
+          extractFinalArrivalMrNo(faMaster) ||
+          '';
 
         const resolvedPoVal = inspMaster?.po_no || payMasterRec?.po_no || faMaster?.po_no || effectivePoNo || '';
         const prefilledMaster: SettlementMaster = {

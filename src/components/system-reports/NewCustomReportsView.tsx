@@ -20,6 +20,7 @@ import { exportToCSV } from '../../utils/exportHelpers';
 import { ReportFilterCriteria } from '../../services/systemReportEngine';
 import { calculateWeightTolerance } from '../../lib/weightTolerance';
 import { ExcessShortSettlementModal } from '../ExcessShortSettlementModal';
+import { extractFinalArrivalMrNo, extractInspectionMrNo } from '../../lib/mrNumberUtils';
 
 export type NewReportTab =
   | 'outstanding_po'
@@ -736,7 +737,7 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
           const { tmr, fa, mi, sett } = params;
           const isMrSeries = (v: any) => Boolean(v && String(v).trim().toUpperCase().startsWith('MR'));
 
-          const rawMrCandidates = [mi?.mr_no, sett?.mr_no, fa?.mr_no, tmr?.mr_no];
+          const rawMrCandidates = [extractInspectionMrNo(mi), sett?.mr_no, extractFinalArrivalMrNo(fa), fa?.final_arrival_no, fa?.mr_no, tmr?.mr_no];
           const mrSeriesMatch = rawMrCandidates.find(isMrSeries);
           const tempArrivalNo = String(
             tmr?.temporary_arrival_no ||
@@ -750,7 +751,7 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
             ''
           ).trim();
 
-          let resolvedMrNo = String(mrSeriesMatch || mi?.mr_no || sett?.mr_no || fa?.mr_no || tempArrivalNo || '').trim();
+          let resolvedMrNo = String(mrSeriesMatch || extractInspectionMrNo(mi) || extractFinalArrivalMrNo(fa) || sett?.mr_no || fa?.final_arrival_no || tempArrivalNo || '').trim();
           if (!resolvedMrNo) return;
 
           // Match against Mill Inspection / Settlement by core digits if not already MR series
@@ -911,8 +912,8 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
         });
 
         rawFa.forEach((fa: any) => {
-          const faDigits = extractCoreDigits(fa.mr_no || fa.final_arrival_no || fa.arrival_no);
-          const matchedMi = rawMatInsp.find((m: any) => faDigits && extractCoreDigits(m.mr_no || m.arrival_no) === faDigits);
+          const faDigits = extractCoreDigits(extractFinalArrivalMrNo(fa) || fa.final_arrival_no || fa.mr_no || fa.arrival_no);
+          const matchedMi = rawMatInsp.find((m: any) => faDigits && extractCoreDigits(extractInspectionMrNo(m) || m.mr_no || m.arrival_no) === faDigits);
           const matchedSett = rawSettlements.find((s: any) => faDigits && extractCoreDigits(s.mr_no || s.arrival_no) === faDigits);
           registerDeliveryClaimCandidate({ fa, mi: matchedMi, sett: matchedSett });
         });

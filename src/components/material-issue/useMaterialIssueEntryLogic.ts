@@ -6,6 +6,7 @@ import {
   SplitTotals, 
   ReconciliationStatus 
 } from './entryTypes';
+import { extractRecordMrNo, areMrNumbersEqual } from '../../lib/mrNumberUtils';
 
 interface UseMaterialIssueEntryLogicProps {
   formData: any;
@@ -65,10 +66,11 @@ export function useMaterialIssueEntryLogic({
     if (formData.requisition_no) {
       const reqKey = String(formData.requisition_no || '').trim().toUpperCase();
       const matched = finalArrivals.find(
-        (a) => String(a.mr_no || a.final_arrival_no || '').trim().toUpperCase() === reqKey
+        (a) => areMrNumbersEqual(extractRecordMrNo(a), reqKey)
       );
       if (matched) {
-        const idVal = String(matched.id || matched.final_arrival_id || matched.mr_no || '');
+        const canonicalMr = extractRecordMrNo(matched);
+        const idVal = String(matched.id || matched.final_arrival_id || canonicalMr || '');
         if (selectedArrivalId !== idVal) {
           setSelectedArrivalId(idVal);
         }
@@ -94,7 +96,7 @@ export function useMaterialIssueEntryLogic({
 
         if (
           !arrivalMeta ||
-          (String(arrivalMeta.mr_no || '').trim().toUpperCase() !== String(matched.mr_no || '').trim().toUpperCase() &&
+          (!areMrNumbersEqual(extractRecordMrNo(arrivalMeta), extractRecordMrNo(matched)) &&
             arrivalMeta.final_arrival_id !== matched.final_arrival_id &&
             arrivalMeta.id !== matched.id)
         ) {
@@ -157,7 +159,7 @@ export function useMaterialIssueEntryLogic({
       (a) =>
         String(a.id || '') === String(selectedArrivalId) ||
         String(a.final_arrival_id || '') === String(selectedArrivalId) ||
-        String(a.mr_no || '') === String(selectedArrivalId)
+        areMrNumbersEqual(extractRecordMrNo(a), selectedArrivalId)
     );
     if (matched) {
       let parsedGrid: any[] = [];
@@ -229,7 +231,7 @@ export function useMaterialIssueEntryLogic({
         });
       }
 
-      const mrRef = matched.mr_no || matched.final_arrival_no || '';
+      const mrRef = extractRecordMrNo(matched);
       setItems(mappedDetails);
       setArrivalMeta(enhancedMatched);
       setFormData((prev: any) => ({

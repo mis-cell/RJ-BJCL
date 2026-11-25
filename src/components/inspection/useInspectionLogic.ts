@@ -29,6 +29,7 @@ import {
   saveInspectionRecordToDb,
   deleteInspectionRecordFromDb,
 } from "./inspectionSaveService";
+import { areMrNumbersEqual, extractFinalArrivalMrNo, extractInspectionMrNo } from "../../lib/mrNumberUtils";
 
 export function useInspectionLogic() {
   const [records, setRecords] = useState<InspectionMasterRecord[]>([]);
@@ -532,12 +533,14 @@ export function useInspectionLogic() {
       };
 
       faList.forEach(fa => {
+        const finalMrKey = extractFinalArrivalMrNo(fa);
         const mrKey = (fa.mr_no || "").trim().toUpperCase();
         const arrKey = (fa.final_arrival_no || fa.arrival_no || "").trim().toUpperCase();
         const tempKey = (fa.temporary_arrival_no || fa.amad_no || "").trim().toUpperCase();
         const existing =
-          (mrKey && (map.get(mrKey) || secondaryMap.get(mrKey))) ||
+          (finalMrKey && (map.get(finalMrKey) || secondaryMap.get(finalMrKey))) ||
           (arrKey && (map.get(arrKey) || secondaryMap.get(arrKey))) ||
+          (mrKey && (map.get(mrKey) || secondaryMap.get(mrKey))) ||
           (tempKey && (map.get(tempKey) || secondaryMap.get(tempKey)));
 
         if (existing) {
@@ -660,9 +663,10 @@ export function useInspectionLogic() {
             } catch (e) {}
           }
         }
-        const matchedFa = (isValidMrLookupKey(mrK) ? faByMrMap.get(mrK) : undefined) || faList.find(f => {
-          const fk = normKey(f.final_arrival_no || f.mr_no || f.arrival_no);
-          return isValidMrLookupKey(fk) && (fk === mrK || fk === arrK);
+        const recCanonicalMr = extractInspectionMrNo(rec);
+        const matchedFa = (recCanonicalMr ? faByMrMap.get(recCanonicalMr) : undefined) || (isValidMrLookupKey(mrK) ? faByMrMap.get(mrK) : undefined) || faList.find(f => {
+          const fk = extractFinalArrivalMrNo(f);
+          return Boolean(fk && (areMrNumbersEqual(fk, recCanonicalMr || mrK) || fk === mrK || fk === arrK));
         });
         const vlookupArrivalNo = isValidMrLookupKey(mrK)
           ? extractFinalArrivalNoForDisplay(faByMrMap.get(mrK) || matchedFa, mrK)

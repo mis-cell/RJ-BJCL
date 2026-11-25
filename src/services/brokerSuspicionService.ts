@@ -8,6 +8,8 @@
  * Produces the complete 20-column Abnormal Data Analysis dataset.
  */
 
+import { extractFinalArrivalMrNo, extractInspectionMrNo } from '../lib/mrNumberUtils';
+
 export interface SuspiciousAnomalyRecord {
   id: string;
   // 1. Broker Name
@@ -158,7 +160,7 @@ export function analyzeBrokerSuspiciousData(params: {
   const farrByMr = new Map<string, any>();
   finalArrivals.forEach((f: any) => {
     const po = String(f.po_no || f.poNo || '').trim().toUpperCase();
-    const mr = String(f.mr_no || f.final_arrival_no || f.temporary_arrival_no || '').trim().toUpperCase();
+    const mr = extractFinalArrivalMrNo(f);
     if (po) {
       const arr = farrByPo.get(po) || [];
       arr.push(f);
@@ -174,7 +176,7 @@ export function analyzeBrokerSuspiciousData(params: {
   const inspByMr = new Map<string, any>();
   allInspections.forEach((insp: any) => {
     const po = String(insp.po_no || insp.mill_po_no || '').trim().toUpperCase();
-    const mr = String(insp.mr_no || insp.arrival_no || '').trim().toUpperCase();
+    const mr = extractInspectionMrNo(insp);
     if (po) {
       const arr = inspByPo.get(po) || [];
       arr.push(insp);
@@ -330,7 +332,7 @@ export function analyzeBrokerSuspiciousData(params: {
       let mrNumbers: string[] = [];
 
       matchedFarr.forEach(f => {
-        const mr = f.mr_no || f.final_arrival_no || f.temporary_arrival_no;
+        const mr = extractFinalArrivalMrNo(f);
         if (mr && !mrNumbers.includes(mr)) mrNumbers.push(mr);
         
         let netWt = safeNum(f.electronic_net_weight);
@@ -347,7 +349,7 @@ export function analyzeBrokerSuspiciousData(params: {
       let deductionQtys: string[] = [];
 
       matchedInsp.forEach(insp => {
-        const mr = insp.mr_no || insp.arrival_no;
+        const mr = extractInspectionMrNo(insp);
         if (mr && !mrNumbers.includes(mr)) mrNumbers.push(mr);
 
         let finalRec = safeNum(insp.final_receipt_wt);
@@ -599,9 +601,9 @@ export function analyzeBrokerSuspiciousData(params: {
     finalArrivals.forEach((farr: any, fIdx: number) => {
       const fBroker = normalizeBrokerName(farr.broker || farr.broker_name);
       if (fBroker === broker) {
-        const mr = farr.mr_no || farr.final_arrival_no || farr.temporary_arrival_no;
+        const mr = extractFinalArrivalMrNo(farr);
         const po = farr.po_no || '';
-        if (!mr || mr === '—' || mr.trim() === '') {
+        if (!mr) {
           anomalies.push({
             id: `orphan-arr-${broker}-${fIdx}`,
             brokerName: broker,

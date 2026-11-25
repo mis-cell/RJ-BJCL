@@ -37,6 +37,7 @@ import {
 } from "../types/clubPomr.types";
 import { ClubbingHistoryModal } from "../components/club-pomr/ClubbingHistoryModal";
 import { ManualClubbingBindModal } from "../components/club-pomr/ManualClubbingBindModal";
+import { extractFinalArrivalMrNo } from "../lib/mrNumberUtils";
 
 export type { ClubbingRecord };
 
@@ -61,11 +62,12 @@ export const mapDbRowToClubRecord = (
   allPos: any[],
   allSaudaCheck: any[]
 ): ClubbingRecord => {
+  const canonicalMr = extractFinalArrivalMrNo(row);
   return {
     id: String(row.id || row.club_id || `CLUB-${row.id}`),
     clubbedAt: row.clubbed_at || row.created_at || new Date().toISOString(),
-    mrNo: row.mr_no || row.final_arrival_no || '',
-    finalArrivalNo: row.final_arrival_no || row.mr_no || '',
+    mrNo: canonicalMr || row.final_arrival_no || row.mr_no || '',
+    finalArrivalNo: canonicalMr || row.final_arrival_no || row.mr_no || '',
     tempArrivalNo: row.temp_arrival_no || row.temporary_arrival_no || row.amad_no || '',
     arrivalDate: row.arrival_date || row.date || '',
     poNo: row.po_no || row.primary_po_no || row.sauda_no || '',

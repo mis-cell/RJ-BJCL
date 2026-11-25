@@ -10,6 +10,7 @@ import { getCachedSattaDiffs } from './sattaCalculation';
 
 import { resolveGradeName, resolveAgencyName, resolveMarkaName, resolveAreaName } from './settlement/settlementResolvers';
 export { resolveGradeName, resolveAgencyName, resolveMarkaName, resolveAreaName };
+import { extractRecordMrNo, isValidFinalMrNo } from '../lib/mrNumberUtils';
 
 export const buildSettlementCol = (
   idx: number,
@@ -903,8 +904,8 @@ export const getUniquePoLorryGroups = (
   const cleanAlphaTargetPo = cleanTargetPo.replace(/[^A-Z0-9]/g, '');
 
   const matched = (inspections || []).filter((insp: any) => {
-    const mrVal = String(insp.mr_no || insp.final_arrival_no || '').trim();
-    if (!mrVal || mrVal.toUpperCase().startsWith('AR')) return false;
+    const mrVal = extractRecordMrNo(insp);
+    if (!mrVal) return false;
 
     const inspPoCands = [
       insp.po_no,
@@ -941,12 +942,14 @@ export const getUniquePoLorryGroups = (
   };
 
   for (const insp of matched) {
-    const idCandidates = [
-      insp.mr_no,
-      insp.final_arrival_no
-    ]
-      .map((v: any) => String(v || '').trim().toUpperCase())
-      .filter((v: string) => v && v !== 'NO' && v !== 'N/A' && v !== 'NONE' && !v.startsWith('AR'));
+    const canonicalMr = extractRecordMrNo(insp);
+    const idCandidates = Array.from(
+      new Set(
+        [canonicalMr, insp.final_arrival_no, insp.mr_no]
+          .map((v: any) => String(v || '').trim().toUpperCase())
+          .filter((v: string) => isValidFinalMrNo(v))
+      )
+    );
 
     if (idCandidates.length === 0) continue;
 

@@ -774,3 +774,458 @@ export function comparePoInspection(
 ): PoMatchResult {
   return compareSaudaTempArrival(po, poItems, insp, inspItems, masterMaps);
 }
+
+export interface PoMatchKnownCodes {
+  gradeCodes?: Set<string>;
+  agencyCodes?: Set<string>;
+  markaCodes?: Set<string>;
+  areaCodes?: Set<string>;
+  brokerCodes?: Set<string>;
+  supplierCodes?: Set<string>;
+}
+
+const IGNORED_NAME_PLACEHOLDERS = new Set([
+  '',
+  'N/A',
+  'NA',
+  'NONE',
+  'NULL',
+  'UNDEFINED',
+  '-',
+  '--',
+  'NIL',
+]);
+
+/**
+ * Returns true if a string is empty, a placeholder, or purely numbers/symbols (no letters).
+ */
+function isNumberOrNonNameToken(raw: string): boolean {
+  const s = raw.trim().toUpperCase();
+  if (!s || IGNORED_NAME_PLACEHOLDERS.has(s)) return true;
+  // Pure digits / numeric symbols (e.g. "832", "013", "8080920261106", "#123", "12.5")
+  if (/^[#\-\s\d.,/]+$/.test(s)) return true;
+  // Must contain at least one letter to qualify as a Name
+  if (!/[A-Z]/.test(s)) return true;
+  return false;
+}
+
+/**
+ * Extracts a strict Name-only value: strips trailing/leading numeric codes and rejects
+ * pure numbers, placeholders, and known non-name code keys.
+ */
+export function extractStrictNameOnly(val: any, knownCodeKeys?: Set<string>): string {
+  if (val === null || val === undefined) return '';
+  if (typeof val === 'number' || typeof val === 'boolean') return '';
+  let s = String(val).trim().replace(/\s+/g, ' ');
+  if (!s) return '';
+  // Strip trailing numeric code in parentheses/brackets e.g. "TD6 (832)" or "TULSIHATA [126]"
+  s = s.replace(/\s*[\(\[]\s*#?\d+\s*[\)\]]\s*$/g, '').trim();
+  // Strip leading numeric code prefix e.g. "832 - TD6" or "126: TULSIHATA"
+  s = s.replace(/^#?\d+\s*[-–:|]\s*/, '').trim();
+  const upper = s.toUpperCase();
+  if (isNumberOrNonNameToken(upper)) return '';
+  if (knownCodeKeys && knownCodeKeys.has(upper)) return '';
+  return upper;
+}
+
+function extractStrictNameList(inputs: any[], knownCodeKeys?: Set<string>): string[] {
+  const result: string[] = [];
+  const rawTokens = splitTokens(inputs);
+  for (const tok of rawTokens) {
+    const cleanName = extractStrictNameOnly(tok, knownCodeKeys);
+    if (cleanName && !result.includes(cleanName)) {
+      result.push(cleanName);
+    }
+  }
+  return result;
+}
+
+/**
+ * Compare a single Mill Inspection MR record against its Sauda Check Point record ONLY.
+ * Strictly checks Name fields ONLY (Broker, Supplier, Challan Supplier, Area, Grade, Agency, Marka).
+ * Never reads or compares code columns or numeric values.
+ */
+export function compareSaudaMillInspection(
+  sauda: any,
+  saudaDetails: any[] = [],
+  millInspection: any | null = null,
+  millInspectionDetails: any[] = [],
+  allPoMillInspections: any[] = [],
+  knownCodes?: PoMatchKnownCodes
+): PoMatchResult {
+  const poNo = String(sauda?.po_no || sauda?.contract_po_no || sauda?.ptf_no || '').trim();
+
+  if (!sauda || !millInspection) {
+    return {
+      poNo,
+      hasInspection: false,
+      status: 'match',
+      mismatches: [],
+    };
+  }
+
+  const mismatches: FieldMismatch[] = [];
+
+  // Build detail rows strictly for THIS MR (prefer explicit detail rows, else grid_details / details JSON)
+  let mrDetailRows: any[] = [];
+  if (Array.isArray(millInspectionDetails) && millInspectionDetails.length > 0) {
+    mrDetailRows = [...millInspectionDetails];
+  } else {
+    const rawGrid = millInspection.grid_details || millInspection.details;
+    if (rawGrid) {
+      try {
+        const parsed = typeof rawGrid === 'string' ? JSON.parse(rawGrid) : rawGrid;
+        if (Array.isArray(parsed)) mrDetailRows = [...parsed];
+      } catch (_e) {
+        mrDetailRows = [];
+      }
+    }
+  }
+
+  const pushUnique = (target: string[], names: string[]) => {
+    names.forEach(n => {
+      if (n && !target.includes(n)) target.push(n);
+    });
+  };
+
+  // ==========================================
+  // 1. BROKER (Name Only — No Number or Code)
+  // ==========================================
+  const saudaBroker = extractStrictNameOnly(sauda.broker_name || sauda.broker, knownCodes?.brokerCodes);
+  const inspBroker = extractStrictNameOnly(millInspection.broker_name || millInspection.broker, knownCodes?.brokerCodes);
+  if (saudaBroker && inspBroker) {
+    const normSauda = normalizeCompanyName(saudaBroker);
+    const normInsp = normalizeCompanyName(inspBroker);
+    if (normSauda && normInsp && normSauda !== normInsp) {
+      mismatches.push({
+        field: 'Broker',
+        mismatchLabel: `Broker Mismatch: ${inspBroker} (Approved: ${saudaBroker})`,
+        poValue: saudaBroker,
+        inspValue: inspBroker,
+      });
+    }
+  }
+
+  // ==========================================
+  // 2. SUPPLIER (Name Only — No Number or Code)
+  // ==========================================
+  const saudaSupplier = extractStrictNameOnly(sauda.supplier_name || sauda.supplier || sauda.party_name, knownCodes?.supplierCodes);
+  const inspSupplier = extractStrictNameOnly(millInspection.supplier_name || millInspection.supplier || millInspection.party_name, knownCodes?.supplierCodes);
+  if (saudaSupplier && inspSupplier) {
+    const normSauda = normalizeCompanyName(saudaSupplier);
+    const normInsp = normalizeCompanyName(inspSupplier);
+    if (normSauda && normInsp && normSauda !== normInsp) {
+      mismatches.push({
+        field: 'Supplier',
+        mismatchLabel: `Supplier Mismatch: ${inspSupplier} (Approved: ${saudaSupplier})`,
+        poValue: saudaSupplier,
+        inspValue: inspSupplier,
+      });
+    }
+  }
+
+  // ==========================================
+  // 3. CHALLAN SUPPLIER (Name Only — Only when explicitly present on Mill Inspection)
+  // ==========================================
+  const saudaChallan = extractStrictNameOnly(
+    sauda.challan_supplier_name || sauda.challan_supplier || sauda.challan_party || saudaSupplier,
+    knownCodes?.supplierCodes
+  );
+  const inspChallan = extractStrictNameOnly(
+    millInspection.challan_supplier_name || millInspection.challan_supplier || millInspection.challan_party,
+    knownCodes?.supplierCodes
+  );
+  if (saudaChallan && inspChallan) {
+    const normSauda = normalizeCompanyName(saudaChallan);
+    const normInsp = normalizeCompanyName(inspChallan);
+    if (normSauda && normInsp && normSauda !== normInsp) {
+      mismatches.push({
+        field: 'Challan Supplier',
+        mismatchLabel: `Challan Supplier Mismatch: ${inspChallan} (Approved: ${saudaChallan})`,
+        poValue: saudaChallan,
+        inspValue: inspChallan,
+      });
+    }
+  }
+
+  // ==========================================
+  // 4. AREA (Name Only — No Number or Code)
+  // ==========================================
+  const saudaAreaInputs: any[] = [sauda.area_name, sauda.arrival_area_name, sauda.area, sauda.sourcing_area];
+  if (Array.isArray(saudaDetails)) {
+    saudaDetails.forEach(d => {
+      saudaAreaInputs.push(d?.area_name, d?.arrival_area_name, d?.area);
+    });
+  }
+  const validSaudaAreas = extractStrictNameList(saudaAreaInputs, knownCodes?.areaCodes)
+    .map(normalizeExact)
+    .filter(Boolean);
+
+  const inspAreaInputs: any[] = [];
+  mrDetailRows.forEach(g => {
+    inspAreaInputs.push(g?.area_name, g?.arrival_area_name, g?.area);
+  });
+  if (extractStrictNameList(inspAreaInputs, knownCodes?.areaCodes).length === 0) {
+    inspAreaInputs.push(
+      millInspection.arrival_area_name,
+      millInspection.arrival_area,
+      millInspection.area_name,
+      millInspection.area
+    );
+  }
+  const validInspAreas = extractStrictNameList(inspAreaInputs, knownCodes?.areaCodes)
+    .map(normalizeExact)
+    .filter(Boolean);
+
+  if (validSaudaAreas.length > 0 && validInspAreas.length > 0) {
+    const unapprovedAreas = validInspAreas.filter(
+      ia => !validSaudaAreas.some(sa => sa === ia || cleanStr(sa) === cleanStr(ia))
+    );
+    if (unapprovedAreas.length > 0) {
+      const saudaDisplay = Array.from(new Set(validSaudaAreas)).join(', ');
+      const inspDisplay = Array.from(new Set(validInspAreas)).join(', ');
+      mismatches.push({
+        field: 'Area',
+        mismatchLabel: `Area Mismatch: ${Array.from(new Set(unapprovedAreas)).join(', ')} (Approved: ${saudaDisplay})`,
+        poValue: saudaDisplay,
+        inspValue: inspDisplay,
+        unapprovedValues: Array.from(new Set(unapprovedAreas)),
+      });
+    }
+  }
+
+  // ==========================================
+  // 5. GRADE (Name Only — No Number or Code)
+  // ==========================================
+  const saudaGradeNames: string[] = [];
+  if (Array.isArray(saudaDetails) && saudaDetails.length > 0) {
+    saudaDetails.forEach(d => {
+      pushUnique(
+        saudaGradeNames,
+        extractStrictNameList([d?.grade_name, d?.stock_grade_name, d?.grade, d?.quality], knownCodes?.gradeCodes)
+      );
+    });
+  }
+  if (saudaGradeNames.length === 0) {
+    pushUnique(
+      saudaGradeNames,
+      extractStrictNameList([sauda.grade_name, sauda.grade, sauda.quality], knownCodes?.gradeCodes)
+    );
+  }
+  const saudaGradeTokenSet = new Set(saudaGradeNames.map(cleanStr).filter(Boolean));
+
+  const inspGradeRowNames: string[][] = [];
+  mrDetailRows.forEach(g => {
+    const primaryGrade = g?.stock_grade_name || g?.arrival_grade || g?.grade_name || g?.grade || g?.quality;
+    const rowNames = extractStrictNameList([primaryGrade], knownCodes?.gradeCodes);
+    if (rowNames.length > 0) inspGradeRowNames.push(rowNames);
+  });
+  if (inspGradeRowNames.length === 0) {
+    const headerGrades = extractStrictNameList(
+      [
+        millInspection.stock_grade_name,
+        millInspection.arrival_grade,
+        millInspection.grade_name,
+        millInspection.grade,
+        millInspection.quality,
+      ],
+      knownCodes?.gradeCodes
+    );
+    if (headerGrades.length > 0) inspGradeRowNames.push(headerGrades);
+  }
+
+  const allInspGradeNames: string[] = [];
+  inspGradeRowNames.forEach(r => pushUnique(allInspGradeNames, r));
+
+  if (saudaGradeTokenSet.size > 0 && allInspGradeNames.length > 0) {
+    const unapprovedGrades: string[] = [];
+    inspGradeRowNames.forEach(rowNames => {
+      const matched = rowNames.some(n => saudaGradeTokenSet.has(cleanStr(n)));
+      if (!matched) {
+        rowNames.forEach(n => {
+          if (!unapprovedGrades.includes(n)) unapprovedGrades.push(n);
+        });
+      }
+    });
+
+    if (unapprovedGrades.length > 0) {
+      const approvedDisplay = saudaGradeNames.join(', ');
+      const inspDisplay = allInspGradeNames.join(', ');
+      mismatches.push({
+        field: 'Grade',
+        mismatchLabel: `Grade Mismatch: ${unapprovedGrades.join(', ')} not approved (Approved: ${approvedDisplay})`,
+        poValue: approvedDisplay,
+        inspValue: inspDisplay,
+        unapprovedValues: unapprovedGrades,
+      });
+    }
+  }
+
+  // ==========================================
+  // 6. AGENCY (Name Only — No Number or Code)
+  // ==========================================
+  const saudaAgencyNames: string[] = [];
+  if (Array.isArray(saudaDetails) && saudaDetails.length > 0) {
+    saudaDetails.forEach(d => {
+      pushUnique(
+        saudaAgencyNames,
+        extractStrictNameList([d?.agency_name, d?.agency], knownCodes?.agencyCodes)
+      );
+    });
+  }
+  if (saudaAgencyNames.length === 0) {
+    pushUnique(
+      saudaAgencyNames,
+      extractStrictNameList([sauda.agency_name, sauda.agency], knownCodes?.agencyCodes)
+    );
+  }
+  const saudaAgencyTokenSet = new Set<string>();
+  saudaAgencyNames.forEach(n => {
+    saudaAgencyTokenSet.add(normalizeExact(n));
+    saudaAgencyTokenSet.add(cleanStr(n));
+  });
+
+  const inspAgencyRowNames: string[][] = [];
+  mrDetailRows.forEach(g => {
+    const rowNames = extractStrictNameList([g?.agency_name || g?.agency], knownCodes?.agencyCodes);
+    if (rowNames.length > 0) inspAgencyRowNames.push(rowNames);
+  });
+  if (inspAgencyRowNames.length === 0) {
+    const headerAgencies = extractStrictNameList(
+      [millInspection.agency_name, millInspection.agency],
+      knownCodes?.agencyCodes
+    );
+    if (headerAgencies.length > 0) inspAgencyRowNames.push(headerAgencies);
+  }
+
+  const allInspAgencyNames: string[] = [];
+  inspAgencyRowNames.forEach(r => pushUnique(allInspAgencyNames, r));
+
+  if (saudaAgencyTokenSet.size > 0 && allInspAgencyNames.length > 0) {
+    const unapprovedAgencies: string[] = [];
+    inspAgencyRowNames.forEach(rowNames => {
+      const matched = rowNames.some(
+        n => saudaAgencyTokenSet.has(normalizeExact(n)) || saudaAgencyTokenSet.has(cleanStr(n))
+      );
+      if (!matched) {
+        rowNames.forEach(n => {
+          if (!unapprovedAgencies.includes(n)) unapprovedAgencies.push(n);
+        });
+      }
+    });
+
+    if (unapprovedAgencies.length > 0) {
+      const approvedDisplay = saudaAgencyNames.join(', ');
+      const inspDisplay = allInspAgencyNames.join(', ');
+      mismatches.push({
+        field: 'Agency',
+        mismatchLabel: `Agency Mismatch: ${unapprovedAgencies.join(', ')} not matching (Approved: ${approvedDisplay})`,
+        poValue: approvedDisplay,
+        inspValue: inspDisplay,
+        unapprovedValues: unapprovedAgencies,
+      });
+    }
+  }
+
+  // ==========================================
+  // 7. MARKA (Name Only — No Number or Code)
+  // ==========================================
+  const saudaMarkaNames: string[] = [];
+  if (Array.isArray(saudaDetails) && saudaDetails.length > 0) {
+    saudaDetails.forEach(d => {
+      pushUnique(
+        saudaMarkaNames,
+        extractStrictNameList([d?.marka_name, d?.challan_marka_name, d?.marka, d?.marks], knownCodes?.markaCodes)
+      );
+    });
+  }
+  if (saudaMarkaNames.length === 0) {
+    pushUnique(
+      saudaMarkaNames,
+      extractStrictNameList(
+        [sauda.marka_name, sauda.challan_marka_name, sauda.marka, sauda.marks],
+        knownCodes?.markaCodes
+      )
+    );
+  }
+  const saudaMarkaTokenSet = new Set<string>();
+  saudaMarkaNames.forEach(n => {
+    saudaMarkaTokenSet.add(normalizeExact(n));
+    saudaMarkaTokenSet.add(cleanStr(n));
+  });
+
+  const inspMarkaRowNames: string[][] = [];
+  mrDetailRows.forEach(g => {
+    const primaryMarka = g?.marka_name || g?.marks || g?.marka || g?.challan_marka_name;
+    const rowNames = extractStrictNameList([primaryMarka], knownCodes?.markaCodes);
+    if (rowNames.length > 0) inspMarkaRowNames.push(rowNames);
+  });
+  if (inspMarkaRowNames.length === 0) {
+    const headerMarkas = extractStrictNameList(
+      [millInspection.marka_name, millInspection.marks, millInspection.marka],
+      knownCodes?.markaCodes
+    );
+    if (headerMarkas.length > 0) inspMarkaRowNames.push(headerMarkas);
+  }
+
+  const allInspMarkaNames: string[] = [];
+  inspMarkaRowNames.forEach(r => pushUnique(allInspMarkaNames, r));
+
+  if (saudaMarkaTokenSet.size > 0 && allInspMarkaNames.length > 0) {
+    const unapprovedMarkas: string[] = [];
+    inspMarkaRowNames.forEach(rowNames => {
+      const matched = rowNames.some(
+        n => saudaMarkaTokenSet.has(normalizeExact(n)) || saudaMarkaTokenSet.has(cleanStr(n))
+      );
+      if (!matched) {
+        rowNames.forEach(n => {
+          if (!unapprovedMarkas.includes(n)) unapprovedMarkas.push(n);
+        });
+      }
+    });
+
+    if (unapprovedMarkas.length > 0) {
+      const approvedDisplay = saudaMarkaNames.join(', ');
+      const inspDisplay = allInspMarkaNames.join(', ');
+      mismatches.push({
+        field: 'Marka',
+        mismatchLabel: `Marka Mismatch: ${unapprovedMarkas.join(', ')} not approved (Approved: ${approvedDisplay})`,
+        poValue: approvedDisplay,
+        inspValue: inspDisplay,
+        unapprovedValues: unapprovedMarkas,
+      });
+    }
+  }
+
+  // --- LORRY PROGRESS (Informational Only — Not a Mismatch Rule) ---
+  const contractMt = toNum(sauda.total_contract_mt ?? sauda.total_wt_in_ton ?? sauda.total_wt) || 0;
+  let totalLorries = toNum(sauda.total_lorries ?? sauda.no_of_lorries ?? sauda.lorry_count);
+  if (isNaN(totalLorries) || totalLorries <= 0) {
+    totalLorries = Math.max(1, Math.round(contractMt / 12));
+  }
+
+  const poReceipts = Array.isArray(allPoMillInspections) && allPoMillInspections.length > 0
+    ? allPoMillInspections
+    : [millInspection];
+  const uniqueMrOrLorries = new Set<string>();
+  poReceipts.forEach((receipt: any, idx: number) => {
+    const key = String(receipt?.mr_no || receipt?.lorry_number || receipt?.lorry_no || idx).trim().toUpperCase();
+    if (key) uniqueMrOrLorries.add(key);
+  });
+  const receivedLorriesCount = Math.max(1, uniqueMrOrLorries.size);
+  const remainingLorries = Math.max(0, totalLorries - receivedLorriesCount);
+
+  return {
+    poNo,
+    hasInspection: true,
+    status: mismatches.length === 0 ? 'match' : 'mismatch',
+    mismatches,
+    lorryProgress: {
+      totalLorries,
+      receivedLorries: receivedLorriesCount,
+      remainingLorries,
+    },
+    totalContractMt: contractMt,
+  };
+}
+

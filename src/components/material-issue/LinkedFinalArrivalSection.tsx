@@ -1,5 +1,6 @@
 import React from 'react';
 import { Archive } from 'lucide-react';
+import { extractRecordMrNo, areMrNumbersEqual } from '../../lib/mrNumberUtils';
 
 interface LinkedFinalArrivalSectionProps {
   finalArrivals: any[];
@@ -68,12 +69,13 @@ export const LinkedFinalArrivalSection: React.FC<LinkedFinalArrivalSectionProps>
                     : Boolean(poStr && poStr !== 'NO' && poStr !== 'N/A' && poStr !== 'NONE' && poStr !== '-' && poStr !== '--');
                   if (!hasPo) return false;
 
-                  const mrKey = String(arr.mr_no || arr.final_arrival_no || '').trim().toUpperCase();
+                  const mrKey = extractRecordMrNo(arr);
+                  if (!mrKey) return false;
                   const reqKey = String(formData.requisition_no || '').trim().toUpperCase();
-                  return !arr.is_issued || (Boolean(reqKey) && mrKey === reqKey);
+                  return !arr.is_issued || (Boolean(reqKey) && areMrNumbersEqual(mrKey, reqKey));
                 })
                 .map((arr) => {
-                  const mrLabel = arr.mr_no || arr.final_arrival_no;
+                  const mrLabel = extractRecordMrNo(arr);
                   const poLabel = String(arr.po_no || arr.mill_po_no || '').trim();
                   return (
                     <option
