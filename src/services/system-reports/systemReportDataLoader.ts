@@ -76,7 +76,10 @@ export async function loadAndProcessSystemReportData(forceRefresh = false): Prom
       settlements,
       mrSettMaster,
       mrSettDetail,
-      mRSetts
+      mRSetts,
+      scpDeductions,
+      materialMismatches,
+      sattaMismatches
     ] = await Promise.all([
       dbModule.fetchAll('purchase_master').catch(() => []),
       dbModule.fetchAll('purchase_detail_master').catch(() => []),
@@ -99,7 +102,10 @@ export async function loadAndProcessSystemReportData(forceRefresh = false): Prom
       dbModule.fetchAll('settlement_master').catch(() => []),
       dbModule.fetchAll('mr_settlement_master').catch(() => []),
       dbModule.fetchAll('mr_settlement_detail').catch(() => []),
-      dbModule.fetchAll('m_r_settlement').catch(() => [])
+      dbModule.fetchAll('m_r_settlement').catch(() => []),
+      dbModule.fetchAll('sauda_check_point_deductions').catch(() => []),
+      dbModule.fetchAll('material_mismatch').catch(() => []),
+      dbModule.fetchAll('satta_mismatch').catch(() => [])
     ]);
 
     // Build early broker and entity lookups to properly resolve settlement brokers
@@ -850,79 +856,156 @@ export async function loadAndProcessSystemReportData(forceRefresh = false): Prom
       }
     });
 
-    // Satta Base Rates
-    const baseRateMap = new Map<string, number>();
-    (sattaRates || []).forEach((r: any) => {
-      const d = r.start_date || r.date;
-      if (d && r.base_rate) {
-        baseRateMap.set(d, Number(r.base_rate));
+    // Satta Base Rates (sorted descending so we always find latest effective rate <= contract date)
+    const sortedSattaRates = (sattaRates || [])
+      .map((r: any) => ({
+        date: normalizeToISODate(r.start_date || r.date || r.effective_date || ''),
+        rate: Number(r.base_rate || r.td5_rate || r.rate || 0)
+      }))
+      .filter(r => r.date && r.rate > 0)
+      .sort((a, b) => b.date.localeCompare(a.date));
+
+    const defaultLatestBaseRate = sortedSattaRates.length > 0 ? sortedSattaRates[0].rate : 0;
+
+    const getEffectiveBaseRate = (targetDate: string): number => {
+      const iso = normalizeToISODate(targetDate);
+      if (iso) {
+        const match = sortedSattaRates.find(r => r.date <= iso);
+        if (match) return match.rate;
       }
-    });
+      return defaultLatestBaseRate;
+    };
 
-    const defaultLatestBaseRate = sattaRates && sattaRates.length > 0 
-      ? Number(sattaRates[0].base_rate || 0) 
-      : 0;
+    const normKey = (v: any): string => String(v || '').trim().toUpperCase();
+    const toMtSafe = (raw: any): number => {
+      const n = Number(raw || 0);
+      if (!Number.isFinite(n) || n <= 0) return 0;
+      if (n >= 500) return n / 1000; // Stored in kg
+      if (n > 60 && n < 500) return n / 10; // Stored in quintals
+      return n; // Stored in MT
+    };
 
-    // Arrival by PO and Sauda (deduplicated per arrival row so identical po_no/contract_po_no/sauda_no never double-add weight)
-    const arrivalByPo = new Map<string, number>();
+    // Build authoritative MR -> PO lookup across final_arrival, material_inspection, mr_settlement_master
+    const mrToPoExactMap = new Map<string, string>();
+    const registerMrPo = (mrRaw: any, poRaw: any) => {
+      const m = normKey(mrRaw);
+      const p = normKey(poRaw);
+      if (m && p && !m.startsWith('AR') && m !== '-' && m !== 'N/A') {
+        if (!mrToPoExactMap.has(m)) mrToPoExactMap.set(m, p);
+      }
+    };
+    (finals || []).forEach((f: any) => registerMrPo(f.mr_no || f.final_arrival_no || f.arrival_no, f.po_no || f.contract_po_no || f.sauda_no));
+    (inspections || []).forEach((i: any) => registerMrPo(i.mr_no || i.arrival_no, i.po_no || i.mill_po_no || i.contract_po_no || i.sauda_no));
+    (mrSettMaster || []).forEach((s: any) => registerMrPo(s.mr_no, s.po_no || s.contract_po_no || s.sauda_no));
+    (payments || []).forEach((p: any) => registerMrPo(p.mr_no, p.po_no || p.sauda_no));
+
+    // Arrival by PO (deduplicated per MR across final_arrival + material_inspection so zero double-counting)
+    const poMrWeightMap = new Map<string, Map<string, number>>();
     const finalArrivalSet = new Set<string>();
-    (finals || []).forEach((f: any) => {
-      const wt = Number(f.electronic_net_weight || f.weight_reduced || 0);
+
+    const recordPoMrWeight = (poKey: string, mrKey: string, wtMt: number) => {
+      if (!poKey) return;
+      if (!poMrWeightMap.has(poKey)) poMrWeightMap.set(poKey, new Map());
+      const mMap = poMrWeightMap.get(poKey)!;
+      const existing = mMap.get(mrKey) || 0;
+      if (wtMt > existing) mMap.set(mrKey, wtMt);
+    };
+
+    (finals || []).forEach((f: any, idx: number) => {
+      const wt = toMtSafe(f.electronic_net_weight || f.weight_reduced || f.final_receipt_wt || f.net_weight || 0);
+      const mrKey = normKey(f.mr_no || f.final_arrival_no || f.arrival_no) || `FA_${f.id || idx}`;
       const rowKeys = new Set<string>(
-        [f.po_no, f.contract_po_no, f.sauda_no, f.arrival_no]
-          .map(x => String(x || '').trim())
+        [f.po_no, f.contract_po_no, f.sauda_no]
+          .map(normKey)
           .filter(Boolean)
       );
       rowKeys.forEach(k => {
-        arrivalByPo.set(k, (arrivalByPo.get(k) || 0) + wt);
-        finalArrivalSet.add(k.toUpperCase());
+        recordPoMrWeight(k, mrKey, wt);
+        finalArrivalSet.add(k);
       });
-      if (f.mr_no) finalArrivalSet.add(String(f.mr_no).trim().toUpperCase());
-      if (f.final_arrival_no) finalArrivalSet.add(String(f.final_arrival_no).trim().toUpperCase());
+      if (mrKey) finalArrivalSet.add(mrKey);
     });
 
-    const amadSet = new Set<string>();
-    (amad || []).forEach((a: any) => {
-      const key = a.po_no || a.temporary_arrival_no;
-      if (key && !arrivalByPo.has(key)) {
-        const wt = Number(a.weight_qtl ? a.weight_qtl / 10 : 0);
-        if (wt > 0) arrivalByPo.set(key, wt);
-      }
-      if (a.po_no) amadSet.add(String(a.po_no).trim().toUpperCase());
-      if (a.temporary_arrival_no) amadSet.add(String(a.temporary_arrival_no).trim().toUpperCase());
-      if (a.sauda_no) amadSet.add(String(a.sauda_no).trim().toUpperCase());
-    });
-
-    // Inspection deductions & quality
-    const inspectionDeductionByPo = new Map<string, { deduction: number; moisture: number; gradeDown: number; hasInspection: boolean }>();
+    // Inspection deductions, quality & weight backfill (for POs whose MR is in material_inspection)
+    const inspectionDeductionByPo = new Map<string, { deduction: number; moisture: number; gradeDown: number; hasInspection: boolean; mrSet: Set<string> }>();
     const inspectionSet = new Set<string>();
-    (inspections || []).forEach((i: any) => {
-      if (i.po_no) inspectionSet.add(String(i.po_no).trim().toUpperCase());
-      if (i.mr_no) inspectionSet.add(String(i.mr_no).trim().toUpperCase());
-      if (i.arrival_no) inspectionSet.add(String(i.arrival_no).trim().toUpperCase());
-      if (i.sauda_no) inspectionSet.add(String(i.sauda_no).trim().toUpperCase());
-      const poKey = i.po_no || i.mr_no || i.arrival_no;
-      if (poKey) {
-        const prev = inspectionDeductionByPo.get(poKey) || { deduction: 0, moisture: 0, gradeDown: 0, hasInspection: false };
-        const ded = Number(i.deduction_amount || 0);
-        const moist = Number(i.actual_moisture || i.claim_moisture || 0);
-        const gd = Number(i.grade_down_qty || i.deduction_qty || 0);
+    (inspections || []).forEach((i: any, idx: number) => {
+      const mrKey = normKey(i.mr_no || i.arrival_no);
+      const poKeys = new Set<string>(
+        [i.po_no, i.mill_po_no, i.contract_po_no, i.sauda_no, mrKey ? mrToPoExactMap.get(mrKey) : '']
+          .map(normKey)
+          .filter(Boolean)
+      );
+      if (mrKey) inspectionSet.add(mrKey);
+      const inspWt = toMtSafe(i.final_receipt_wt || i.total_final_receipt_wt || i.challan_gross_wt || i.reduced_weight || i.weight_reduced || 0);
+      const ded = Number(i.deduction_amount || 0);
+      const moist = Number(i.actual_moisture || i.claim_moisture || i.settlement_moisture || 0);
+      const gd = Number(i.grade_down_qty || i.deduction_qty || i.claim_grade_down || 0);
+
+      poKeys.forEach(poKey => {
+        inspectionSet.add(poKey);
+        if (inspWt > 0) {
+          recordPoMrWeight(poKey, mrKey || `INSP_${i.id || idx}`, inspWt);
+        }
+        const prev = inspectionDeductionByPo.get(poKey) || { deduction: 0, moisture: 0, gradeDown: 0, hasInspection: false, mrSet: new Set<string>() };
+        if (mrKey && mrKey.startsWith('MR')) prev.mrSet.add(mrKey);
         inspectionDeductionByPo.set(poKey, {
           deduction: prev.deduction + ded,
           moisture: Math.max(prev.moisture, moist),
           gradeDown: prev.gradeDown + gd,
-          hasInspection: true
+          hasInspection: true,
+          mrSet: prev.mrSet
         });
+      });
+    });
+
+    const arrivalByPo = new Map<string, number>();
+    const mrCountByPo = new Map<string, number>();
+    poMrWeightMap.forEach((mMap, poKey) => {
+      let sum = 0;
+      mMap.forEach(w => { sum += w; });
+      arrivalByPo.set(poKey, sum);
+      mrCountByPo.set(poKey, mMap.size);
+    });
+
+    // Unpromoted temporary arrivals = In-Transit MT
+    const amadSet = new Set<string>();
+    const inTransitByPo = new Map<string, number>();
+    (amad || []).forEach((a: any) => {
+      const poKey = normKey(a.po_no || a.contract_po_no || a.sauda_no);
+      const tempNo = normKey(a.temporary_arrival_no);
+      if (poKey) amadSet.add(poKey);
+      if (tempNo) amadSet.add(tempNo);
+      const isPromoted = Boolean(
+        a.final_arrival_no ||
+        String(a.status || '').toUpperCase() === 'FINALIZED' ||
+        String(a.status || '').toUpperCase() === 'PROMOTED' ||
+        (tempNo && finalArrivalSet.has(tempNo))
+      );
+      if (poKey && !isPromoted) {
+        const wt = Number(a.weight_qtl) > 0
+          ? Number(a.weight_qtl) / 10
+          : toMtSafe(a.gross_weight || a.net_weight || a.weight_mt || 0);
+        if (wt > 0) {
+          inTransitByPo.set(poKey, (inTransitByPo.get(poKey) || 0) + wt);
+        }
       }
     });
 
-    // Payments by PO & MR (deduplicating alias keys per payment row)
+    // Payments by PO (exact uppercase PO key, plus MR->PO fallback)
     const paymentByPo = new Map<string, number>();
-    (payments || []).forEach((p: any) => {
-      const amt = Number(p.paid_amount ?? p.payable_amt ?? 0);
+    const seenPayIds = new Set<string>();
+    (payments || []).forEach((p: any, idx: number) => {
+      const amt = Number(p.paid_amount ?? p.payable_amt ?? p.amount_paid ?? p.net_payable ?? 0);
+      if (amt <= 0) return;
+      const pId = String(p.id || p.voucher_no || `PAY_${idx}`);
+      if (seenPayIds.has(pId)) return;
+      seenPayIds.add(pId);
+
+      const mrKey = normKey(p.mr_no);
       const pKeys = new Set<string>(
-        [p.po_no, p.mr_no, p.voucher_no]
-          .map(x => String(x || '').trim())
+        [p.po_no, p.contract_po_no, p.sauda_no, mrKey ? mrToPoExactMap.get(mrKey) : '']
+          .map(normKey)
           .filter(Boolean)
       );
       pKeys.forEach(k => {
@@ -933,41 +1016,125 @@ export async function loadAndProcessSystemReportData(forceRefresh = false): Prom
     (paymentDetails || []).forEach((pd: any) => {
       const amt = Number(pd.amount || pd.net_amt || (pd.sett_rate && pd.quantity_qtl ? pd.sett_rate * pd.quantity_qtl : 0) || 0);
       if (amt > 0) {
-        if (pd.po_no) paymentByPo.set(pd.po_no, Math.max(paymentByPo.get(pd.po_no) || 0, amt));
-        if (pd.mr_no) paymentByPo.set(pd.mr_no, Math.max(paymentByPo.get(pd.mr_no) || 0, amt));
-        if (pd.sauda_no) paymentByPo.set(pd.sauda_no, Math.max(paymentByPo.get(pd.sauda_no) || 0, amt));
+        const mrKey = normKey(pd.mr_no);
+        const pKeys = new Set<string>(
+          [pd.po_no, pd.sauda_no, mrKey ? mrToPoExactMap.get(mrKey) : '']
+            .map(normKey)
+            .filter(Boolean)
+        );
+        pKeys.forEach(k => {
+          if (!paymentByPo.has(k)) {
+            paymentByPo.set(k, amt);
+          }
+        });
       }
     });
 
+    // Settlements & real deductions by PO from mr_settlement_master, m_r_settlement, settlement_master, sauda_check_point_deductions
+    const settlementByPo = new Map<string, { settledValue: number; deductionAmt: number; claimAmt: number; hasSettled: boolean; settledMrs: Set<string> }>();
+    const addSettlementForPo = (poKey: string, mrKey: string, valAmt: number, dedAmt: number, claimAmt: number) => {
+      if (!poKey) return;
+      const cur = settlementByPo.get(poKey) || { settledValue: 0, deductionAmt: 0, claimAmt: 0, hasSettled: false, settledMrs: new Set<string>() };
+      if (mrKey && cur.settledMrs.has(mrKey)) return; // Prevent double counting same MR
+      if (mrKey) cur.settledMrs.add(mrKey);
+      cur.settledValue += valAmt;
+      cur.deductionAmt += dedAmt;
+      cur.claimAmt += claimAmt;
+      cur.hasSettled = true;
+      settlementByPo.set(poKey, cur);
+    };
+
+    (mrSettMaster || []).forEach((s: any) => {
+      const mrKey = normKey(s.mr_no);
+      // Skip ghost blank-MR settlement rows with ₹0 material value
+      const valAmt = Number(s.value_amt || s.val_material_value || s.summary_material_value || 0);
+      const dedAmt = Number(s.val_less_amt || s.val_less_amount || s.summary_deduction_amount || s.summary_less_amount || 0) + Math.abs(Number(s.val_ex_short || 0));
+      const claimAmt = Number(s.summary_delivery_claim || 0) + Number(s.summary_rate_wt_claim || 0) + Number(s.val_less_amt || 0);
+      if (!mrKey && valAmt <= 0 && dedAmt <= 0) return;
+
+      const pKeys = new Set<string>(
+        [s.po_no, s.contract_po_no, s.sauda_no, mrKey ? mrToPoExactMap.get(mrKey) : '']
+          .map(normKey)
+          .filter(Boolean)
+      );
+      pKeys.forEach(k => addSettlementForPo(k, mrKey, valAmt, dedAmt, claimAmt));
+    });
+
+    (mRSetts || []).forEach((s: any) => {
+      const mrKey = normKey(s.mr_no);
+      const valAmt = Number(s.value_amt || s.val_material_value || s.net_payable || 0);
+      const dedAmt = Number(s.claim_settlement || s.deductions || 0) + Math.abs(Number(s.val_ex_short || s.short_excess || 0));
+      if (!mrKey && valAmt <= 0 && dedAmt <= 0) return;
+      const pKeys = new Set<string>(
+        [s.po_no, s.sauda_no, mrKey ? mrToPoExactMap.get(mrKey) : '']
+          .map(normKey)
+          .filter(Boolean)
+      );
+      pKeys.forEach(k => addSettlementForPo(k, mrKey, valAmt, dedAmt, dedAmt));
+    });
+
+    (settlements || []).forEach((s: any) => {
+      const mrKey = normKey(s.mr_no || s.arrival_no);
+      const valAmt = Number(s.value_amt || s.val_material_value || s.payable_amt || 0);
+      const dedAmt = Number(s.val_less_amt || s.summary_deduction_amount || s.deduction_amount || 0);
+      if (!mrKey && valAmt <= 0 && dedAmt <= 0) return;
+      const pKeys = new Set<string>(
+        [s.po_no, s.contract_po_no, s.sauda_no, mrKey ? mrToPoExactMap.get(mrKey) : '']
+          .map(normKey)
+          .filter(Boolean)
+      );
+      pKeys.forEach(k => addSettlementForPo(k, mrKey, valAmt, dedAmt, dedAmt));
+    });
+
+    // Short & Excess saved deductions per PO
+    const scpDedByPo = new Map<string, number>();
+    (scpDeductions || []).forEach((d: any) => {
+      const amt = Number(d.deduction_amount || 0);
+      if (amt <= 0) return;
+      [d.po_no, d.sauda_no].map(normKey).filter(Boolean).forEach(k => {
+        scpDedByPo.set(k, Math.max(scpDedByPo.get(k) || 0, amt));
+      });
+    });
+
+    // Active unresolved mismatches from material_mismatch & satta_mismatch
+    const mismatchByPo = new Map<string, string[]>();
+    const addMismatchReason = (poKey: string, reason: string) => {
+      if (!poKey) return;
+      const list = mismatchByPo.get(poKey) || [];
+      if (!list.includes(reason)) list.push(reason);
+      mismatchByPo.set(poKey, list);
+    };
+    const isResolvedStatus = (st: any) => {
+      const s = String(st || '').trim().toUpperCase();
+      return s === 'APPROVED' || s === 'RESOLVED' || s === 'CLEARED' || s === 'FIXED' || s === 'COMPLETED' || s === 'CLOSED';
+    };
+    (materialMismatches || []).forEach((m: any) => {
+      if (isResolvedStatus(m.status || m.resolution_status || m.approval_status)) return;
+      const mrKey = normKey(m.mr_no || m.arrival_no);
+      const keys = new Set<string>([m.po_no, m.contract_po_no, m.sauda_no, mrKey ? mrToPoExactMap.get(mrKey) : ''].map(normKey).filter(Boolean));
+      const reason = `Material Mismatch (${m.mismatch_type || m.field_name || 'Inspection'})`;
+      keys.forEach(k => addMismatchReason(k, reason));
+    });
+    (sattaMismatches || []).forEach((m: any) => {
+      if (isResolvedStatus(m.status || m.resolution_status || m.approval_status)) return;
+      const keys = new Set<string>([m.po_no, m.sauda_no].map(normKey).filter(Boolean));
+      const reason = `Satta Rate Mismatch`;
+      keys.forEach(k => addMismatchReason(k, reason));
+    });
 
     const pendingpaymentByPo = new Map<string, number>();
     (settlements || []).forEach((p: any) => {
       const pndngamt = Number(p.payable_amt || 0);
-      if (p.po_no) pendingpaymentByPo.set(p.po_no, (pendingpaymentByPo.get(p.po_no) || 0) + pndngamt);
-      if (p.mr_no) pendingpaymentByPo.set(p.mr_no, (pendingpaymentByPo.get(p.mr_no) || 0) + pndngamt);
-      if (p.voucher_no) pendingpaymentByPo.set(p.voucher_no, (pendingpaymentByPo.get(p.voucher_no) || 0) + pndngamt);
+      const poK = normKey(p.po_no);
+      if (poK) pendingpaymentByPo.set(poK, (pendingpaymentByPo.get(poK) || 0) + pndngamt);
     });
-    //alert()
 
-    // Helper to generate normalized keys for robust PO detail linking
+    // Helper to generate exact uppercase keys for PO detail linking (no loose digit collisions across years)
     const getPoKeys = (raw: string | number | undefined | null): string[] => {
       if (!raw) return [];
       const s = String(raw).trim().toUpperCase();
       if (!s || s === '-') return [];
-      const keys = new Set<string>([s]);
-      const numOnly = s.replace(/[^0-9]/g, '');
-      if (numOnly) {
-        keys.add(numOnly);
-        keys.add(numOnly.padStart(4, '0'));
-        keys.add(String(parseInt(numOnly, 10)));
-        keys.add(`PO-${numOnly}`);
-        keys.add(`PO-${numOnly.padStart(4, '0')}`);
-        keys.add(`PO-${String(parseInt(numOnly, 10))}`);
-        keys.add(`PTF-${numOnly}`);
-        keys.add(`PTF-${numOnly.padStart(4, '0')}`);
-        keys.add(`PTF-${String(parseInt(numOnly, 10))}`);
-      }
-      return Array.from(keys);
+      return [s];
     };
 
     // Group PO details by all alias variations
@@ -1185,10 +1352,18 @@ export async function loadAndProcessSystemReportData(forceRefresh = false): Prom
       if (!item) return;
       const rawNo = String(item.po_no || item.sauda_no || item.contract_po_no || item.session || item.id || '').trim().toUpperCase();
       if (!rawNo) return;
-      const canonicalKey = getCleanNumberKey(rawNo) || rawNo;
-      // Later stages (FINAL_PO > SCP > SAUDA_DESK) override earlier stage for the same contract
+      // Exact normalized contract key (never collapse distinct PO numbers by stripping prefixes)
+      const canonicalKey = rawNo;
       if (!uniquePosMap.has(canonicalKey) || prefix === 'FINAL_PO' || prefix === 'SCP') {
-        uniquePosMap.set(canonicalKey, item);
+        const existing = uniquePosMap.get(canonicalKey) || {};
+        uniquePosMap.set(canonicalKey, {
+          ...existing,
+          ...item,
+          total_contract_mt: Number(item.total_contract_mt) > 0 ? Number(item.total_contract_mt) : Number(existing.total_contract_mt || 0),
+          b_rate: Number(item.b_rate) > 0 ? Number(item.b_rate) : Number(existing.b_rate || 0),
+          delivery_to: item.delivery_to || existing.delivery_to,
+          contract_date: item.contract_date || existing.contract_date
+        });
       }
     };
 
@@ -1203,8 +1378,8 @@ export async function loadAndProcessSystemReportData(forceRefresh = false): Prom
         agency: resolvePoAgency(s),
         area: s.area,
         grade: s.quality || s.grade,
-        total_contract_mt: Number(s.total_wt_in_ton || s.wt_per_lorry || 0),
-        b_rate: Number(s.b_rate) || 0,
+        total_contract_mt: Number(s.total_wt_in_ton || s.total_contract_mt || s.wt_per_lorry || 0),
+        b_rate: Number(s.b_rate || s.rate || s.rate_per_qtl || 0),
         status: s.approval_status || s.status || 'Active',
         id: s.sauda_id || s.id
       }, 'SAUDA_DESK');
@@ -1221,8 +1396,8 @@ export async function loadAndProcessSystemReportData(forceRefresh = false): Prom
         agency: resolvePoAgency(sc),
         area: sc.area,
         grade: sc.grade || sc.quality,
-        total_contract_mt: Number(sc.total_contract_mt || sc.quantity || 0),
-        b_rate: Number(sc.b_rate) || 0,
+        total_contract_mt: Number(sc.total_contract_mt || sc.contract_weight_mt || sc.total_wt_in_ton || sc.quantity || 0),
+        b_rate: Number(sc.b_rate || sc.rate || sc.rate_per_qtl || 0),
         status: sc.status || 'Active',
         id: sc.po_id || sc.id
       }, 'SCP');
@@ -1239,8 +1414,8 @@ export async function loadAndProcessSystemReportData(forceRefresh = false): Prom
         agency: resolvePoAgency(p),
         area: p.area,
         grade: p.grade || p.quality,
-        total_contract_mt: Number(p.total_contract_mt || p.quantity || 0),
-        b_rate: Number(p.b_rate) || 0,
+        total_contract_mt: Number(p.total_contract_mt || p.contract_weight_mt || p.total_wt_in_ton || p.quantity || 0),
+        b_rate: Number(p.b_rate || p.rate || p.rate_per_qtl || 0),
         status: p.status || 'Active',
         id: p.po_id || p.id
       }, 'FINAL_PO');
@@ -1299,21 +1474,15 @@ export async function loadAndProcessSystemReportData(forceRefresh = false): Prom
 
       if (quantityMT === 0) quantityMT = Number(po.total_wt_in_ton || po.wt_per_lorry || 0);
 
-      const baseRate = baseRateMap.get(date) || Number(po.b_rate || defaultLatestBaseRate || purchaseRate);
+      const baseRate = getEffectiveBaseRate(date) || Number(po.b_rate || purchaseRate);
       const rateVariance = purchaseRate - baseRate;
       const rateVariancePct = baseRate > 0 ? (rateVariance / baseRate) * 100 : 0;
       const grossPurchaseValue = quantityMT * purchaseRate * 10;
       const baseRateValue = quantityMT * baseRate * 10;
 
-      // Real explicit premium resolution (matched strictly by PO number):
-      const poKeys = getPoKeys(poNo);
-      let headerPrem = { rate: 0, amount: 0, source: '' };
-      for (const k of poKeys) {
-        if (premiumLookupMap.has(k)) {
-          headerPrem = premiumLookupMap.get(k)!;
-          break;
-        }
-      }
+      // Real explicit premium resolution (matched strictly by exact PO number):
+      const poKeyUpper = normKey(poNo);
+      const saudaKeyUpper = normKey(saudaNo);
 
       const cleanPoKey = poNo.toUpperCase().replace(/[^A-Z0-9]/g, '');
       const matchedMrs = unifiedPremiums.byPoMap.get(cleanPoKey) || [];
@@ -1332,8 +1501,11 @@ export async function loadAndProcessSystemReportData(forceRefresh = false): Prom
       }
       const premiumPct = grossPurchaseValue > 0 ? (premiumAmount / grossPurchaseValue) * 100 : 0;
 
-      const inspInfo = inspectionDeductionByPo.get(poNo) || inspectionDeductionByPo.get(saudaNo) || { deduction: 0, moisture: 0, gradeDown: 0, hasInspection: false };
-      const deductionAmount = inspInfo.deduction;
+      const inspInfo = inspectionDeductionByPo.get(poKeyUpper) || (saudaKeyUpper !== poKeyUpper ? inspectionDeductionByPo.get(saudaKeyUpper) : undefined) || { deduction: 0, moisture: 0, gradeDown: 0, hasInspection: false, mrSet: new Set<string>() };
+      const settInfo = settlementByPo.get(poKeyUpper) || (saudaKeyUpper !== poKeyUpper ? settlementByPo.get(saudaKeyUpper) : undefined);
+      const scpDedAmt = scpDedByPo.get(poKeyUpper) || (saudaKeyUpper !== poKeyUpper ? scpDedByPo.get(saudaKeyUpper) : 0) || 0;
+
+      const deductionAmount = Math.max(inspInfo.deduction, settInfo?.deductionAmt || 0) + (scpDedAmt > 0 && !(settInfo?.deductionAmt) ? scpDedAmt : 0);
       const deductionPct = grossPurchaseValue > 0 ? (deductionAmount / grossPurchaseValue) * 100 : 0;
       const moisturePct = inspInfo.moisture;
       const gradeDownQty = inspInfo.gradeDown;
@@ -1349,23 +1521,44 @@ export async function loadAndProcessSystemReportData(forceRefresh = false): Prom
       else if (Math.abs(grossProfit) <= 100) profitStatus = 'BREAK-EVEN';
       else if (profitPct < 1.0) profitStatus = 'NON-PROFITABLE';
 
-      const arrivedWeightMT = arrivalByPo.get(poNo) || arrivalByPo.get(saudaNo) || 0;
+      const arrivedWeightMT = arrivalByPo.get(poKeyUpper) || (saudaKeyUpper !== poKeyUpper ? arrivalByPo.get(saudaKeyUpper) : 0) || 0;
+      const inTransitWeightMT = inTransitByPo.get(poKeyUpper) || (saudaKeyUpper !== poKeyUpper ? inTransitByPo.get(saudaKeyUpper) : 0) || 0;
       const pendingWeightMT = Math.max(0, quantityMT - arrivedWeightMT);
-      const paidAmount = paymentByPo.get(poNo) || paymentByPo.get(saudaNo) || 0;
-      const pendingPayable = Math.max(0, effectiveCost - paidAmount);
+      const paidAmount = paymentByPo.get(poKeyUpper) || (saudaKeyUpper !== poKeyUpper ? paymentByPo.get(saudaKeyUpper) : 0) || 0;
+      const settledAmount = settInfo?.settledValue || 0;
+      const isSettled = Boolean(settInfo?.hasSettled && (settledAmount > 0 || (settInfo.settledMrs.size > 0 && arrivedWeightMT > 0)));
+      const pendingPayable = isSettled ? 0 : Math.max(0, effectiveCost - paidAmount);
 
       const deliveryToDate = po.delivery_to;
-      const isDelayed = deliveryToDate ? new Date() > new Date(deliveryToDate) && pendingWeightMT > 0 : false;
+      let deliveryDelayDays = 0;
+      if (deliveryToDate && pendingWeightMT > 0.01) {
+        const dueMs = new Date(normalizeToISODate(deliveryToDate)).getTime();
+        const nowMs = Date.now();
+        if (!Number.isNaN(dueMs) && nowMs > dueMs) {
+          deliveryDelayDays = Math.floor((nowMs - dueMs) / (1000 * 60 * 60 * 24));
+        }
+      }
+      const isDelayed = deliveryDelayDays > 0;
 
-      const abnormalReasons: string[] = [];
+      const activeMismatches = mismatchByPo.get(poKeyUpper) || (saudaKeyUpper !== poKeyUpper ? mismatchByPo.get(saudaKeyUpper) : undefined) || [];
+      const abnormalReasons: string[] = [...activeMismatches];
       if (moisturePct > 18.0) abnormalReasons.push(`High Moisture (${moisturePct.toFixed(1)}%)`);
       if (premiumRate > 100) abnormalReasons.push(`High Premium (+₹${premiumRate.toFixed(0)}/Qtl)`);
       if (deductionPct > 3) abnormalReasons.push(`High Deduction (${deductionPct.toFixed(1)}%)`);
-      if (isDelayed) abnormalReasons.push(`Overdue Delivery (${pendingWeightMT.toFixed(2)} MT pending)`);
-      if (gradeDownQty > 0) abnormalReasons.push(`Grade Down (${gradeDownQty} MT)`);
+      if (isDelayed) abnormalReasons.push(`Overdue Delivery (${deliveryDelayDays}d, ${pendingWeightMT.toFixed(2)} MT pending)`);
+      if (gradeDownQty > 0) abnormalReasons.push(`Grade Down (${gradeDownQty})`);
 
-      const matchedMrNo = matchedMrs.map(m => m.mrNo).filter(Boolean).join(', ') || undefined;
+      const mrSetCombined = new Set<string>([
+        ...matchedMrs.map(m => m.mrNo).filter(Boolean),
+        ...Array.from(inspInfo.mrSet || []),
+        ...Array.from(settInfo?.settledMrs || [])
+      ]);
+      const matchedMrNo = Array.from(mrSetCombined).join(', ') || undefined;
       const matchedVoucherNo = matchedMrs.map(m => m.voucherNo).filter(Boolean).join(', ') || undefined;
+      const totalMrCount = mrCountByPo.get(poKeyUpper) || mrSetCombined.size;
+
+      const claimAmount = Math.max(settInfo?.claimAmt || 0, scpDedAmt, deductionAmount > 0 ? deductionAmount : 0);
+      const claimSettled = isSettled ? claimAmount : 0;
 
       transactionLines.push({
         txnId: `TXN-${String(txnCounter++).padStart(5, '0')}`,
@@ -1401,23 +1594,29 @@ export async function loadAndProcessSystemReportData(forceRefresh = false): Prom
         grossProfit,
         profitPct,
         profitStatus,
-        saudaStatus: pendingWeightMT === 0 ? 'COMPLETED' : (isDelayed ? 'DELAYED' : 'IN_PROGRESS'),
-        arrivalStatus: arrivedWeightMT >= quantityMT ? 'COMPLETED' : (arrivedWeightMT > 0 ? 'IN_TRANSIT' : 'PENDING'),
+        saudaStatus: pendingWeightMT <= 0.01 ? 'COMPLETED' : (isDelayed ? 'DELAYED' : 'IN_PROGRESS'),
+        arrivalStatus: (quantityMT > 0 && arrivedWeightMT >= quantityMT * 0.97) ? 'COMPLETED' : (arrivedWeightMT > 0 || inTransitWeightMT > 0 ? 'IN_TRANSIT' : 'PENDING'),
         inspectionStatus: inspInfo.hasInspection || inspInfo.deduction > 0 || inspInfo.moisture > 0 ? 'COMPLETED' : 'PENDING',
-        paymentStatus: paidAmount >= effectiveCost && effectiveCost > 0 ? 'PAID' : (paidAmount > 0 ? 'PARTIAL' : 'PENDING'),
-        settlementStatus: pendingPayable === 0 ? 'SETTLED' : 'PENDING',
+        paymentStatus: (paidAmount >= effectiveCost * 0.98 && effectiveCost > 0) ? 'PAID' : (paidAmount > 0 ? 'PARTIAL' : 'PENDING'),
+        settlementStatus: isSettled ? 'SETTLED' : 'PENDING',
         arrivedWeightMT,
+        inTransitWeightMT,
         pendingWeightMT,
         paidAmount,
+        settledAmount,
         pendingPayable,
-        claimAmount: deductionAmount > 5000 ? deductionAmount : 0,
-        claimSettled: deductionAmount > 5000 && pendingPayable === 0 ? deductionAmount : 0,
+        claimAmount,
+        claimSettled,
         isDelayed,
+        deliveryDelayDays,
+        hasMismatch: activeMismatches.length > 0,
+        mismatchCount: activeMismatches.length,
+        mrCount: totalMrCount,
         isAbnormal: abnormalReasons.length > 0,
         abnormalReasons,
-        hasAmadArrival: Boolean(arrivedWeightMT > 0 || (poNo && amadSet.has(poNo.toUpperCase())) || (saudaNo && amadSet.has(saudaNo.toUpperCase()))),
-        hasFinalArrival: Boolean((poNo && finalArrivalSet.has(poNo.toUpperCase())) || (saudaNo && finalArrivalSet.has(saudaNo.toUpperCase())) || pendingWeightMT <= 0.01),
-        hasInspection: Boolean((poNo && inspectionSet.has(poNo.toUpperCase())) || (saudaNo && inspectionSet.has(saudaNo.toUpperCase())) || inspInfo.hasInspection || inspInfo.deduction > 0 || inspInfo.moisture > 0)
+        hasAmadArrival: Boolean(arrivedWeightMT > 0 || inTransitWeightMT > 0 || amadSet.has(poKeyUpper) || amadSet.has(saudaKeyUpper)),
+        hasFinalArrival: Boolean(arrivedWeightMT > 0 || finalArrivalSet.has(poKeyUpper) || finalArrivalSet.has(saudaKeyUpper)),
+        hasInspection: Boolean(inspectionSet.has(poKeyUpper) || inspectionSet.has(saudaKeyUpper) || inspInfo.hasInspection)
       });
     });
 

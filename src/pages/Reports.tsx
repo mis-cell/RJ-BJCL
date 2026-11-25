@@ -2,19 +2,16 @@ import React, { useState, useEffect, useMemo } from 'react';
 import {
   LayoutDashboard,
   BarChart3,
-  TrendingUp,
-  Percent,
-  Scissors,
-  Truck,
-  Layers,
   Award,
+  Percent,
+  Truck,
   AlertTriangle,
-  PieChart,
   Briefcase,
   UserCheck,
   DollarSign,
   Clock,
   Scale,
+  History,
   RefreshCcw,
   Download,
   Printer
@@ -31,45 +28,67 @@ import { exportToCSV } from '../utils/exportHelpers';
 
 import { ReportFilterBar } from '../components/system-reports/ReportFilterBar';
 import { Priority1Dashboard } from '../components/system-reports/Priority1Dashboard';
-import { Priority2Analysis } from '../components/system-reports/Priority2Analysis';
+import { UnifiedBusinessAnalysisView } from '../components/system-reports/UnifiedBusinessAnalysisView';
 import { Priority3Operations } from '../components/system-reports/Priority3Operations';
 import { ExceptionAuditView } from '../components/system-reports/ExceptionAuditView';
-import { ContributionView } from '../components/system-reports/ContributionView';
 import { DrillDownModal, DrillDownViewMode } from '../components/system-reports/DrillDownModal';
-import { SimpleReportView } from '../components/system-reports/SimpleReportView';
-import { AllPoReportView } from '../components/system-reports/AllPoReportView';
 import { NewCustomReportsView, NewReportTab } from '../components/system-reports/NewCustomReportsView';
+import { SystemChangeLogReportView } from '../components/system-reports/SystemChangeLogReportView';
 
 import { screenDraftService } from '../services/screenDraftService';
 import { useLiveAutoRefresh } from '../hooks/useLiveAutoRefresh';
 
-export type ReportNavSection = 
+export type ReportNavSection =
   | 'dashboard'
   | 'business_analysis'
-  | 'premium_analysis'
-  | 'deduction_claim'
-  | 'sauda_checkpoints'
-  | 'all_po'
   | 'performance_ranking'
+  | 'premium_analysis'
+  | 'sauda_checkpoints'
   | 'exception_abnormal'
-  | 'business_contribution'
   | 'outstanding_po'
   | 'mr_advance_eligible'
   | 'mr_apmc_details'
   | 'mr_delivery_claim'
-  | 'short_excess_deduction';
+  | 'short_excess_deduction'
+  | 'change_log';
 
 interface ReportsProps {
   onClose?: () => void;
   initialReportType?: string;
 }
 
-export default function Reports({ onClose }: ReportsProps) {
-  const [viewMode, setViewMode] = useState<'simple' | 'management'>('simple');
-  const [activeSection, setActiveSection] = useState<ReportNavSection>('dashboard');
+const VALID_SECTIONS: ReportNavSection[] = [
+  'dashboard',
+  'business_analysis',
+  'performance_ranking',
+  'premium_analysis',
+  'sauda_checkpoints',
+  'exception_abnormal',
+  'outstanding_po',
+  'mr_advance_eligible',
+  'mr_apmc_details',
+  'mr_delivery_claim',
+  'short_excess_deduction',
+  'change_log'
+];
+
+const CUSTOM_REPORT_TABS: NewReportTab[] = [
+  'outstanding_po',
+  'mr_advance_eligible',
+  'mr_apmc_details',
+  'mr_delivery_claim',
+  'short_excess_deduction'
+];
+
+export default function Reports({ onClose, initialReportType }: ReportsProps) {
+  const [activeSection, setActiveSection] = useState<ReportNavSection>(() => {
+    if (initialReportType && VALID_SECTIONS.includes(initialReportType as ReportNavSection)) {
+      return initialReportType as ReportNavSection;
+    }
+    return 'dashboard';
+  });
   const [loading, setLoading] = useState<boolean>(true);
-  
-  // Master transactions and filters
+
   const [allTransactions, setAllTransactions] = useState<ReportTransactionLine[]>([]);
   const [allPoSummary, setAllPoSummary] = useState<SystemReportDataset['allPoSummary']>({
     records: [],
@@ -94,8 +113,9 @@ export default function Reports({ onClose }: ReportsProps) {
     saudas: [],
     pos: []
   });
+  const [brokerSettlementMap, setBrokerSettlementMap] = useState<SystemReportDataset['brokerSettlementMap']>({});
 
-  const [filters, setFilters] = useState<ReportFilterCriteria>(() => 
+  const [filters, setFilters] = useState<ReportFilterCriteria>(() =>
     screenDraftService.getFilters('system_reports', {})
   );
 
@@ -103,7 +123,6 @@ export default function Reports({ onClose }: ReportsProps) {
     screenDraftService.saveFilters('system_reports', filters);
   }, [filters]);
 
-  // Drill-down Modal State
   const [drillDownInfo, setDrillDownInfo] = useState<{
     isOpen: boolean;
     title: string;
@@ -117,21 +136,17 @@ export default function Reports({ onClose }: ReportsProps) {
     viewMode: 'transactions'
   });
 
-  // Broker Settlement Map for Deductions & Claims
-  const [brokerSettlementMap, setBrokerSettlementMap] = useState<SystemReportDataset['brokerSettlementMap']>({});
-
-  // Month Inspection Summaries for Pipeline Reports
-  const [monthSummaries, setMonthSummaries] = useState<any[]>([]);
-
-  // Load Data with non-blanking background refresh
   const loadData = async (forceRefresh = false) => {
-    // Keep previously loaded data visible during background refreshes
     if (allTransactions.length === 0) {
       setLoading(true);
     }
     try {
-      const { allTransactions: txns, masterLists: lists, allPoSummary: poSum, brokerSettlementMap: bMap } = 
-        await loadAndProcessSystemReportData(forceRefresh);
+      const {
+        allTransactions: txns,
+        masterLists: lists,
+        allPoSummary: poSum,
+        brokerSettlementMap: bMap
+      } = await loadAndProcessSystemReportData(forceRefresh);
       setAllTransactions(txns);
       setMasterLists(lists);
       if (poSum) setAllPoSummary(poSum);
@@ -150,16 +165,28 @@ export default function Reports({ onClose }: ReportsProps) {
   useLiveAutoRefresh(() => {
     loadData(true);
   }, [], {
-    tables: ['sauda_master', 'purchase_master', 'temporary_material_received', 'final_arrival', 'material_inspection', 'payment_master', 'm_r_settlement'],
+    tables: [
+      'sauda_master',
+      'sauda_check_point',
+      'sauda_check_point_details',
+      'sauda_check_point_deductions',
+      'purchase_master',
+      'temporary_material_received',
+      'final_arrival',
+      'material_inspection',
+      'payment_master',
+      'mr_settlement_master',
+      'material_mismatch',
+      'satta_mismatch'
+    ],
     skipInitialLoad: true
   });
 
-  // Filter transactions dynamically
   const filteredTransactions = useMemo(() => {
     return allTransactions.filter(t => {
       if (filters.searchQuery) {
         const q = filters.searchQuery.toLowerCase();
-        const match = 
+        const match =
           t.saudaNo.toLowerCase().includes(q) ||
           t.poNo.toLowerCase().includes(q) ||
           t.supplier.toLowerCase().includes(q) ||
@@ -189,7 +216,6 @@ export default function Reports({ onClose }: ReportsProps) {
     });
   }, [allTransactions, filters]);
 
-  // Aggregated Metrics
   const metrics = useMemo(() => {
     return calculateReportMetrics(filteredTransactions);
   }, [filteredTransactions]);
@@ -207,7 +233,7 @@ export default function Reports({ onClose }: ReportsProps) {
     setDrillDownInfo({
       isOpen: true,
       title,
-      subtitle: `Viewing underlying records (Filtered)`,
+      subtitle: 'Underlying PO & Sauda records matching active filters',
       transactions: txns,
       viewMode: viewMode || 'transactions'
     });
@@ -220,68 +246,111 @@ export default function Reports({ onClose }: ReportsProps) {
   const handleExportCSV = () => {
     if (!filteredTransactions.length) return;
     const headers = [
-      'Txn ID', 'Date', 'Sauda No', 'PO No', 'Supplier', 'Broker', 'Agency', 'Area', 'Grade',
-      'Qty (MT)', 'Purchase Rate', 'Base Rate', 'Gross Value', 'Premium', 'Deductions', 'Effective Cost'
+      'Txn ID',
+      'Date',
+      'Sauda No',
+      'PO No',
+      'Supplier',
+      'Broker',
+      'Agency',
+      'Area',
+      'Grade',
+      'Contract Qty (MT)',
+      'Received Qty (MT)',
+      'In-Transit (MT)',
+      'Pending Qty (MT)',
+      'Purchase Rate',
+      'Base Rate',
+      'Gross Value',
+      'Premium',
+      'Deductions',
+      'Effective Cost',
+      'Advance Paid',
+      'Settled Amount',
+      'Settlement Status'
     ];
     const rows = filteredTransactions.map(t => [
-      t.txnId, t.date, t.saudaNo, t.poNo, t.supplier, t.broker, t.agency, t.area, t.grade,
-      t.quantityMT, t.purchaseRate, t.baseRate, t.grossPurchaseValue, t.premiumAmount, t.deductionAmount, t.effectiveCost
+      t.txnId,
+      t.date,
+      t.saudaNo,
+      t.poNo,
+      t.supplier,
+      t.broker,
+      t.agency,
+      t.area,
+      t.grade,
+      t.quantityMT.toFixed(3),
+      t.arrivedWeightMT.toFixed(3),
+      (t.inTransitWeightMT || 0).toFixed(3),
+      t.pendingWeightMT.toFixed(3),
+      t.purchaseRate,
+      t.baseRate,
+      Math.round(t.grossPurchaseValue),
+      Math.round(t.premiumAmount),
+      Math.round(t.deductionAmount),
+      Math.round(t.effectiveCost),
+      Math.round(t.paidAmount),
+      Math.round(t.settledAmount || 0),
+      t.settlementStatus
     ]);
     exportToCSV(
-      `system_report_${activeSection}_${new Date().toISOString().split('T')[0]}.csv`,
+      `rj_bjcl_report_${activeSection}_${new Date().toISOString().split('T')[0]}.csv`,
       headers,
       rows
     );
   };
 
+  const analyticsTabs: Array<{
+    id: ReportNavSection;
+    label: string;
+    icon: React.ComponentType<{ className?: string }>;
+    badge?: string;
+  }> = [
+    { id: 'dashboard', label: '1. Executive Overview', icon: LayoutDashboard, badge: `${allPoSummary.totalCount || filteredTransactions.length}` },
+    { id: 'business_analysis', label: '2. Business & Dimensions', icon: BarChart3 },
+    { id: 'performance_ranking', label: '3. Broker Ranking & Pareto', icon: Award },
+    { id: 'premium_analysis', label: '4. Premium & Cost Waterfall', icon: Percent },
+    { id: 'sauda_checkpoints', label: '5. Checkpoints Pipeline', icon: Truck },
+    { id: 'exception_abnormal', label: '6. Exception / Abnormal', icon: AlertTriangle, badge: `${metrics.abnormalCount}` }
+  ];
+
+  const operationalTabs: Array<{
+    id: ReportNavSection;
+    label: string;
+    icon: React.ComponentType<{ className?: string }>;
+    badge: string;
+  }> = [
+    { id: 'outstanding_po', label: '7. Outstanding P.O List', icon: Briefcase, badge: 'PO' },
+    { id: 'mr_advance_eligible', label: '8. MR Eligible for Advance', icon: UserCheck, badge: 'Advance' },
+    { id: 'mr_apmc_details', label: '9. MR Wise APMC Details', icon: DollarSign, badge: 'APMC' },
+    { id: 'mr_delivery_claim', label: '10. MR Wise Delivery Claim', icon: Clock, badge: 'Claim' },
+    { id: 'short_excess_deduction', label: '11. Short and Excess Deduction', icon: Scale, badge: 'Deduction' },
+    { id: 'change_log', label: '12. System Change Log', icon: History, badge: 'Audit' }
+  ];
+
+  const isCustomReportActive = CUSTOM_REPORT_TABS.includes(activeSection as NewReportTab);
+
   return (
     <LegacyLayout title="Report" onClose={onClose}>
       <div className="space-y-4 font-sans text-slate-800">
-        
-        {/* ================= HEADER BAR ================= */}
-        <div className="bg-gradient-to-r from-[#D94B5A] via-[#E85A5A] to-[#D94B5A] text-white p-4 rounded-2xl shadow-md border border-[#F06D6C] flex flex-col md:flex-row md:items-center justify-between gap-3">
+        {/* ================= UNIFIED REPORT HEADER ================= */}
+        <div className="bg-gradient-to-r from-[#D94B5A] via-[#E85A5A] to-[#D94B5A] text-white px-5 py-3.5 rounded-2xl shadow-md border border-[#F06D6C] flex flex-col md:flex-row md:items-center justify-between gap-3">
           <div>
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-2xl">📊</span>
-              <h2 className="text-lg font-black uppercase tracking-wider text-white">
-                REPORT
-              </h2>
-            </div>
+            <h2 className="text-lg font-black uppercase tracking-wider text-white leading-tight">
+              Unified Procurement &amp; Audit Reports
+            </h2>
+            <p className="text-[11px] font-medium text-[#FDE7E6] mt-0.5">
+              Single source of truth across Sauda, PO, Arrival, Mill Inspection, Payment, Settlement &amp; Audit Logs
+            </p>
           </div>
 
           <div className="flex flex-wrap items-center gap-2 self-start md:self-auto">
-            {/* Mode Switcher Toggle */}
-            <div className="flex items-center bg-[#D94B5A] p-1 rounded-xl border border-[#F06D6C] text-xs font-black shadow-inner">
-              <button
-                type="button"
-                onClick={() => setViewMode('simple')}
-                className={`px-3 py-1.5 rounded-lg transition cursor-pointer flex items-center gap-1.5 ${
-                  viewMode === 'simple'
-                    ? 'bg-gradient-to-b from-white to-[#FDE7E6] text-[#D94B5A] shadow-md font-black border border-white'
-                    : 'text-white hover:text-white hover:bg-[#F06D6C]/50'
-                }`}
-              >
-                <span>Summary</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setViewMode('management')}
-                className={`px-3 py-1.5 rounded-lg transition cursor-pointer flex items-center gap-1.5 ${
-                  viewMode === 'management'
-                    ? 'bg-gradient-to-b from-white to-[#FDE7E6] text-[#D94B5A] shadow-md font-black border border-white'
-                    : 'text-white hover:text-white hover:bg-[#F06D6C]/50'
-                }`}
-              >
-                <span>Analysis</span>
-              </button>
-            </div>
-
             <button
               type="button"
               onClick={() => loadData(true)}
               disabled={loading}
               className="px-3 py-2 bg-[#F48F8B] hover:bg-[#F06D6C] text-white text-xs font-bold rounded-xl border border-[#E85A5A] transition flex items-center gap-1.5 shadow-sm cursor-pointer"
-              title="Reload database"
+              title="Reload live database records"
             >
               <RefreshCcw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
               <span>Refresh</span>
@@ -290,10 +359,10 @@ export default function Reports({ onClose }: ReportsProps) {
             <button
               type="button"
               onClick={handleExportCSV}
-              className="px-3 py-2 bg-[#FDE7E6] hover:bg-white text-[#D94B5A] text-xs font-black rounded-xl border border-[#FBCFCB] transition flex items-center gap-1.5 shadow-md cursor-pointer"
+              className="px-3 py-2 bg-[#FDE7E6] hover:bg-white text-[#D94B5A] text-xs font-black rounded-xl border border-[#FBCFCB] transition flex items-center gap-1.5 shadow-sm cursor-pointer"
             >
               <Download className="w-3.5 h-3.5" />
-              <span>CSV</span>
+              <span>Export CSV</span>
             </button>
 
             <button
@@ -307,130 +376,140 @@ export default function Reports({ onClose }: ReportsProps) {
           </div>
         </div>
 
-        {/* ================= VIEW MODE CONDITIONAL RENDERING ================= */}
-        {loading ? (
-          <div className="bg-white rounded-3xl border border-[#FBCFCB] p-16 text-center text-slate-400 space-y-3 shadow-xs">
-            <RefreshCcw className="w-9 h-9 animate-spin text-[#D94B5A] mx-auto" />
-            <h3 className="text-sm font-black text-slate-800 uppercase tracking-wider">
-              Loading Records...
-            </h3>
-          </div>
-        ) : viewMode === 'simple' ? (
-          /* SIMPLE VIEW FOR UNDER-LEVEL USER */
-          <SimpleReportView
-            dataset={dataset}
-            onOpenManagementView={() => setViewMode('management')}
-          />
-        ) : (
-          /* MANAGEMENT ANALYSIS (PRIORITY 1 TO 4) */
-          <div className="space-y-4">
-            {/* SECTION 18: REPORT NAVIGATION STRUCTURE */}
-            <div className="flex flex-wrap items-center gap-1.5 p-2 bg-[#D94B5A] border border-[#F06D6C] rounded-2xl shadow-md">
-              {[
-                { id: 'dashboard' as const, label: '1. Dashboard', icon: LayoutDashboard, badge: 'Priority 1' },
-                { id: 'business_analysis' as const, label: '2. Business Analysis', icon: BarChart3, badge: 'P2' },
-                { id: 'premium_analysis' as const, label: '3. Premium Analysis', icon: Percent, badge: 'P2' },
-                { id: 'deduction_claim' as const, label: '4. Deduction & Claim', icon: Scissors, badge: 'P3' },
-                { id: 'sauda_checkpoints' as const, label: '5. Checkpoints Pipeline', icon: Truck, badge: 'P3' },
-                { id: 'all_po' as const, label: '6. ALL PO', icon: Layers, badge: `${allPoSummary.totalCount || 0}` },
-                { id: 'performance_ranking' as const, label: '7. Performance Ranking', icon: Award, badge: 'P2' },
-                { id: 'exception_abnormal' as const, label: '8. Exception / Abnormal', icon: AlertTriangle, badge: `${metrics.abnormalCount}` },
-                { id: 'business_contribution' as const, label: '9. Contribution & Pareto', icon: PieChart, badge: 'P9' },
-                { id: 'outstanding_po' as const, label: '10. Outstanding P.O List', icon: Briefcase, badge: 'PO' },
-                { id: 'mr_advance_eligible' as const, label: '11. MR Eligible for Advance', icon: UserCheck, badge: 'Advance' },
-                { id: 'mr_apmc_details' as const, label: '12. MR Wise APMC Details', icon: DollarSign, badge: 'APMC' },
-                { id: 'mr_delivery_claim' as const, label: '13. MR Wise Delivery Claim', icon: Clock, badge: 'Claim' },
-                { id: 'short_excess_deduction' as const, label: '14. Short and Excess Deduction', icon: Scale, badge: 'Deduction' },
-              ].map(tab => {
-                const Icon = tab.icon;
-                const isActive = activeSection === tab.id;
-                return (
-                  <button
-                    key={tab.id}
-                    type="button"
-                    onClick={() => setActiveSection(tab.id)}
-                    className={`px-3 py-1.5 text-xs font-bold rounded-xl transition-all duration-150 flex items-center gap-1.5 cursor-pointer ${
-                      isActive
-                        ? 'bg-gradient-to-b from-white to-[#FDE7E6] text-[#D94B5A] font-black shadow-md border border-white'
-                        : 'text-white hover:bg-[#F06D6C]/50 hover:text-white'
-                    }`}
-                  >
-                    <Icon className={`w-3.5 h-3.5 ${isActive ? 'text-[#D94B5A]' : 'text-[#FBCFCB]'}`} />
-                    <span>{tab.label}</span>
-                    <span className={`text-[8px] font-black px-1.5 py-0.2 rounded-full ${
-                      isActive ? 'bg-[#D94B5A] text-white' : 'bg-[#FBCFCB] text-[#D94B5A]'
-                    }`}>
+        {/* ================= UNIFIED 12-REPORT NAVIGATION ================= */}
+        <div className="bg-white border border-slate-200 rounded-2xl p-3 shadow-xs space-y-2.5">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="text-[10px] font-black uppercase tracking-widest text-slate-400 px-2 mr-1">
+              Analytics
+            </span>
+            {analyticsTabs.map(tab => {
+              const Icon = tab.icon;
+              const isActive = activeSection === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => setActiveSection(tab.id)}
+                  className={`px-3 py-1.5 text-xs font-bold rounded-xl transition-all duration-150 flex items-center gap-1.5 cursor-pointer border ${
+                    isActive
+                      ? 'bg-[#D94B5A] text-white border-[#D94B5A] shadow-sm'
+                      : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-[#FDE7E6] hover:text-[#D94B5A] hover:border-[#FBCFCB]'
+                  }`}
+                >
+                  <Icon className={`w-3.5 h-3.5 ${isActive ? 'text-white' : 'text-[#D94B5A]'}`} />
+                  <span>{tab.label}</span>
+                  {tab.badge && (
+                    <span
+                      className={`text-[10px] font-black px-1.5 py-0.5 rounded-md tabular-nums ${
+                        isActive ? 'bg-white/20 text-white' : 'bg-white text-slate-600 border border-slate-200'
+                      }`}
+                    >
                       {tab.badge}
                     </span>
-                  </button>
-                );
-              })}
-            </div>
+                  )}
+                </button>
+              );
+            })}
+          </div>
 
-            {/* SECTION 19: STANDARD FILTER BAR */}
-            <ReportFilterBar
-              filters={filters}
-              masterLists={masterLists}
-              onFilterChange={setFilters}
-              onReset={() => setFilters({})}
-              filteredCount={filteredTransactions.length}
-              totalCount={allTransactions.length}
-            />
+          <div className="border-t border-slate-100 pt-2.5 flex flex-wrap items-center gap-1.5">
+            <span className="text-[10px] font-black uppercase tracking-widest text-slate-400 px-2 mr-1">
+              Operations
+            </span>
+            {operationalTabs.map(tab => {
+              const Icon = tab.icon;
+              const isActive = activeSection === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => setActiveSection(tab.id)}
+                  className={`px-3 py-1.5 text-xs font-bold rounded-xl transition-all duration-150 flex items-center gap-1.5 cursor-pointer border ${
+                    isActive
+                      ? 'bg-[#D94B5A] text-white border-[#D94B5A] shadow-sm'
+                      : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-[#FDE7E6] hover:text-[#D94B5A] hover:border-[#FBCFCB]'
+                  }`}
+                >
+                  <Icon className={`w-3.5 h-3.5 ${isActive ? 'text-white' : 'text-[#D94B5A]'}`} />
+                  <span>{tab.label}</span>
+                  <span
+                    className={`text-[9px] font-black uppercase px-1.5 py-0.5 rounded-md ${
+                      isActive ? 'bg-white/20 text-white' : 'bg-[#FDE7E6] text-[#D94B5A]'
+                    }`}
+                  >
+                    {tab.badge}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
 
-            {/* 1. Dashboard (Priority 1) */}
+        {/* ================= MAIN CONTENT ================= */}
+        {loading ? (
+          <div className="bg-white rounded-3xl border border-slate-200 p-16 text-center text-slate-400 space-y-3 shadow-xs">
+            <RefreshCcw className="w-9 h-9 animate-spin text-[#D94B5A] mx-auto" />
+            <h3 className="text-sm font-black text-slate-800 uppercase tracking-wider">
+              Loading Unified Procurement Dataset...
+            </h3>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {activeSection !== 'change_log' && (
+              <ReportFilterBar
+                filters={filters}
+                masterLists={masterLists}
+                onFilterChange={setFilters}
+                onReset={() => setFilters({})}
+                filteredCount={filteredTransactions.length}
+                totalCount={allTransactions.length}
+              />
+            )}
+
             {activeSection === 'dashboard' && (
               <Priority1Dashboard dataset={dataset} onDrillDown={handleOpenDrillDown} />
             )}
 
-            {/* 2. Business Analysis (Priority 2) */}
             {activeSection === 'business_analysis' && (
-              <Priority2Analysis dataset={dataset} onDrillDown={handleOpenDrillDown} defaultSubTab="business" />
+              <UnifiedBusinessAnalysisView
+                dataset={dataset}
+                mode="business"
+                onDrillDown={handleOpenDrillDown}
+              />
             )}
 
-            {/* 3. Premium Analysis (Priority 2) */}
+            {activeSection === 'performance_ranking' && (
+              <UnifiedBusinessAnalysisView
+                dataset={dataset}
+                mode="ranking"
+                onDrillDown={handleOpenDrillDown}
+              />
+            )}
+
             {activeSection === 'premium_analysis' && (
-              <Priority2Analysis dataset={dataset} onDrillDown={handleOpenDrillDown} defaultSubTab="premium" />
+              <UnifiedBusinessAnalysisView
+                dataset={dataset}
+                mode="premium"
+                onDrillDown={handleOpenDrillDown}
+              />
             )}
 
-            {/* 5. Deduction & Claim (Priority 3) */}
-            {activeSection === 'deduction_claim' && (
-              <Priority3Operations dataset={dataset} onDrillDown={handleOpenDrillDown} defaultSubTab="quality" />
-            )}
-
-            {/* 6. Sauda / PO Checkpoints (Priority 3) */}
             {activeSection === 'sauda_checkpoints' && (
               <Priority3Operations dataset={dataset} onDrillDown={handleOpenDrillDown} defaultSubTab="pipeline" />
             )}
 
-            {/* ALL PO Master Report (sauda_master, sauda_check_point, purchase_master) */}
-            {activeSection === 'all_po' && (
-              <AllPoReportView dataset={dataset} onDrillDown={handleOpenDrillDown} />
-            )}
-
-            {/* 7. Performance Ranking (Priority 2) */}
-            {activeSection === 'performance_ranking' && (
-              <Priority2Analysis dataset={dataset} onDrillDown={handleOpenDrillDown} defaultSubTab="ranking" />
-            )}
-
-            {/* 8. Exception / Abnormal (Priority 1-D / 8) */}
             {activeSection === 'exception_abnormal' && (
               <ExceptionAuditView dataset={dataset} onDrillDown={handleOpenDrillDown} />
             )}
 
-            {/* 9. Business Contribution (Priority 9) */}
-            {activeSection === 'business_contribution' && (
-              <ContributionView dataset={dataset} onDrillDown={handleOpenDrillDown} />
+            {isCustomReportActive && (
+              <NewCustomReportsView
+                initialTab={activeSection as NewReportTab}
+                filters={filters}
+              />
             )}
 
-            {/* 10-14. Main Report Sections (Outstanding PO, MR Advance Eligible, MR APMC Details, MR Delivery Claim, Short & Excess Deduction) */}
-            {(activeSection === 'outstanding_po' ||
-              activeSection === 'mr_advance_eligible' ||
-              activeSection === 'mr_apmc_details' ||
-              activeSection === 'mr_delivery_claim' ||
-              activeSection === 'short_excess_deduction') && (
-              <NewCustomReportsView initialTab={activeSection} filters={filters} />
-            )}
-
+            {activeSection === 'change_log' && <SystemChangeLogReportView />}
           </div>
         )}
 
@@ -444,7 +523,6 @@ export default function Reports({ onClose }: ReportsProps) {
             onClose={() => setDrillDownInfo(prev => ({ ...prev, isOpen: false }))}
           />
         )}
-
       </div>
     </LegacyLayout>
   );

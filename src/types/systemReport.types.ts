@@ -52,6 +52,12 @@ export interface ReportTransactionLine {
   hasAmadArrival?: boolean;
   hasFinalArrival?: boolean;
   hasInspection?: boolean;
+  settledAmount?: number;
+  inTransitWeightMT?: number;
+  hasMismatch?: boolean;
+  mismatchCount?: number;
+  deliveryDelayDays?: number;
+  mrCount?: number;
 }
 
 export interface ReportFilterCriteria {

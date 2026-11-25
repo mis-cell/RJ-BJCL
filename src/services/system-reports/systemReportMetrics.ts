@@ -67,7 +67,7 @@ export function calculateReportMetrics(txns: ReportTransactionLine[]): SystemRep
     }
     totalDeduction += t.deductionAmount;
     totalClaim += t.claimAmount;
-    totalSettlement += t.claimSettled;
+    totalSettlement += (t.settledAmount !== undefined ? t.settledAmount : t.claimSettled);
     totalPayment += t.paidAmount;
     grossProfit += t.grossProfit;
     
@@ -98,14 +98,14 @@ export function calculateReportMetrics(txns: ReportTransactionLine[]): SystemRep
       nonProfitableBusiness += t.grossPurchaseValue;
     }
 
-    if (t.pendingWeightMT > 0) saudaPendingCount++;
+    if (t.pendingWeightMT > 0.01) saudaPendingCount++;
     if (t.arrivalStatus === 'PENDING') temporaryArrivalPendingCount++;
     if (t.arrivalStatus === 'IN_TRANSIT') finalArrivalPendingCount++;
     if (t.inspectionStatus === 'PENDING') millInspectionPendingCount++;
     if (t.paymentStatus !== 'PAID') paymentPendingCount++;
     if (t.settlementStatus !== 'SETTLED') settlementPendingCount++;
 
-    if (t.isAbnormal) abnormalCount++;
+    if (t.isAbnormal || t.hasMismatch) abnormalCount++;
     if (t.deductionPct > 2) highDeductionCount++;
     if (t.premiumRate > 50 || t.premiumAmount > 5000) highPremiumCount++;
     if (t.moisturePct > 18) highMoistureCount++;
@@ -137,7 +137,7 @@ export function calculateReportMetrics(txns: ReportTransactionLine[]): SystemRep
     totalSettlement,
     totalPayment,
     grossProfit,
-    netProfit: grossProfit - (totalDeduction * 0.1), // Net after standard handling/overhead
+    netProfit: grossProfit - (totalDeduction * 0.1),
     totalLoss,
     nonProfitableBusiness,
     profitMarginPct,
@@ -166,7 +166,7 @@ export function calculateReportMetrics(txns: ReportTransactionLine[]): SystemRep
   };
 }
 
-// Group transactions by any dimension for Priority 2 Analysis
+// Group transactions by any dimension for Business Analysis & Rankings
 export function groupTransactionsByDimension(
   txns: ReportTransactionLine[],
   dimension: 'broker' | 'agency' | 'area' | 'grade' | 'supplier' | 'month' | 'saudaNo' | 'poNo'
@@ -192,6 +192,8 @@ export function groupTransactionsByDimension(
   const map = new Map<string, {
     key: string;
     quantityMT: number;
+    arrivedMT: number;
+    pendingMT: number;
     purchaseValue: number;
     baseRateValue: number;
     premiumAmount: number;
@@ -199,7 +201,13 @@ export function groupTransactionsByDimension(
     effectiveCost: number;
     realizationValue: number;
     grossProfit: number;
+    paidAmount: number;
+    settledAmount: number;
     txnCount: number;
+    flaggedCount: number;
+    delayedCount: number;
+    settledCount: number;
+    completedArrivalCount: number;
     sumQtyRate: number;
     sumQtyBase: number;
     sumQtyMoist: number;
@@ -212,6 +220,8 @@ export function groupTransactionsByDimension(
       map.set(key, {
         key,
         quantityMT: 0,
+        arrivedMT: 0,
+        pendingMT: 0,
         purchaseValue: 0,
         baseRateValue: 0,
         premiumAmount: 0,
@@ -219,7 +229,13 @@ export function groupTransactionsByDimension(
         effectiveCost: 0,
         realizationValue: 0,
         grossProfit: 0,
+        paidAmount: 0,
+        settledAmount: 0,
         txnCount: 0,
+        flaggedCount: 0,
+        delayedCount: 0,
+        settledCount: 0,
+        completedArrivalCount: 0,
         sumQtyRate: 0,
         sumQtyBase: 0,
         sumQtyMoist: 0
@@ -228,6 +244,8 @@ export function groupTransactionsByDimension(
 
     const cur = map.get(key)!;
     cur.quantityMT += t.quantityMT;
+    cur.arrivedMT += t.arrivedWeightMT;
+    cur.pendingMT += t.pendingWeightMT;
     cur.purchaseValue += t.grossPurchaseValue;
     cur.baseRateValue += t.baseRateValue;
     cur.premiumAmount += t.premiumAmount;
@@ -235,7 +253,13 @@ export function groupTransactionsByDimension(
     cur.effectiveCost += t.effectiveCost;
     cur.realizationValue += t.realizationValue;
     cur.grossProfit += t.grossProfit;
+    cur.paidAmount += t.paidAmount;
+    cur.settledAmount += (t.settledAmount || 0);
     cur.txnCount += 1;
+    if (t.isAbnormal || t.hasMismatch) cur.flaggedCount += 1;
+    if (t.isDelayed) cur.delayedCount += 1;
+    if (t.settlementStatus === 'SETTLED') cur.settledCount += 1;
+    if (t.arrivalStatus === 'COMPLETED') cur.completedArrivalCount += 1;
     cur.sumQtyRate += t.quantityMT * t.purchaseRate;
     cur.sumQtyBase += t.quantityMT * t.baseRate;
     cur.sumQtyMoist += t.quantityMT * t.moisturePct;
@@ -251,6 +275,10 @@ export function groupTransactionsByDimension(
     const premiumPct = g.baseRateValue > 0 ? (g.premiumAmount / g.baseRateValue) * 100 : 0;
     const deductionPct = g.purchaseValue > 0 ? (g.deductionAmount / g.purchaseValue) * 100 : 0;
     const businessSharePct = totalAllValue > 0 ? (g.purchaseValue / totalAllValue) * 100 : 0;
+    const deliveryPct = g.quantityMT > 0 ? Math.min(100, (g.arrivedMT / g.quantityMT) * 100) : 0;
+    const flaggedRatePct = g.txnCount > 0 ? (g.flaggedCount / g.txnCount) * 100 : 0;
+    const onTimePct = g.txnCount > 0 ? ((g.txnCount - g.delayedCount) / g.txnCount) * 100 : 100;
+    const settlementPct = g.txnCount > 0 ? (g.settledCount / g.txnCount) * 100 : 0;
 
     let status: 'PROFITABLE' | 'BREAK-EVEN' | 'NON-PROFITABLE' | 'LOSS' = 'PROFITABLE';
     if (g.grossProfit < -1000) status = 'LOSS';
@@ -266,7 +294,16 @@ export function groupTransactionsByDimension(
       premiumPct,
       deductionPct,
       businessSharePct,
+      deliveryPct,
+      flaggedRatePct,
+      onTimePct,
+      settlementPct,
       status
     };
-  }).sort((a, b) => b.purchaseValue - a.purchaseValue);
+  }).sort((a, b) => {
+    if (dimension === 'month') {
+      return a.key.localeCompare(b.key);
+    }
+    return b.purchaseValue - a.purchaseValue;
+  });
 }

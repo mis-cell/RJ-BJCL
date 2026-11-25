@@ -23,7 +23,19 @@ import {
   SuspiciousAnomalyRecord 
 } from '../../services/brokerSuspicionService';
 import { dbModule } from '../../services/dbModule';
-import { cn, formatIndianCurrency } from '../../lib/utils';
+import { cn } from '../../lib/utils';
+import {
+  ResponsiveContainer,
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Legend
+} from 'recharts';
+import { ParetoChart } from '../reports/charts/ParetoChart';
+import { HeatmapChart } from '../reports/charts/HeatmapChart';
 
 interface ExceptionAuditViewProps {
   dataset: SystemReportDataset;
@@ -61,7 +73,8 @@ export const ExceptionAuditView: React.FC<ExceptionAuditViewProps> = ({
         farr,
         insp,
         payments,
-        settlements
+        settlements,
+        mrSettMaster
       ] = await Promise.all([
         dbModule.fetchAll('sauda_master').catch(() => []),
         dbModule.fetchAll('purchase_master').catch(() => []),
@@ -69,8 +82,11 @@ export const ExceptionAuditView: React.FC<ExceptionAuditViewProps> = ({
         dbModule.fetchAll('final_arrival').catch(() => []),
         dbModule.fetchAll('material_inspection').catch(() => []),
         dbModule.fetchAll('payment_master').catch(() => []),
-        dbModule.fetchAll('settlement_master').catch(() => [])
+        dbModule.fetchAll('settlement_master').catch(() => []),
+        dbModule.fetchAll('mr_settlement_master').catch(() => [])
       ]);
+
+      const mergedSettlements = [...(mrSettMaster || []), ...(settlements || [])];
 
       const result = analyzeBrokerSuspiciousData({
         saudas,
@@ -79,7 +95,7 @@ export const ExceptionAuditView: React.FC<ExceptionAuditViewProps> = ({
         finalArrivals: farr,
         inspections: insp,
         paymentRecords: payments,
-        settlements
+        settlements: mergedSettlements
       });
 
       setSummaries(result);
@@ -151,9 +167,51 @@ export const ExceptionAuditView: React.FC<ExceptionAuditViewProps> = ({
 
   // KPI Calculations
   const highSeverityCount = filteredAnomalies.filter(a => a.severity === 'High').length;
-  const duplicateCount = filteredAnomalies.filter(a => a.anomalyType === 'Exact Duplicate Transaction').length;
   const weightMismatchCount = filteredAnomalies.filter(a => a.anomalyType === 'Contract vs Arrived Weight Mismatch').length;
   const rateDiscrepancyCount = filteredAnomalies.filter(a => a.anomalyType === 'Zero or Missing Rate' || a.anomalyType === 'Unusual Rate Variance').length;
+
+  // Chart 1: Stacked Bar (High & Medium flag counts by workflow section)
+  const sectionSeverityData = useMemo(() => {
+    const map = new Map<string, { section: string; High: number; Medium: number; Low: number }>();
+    filteredAnomalies.forEach(a => {
+      const sec = a.workflowStage || 'Unassigned';
+      const cur = map.get(sec) || { section: sec, High: 0, Medium: 0, Low: 0 };
+      if (a.severity === 'High') cur.High += 1;
+      else if (a.severity === 'Medium') cur.Medium += 1;
+      else cur.Low += 1;
+      map.set(sec, cur);
+    });
+    return Array.from(map.values()).sort((a, b) => (b.High + b.Medium + b.Low) - (a.High + a.Medium + a.Low));
+  }, [filteredAnomalies]);
+
+  // Chart 2: Pareto (Exception causes by frequency)
+  const causeParetoData = useMemo(() => {
+    const map = new Map<string, number>();
+    filteredAnomalies.forEach(a => {
+      const cause = a.anomalyType || 'Other';
+      map.set(cause, (map.get(cause) || 0) + 1);
+    });
+    return Array.from(map.entries()).map(([name, countOrVolume]) => ({ name, countOrVolume }));
+  }, [filteredAnomalies]);
+
+  // Chart 3: Heatmap (Section x Issue Type)
+  const heatmapData = useMemo(() => {
+    const rowSet = new Set<string>();
+    const colSet = new Set<string>();
+    const cells: Array<{ row: string; col: string; value: number }> = [];
+    filteredAnomalies.forEach(a => {
+      const row = a.workflowStage || 'General';
+      const col = a.anomalyType || 'Other';
+      rowSet.add(row);
+      colSet.add(col);
+      cells.push({ row, col, value: 1 });
+    });
+    return {
+      rows: Array.from(rowSet).sort(),
+      cols: Array.from(colSet).sort(),
+      cells
+    };
+  }, [filteredAnomalies]);
 
   const handleExportCSV = () => {
     if (!filteredAnomalies.length) return;
@@ -208,22 +266,17 @@ export const ExceptionAuditView: React.FC<ExceptionAuditViewProps> = ({
     <div className="space-y-4 font-sans text-slate-800">
       
       {/* ================= HEADER BAR ================= */}
-      <div className="p-4 bg-gradient-to-r from-rose-950 via-slate-900 to-rose-950 text-white rounded-2xl border border-rose-800 shadow-md flex flex-col md:flex-row md:items-center justify-between gap-3">
+      <div className="p-4 bg-slate-900 text-white rounded-xl border border-slate-800 shadow-2xs flex flex-col md:flex-row md:items-center justify-between gap-3">
         <div className="flex items-center gap-3">
-          <div className="w-11 h-11 rounded-xl bg-rose-600/30 border border-rose-500 flex items-center justify-center text-rose-300 shrink-0">
-            <ShieldAlert className="w-6 h-6 animate-pulse" />
+          <div className="w-10 h-10 rounded-lg bg-rose-600/20 border border-rose-500/40 flex items-center justify-center text-rose-300 shrink-0">
+            <ShieldAlert className="w-5 h-5" />
           </div>
           <div>
-            <div className="flex flex-wrap items-center gap-2">
-              <h3 className="text-base font-black uppercase tracking-wider text-white">
-                8. SAUDA / P.O. WISE ABNORMAL DATA ANALYSIS
-              </h3>
-              <span className="bg-rose-600 text-white text-[10px] font-black px-2.5 py-0.5 rounded-full uppercase tracking-wider shadow-sm">
-                20-Field Audit Active
-              </span>
-            </div>
-            <p className="text-xs text-rose-200/90 mt-0.5">
-              Deep-layer business analysis identifying duplicates, calculation errors, weight discrepancies, and missing rates
+            <h3 className="text-sm font-black uppercase tracking-wider text-white">
+              Exception &amp; Abnormal Data Audit
+            </h3>
+            <p className="text-xs text-slate-300 mt-0.5">
+              Cross-module audit detecting duplicates, weight discrepancies, missing rates &amp; settlement variances
             </p>
           </div>
         </div>
@@ -232,8 +285,7 @@ export const ExceptionAuditView: React.FC<ExceptionAuditViewProps> = ({
           <button
             onClick={loadAbnormalData}
             disabled={loading}
-            className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold rounded-xl border border-slate-700 transition flex items-center gap-1.5 cursor-pointer"
-            title="Re-run deep anomaly scan"
+            className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold rounded-lg border border-slate-700 transition flex items-center gap-1.5 cursor-pointer"
           >
             <RefreshCw className={cn("w-3.5 h-3.5", loading && "animate-spin")} />
             <span>Re-Scan</span>
@@ -241,15 +293,15 @@ export const ExceptionAuditView: React.FC<ExceptionAuditViewProps> = ({
 
           <button
             onClick={handleExportCSV}
-            className="px-3 py-1.5 bg-yellow-400 hover:bg-yellow-300 text-slate-950 text-xs font-black rounded-xl border border-yellow-300 transition flex items-center gap-1.5 shadow-sm cursor-pointer"
+            className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-lg transition flex items-center gap-1.5 cursor-pointer"
           >
             <Download className="w-3.5 h-3.5" />
-            <span>CSV</span>
+            <span>Export CSV</span>
           </button>
 
           <button
             onClick={handlePrint}
-            className="px-3 py-1.5 bg-white/10 hover:bg-white/20 text-white text-xs font-bold rounded-xl border border-white/20 transition flex items-center gap-1.5 cursor-pointer"
+            className="px-3 py-1.5 bg-white/10 hover:bg-white/20 text-white text-xs font-bold rounded-lg border border-white/15 transition flex items-center gap-1.5 cursor-pointer"
           >
             <Printer className="w-3.5 h-3.5" />
             <span>Print</span>
@@ -261,28 +313,80 @@ export const ExceptionAuditView: React.FC<ExceptionAuditViewProps> = ({
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <div className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-2xs">
           <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 block">Total Flagged Records</span>
-          <span className="text-xl font-black text-slate-900 font-mono mt-0.5 block">{filteredAnomalies.length}</span>
-          <span className="text-[10px] text-slate-400">across {brokerOptions.length} brokers</span>
+          <span className="text-xl font-black text-slate-900 font-mono tabular-nums mt-0.5 block">{filteredAnomalies.length}</span>
+          <span className="text-[10px] text-slate-500">across {brokerOptions.length} brokers</span>
         </div>
 
-        <div className="bg-white p-3.5 rounded-xl border border-rose-200 shadow-2xs bg-rose-50/20">
+        <div className="bg-white p-3.5 rounded-xl border border-rose-200 shadow-2xs">
           <span className="text-[10px] font-bold uppercase tracking-wider text-rose-700 block">High Severity Alerts</span>
-          <span className="text-xl font-black text-rose-700 font-mono mt-0.5 block">{highSeverityCount}</span>
-          <span className="text-[10px] text-rose-600/80">Immediate review required</span>
+          <span className="text-xl font-black text-rose-700 font-mono tabular-nums mt-0.5 block">{highSeverityCount}</span>
+          <span className="text-[10px] text-rose-600">Immediate review required</span>
         </div>
 
         <div className="bg-white p-3.5 rounded-xl border border-amber-200 shadow-2xs">
           <span className="text-[10px] font-bold uppercase tracking-wider text-amber-800 block">Weight Mismatches</span>
-          <span className="text-xl font-black text-amber-800 font-mono mt-0.5 block">{weightMismatchCount}</span>
+          <span className="text-xl font-black text-amber-800 font-mono tabular-nums mt-0.5 block">{weightMismatchCount}</span>
           <span className="text-[10px] text-slate-500">Contract vs Arrived &gt;25%</span>
         </div>
 
         <div className="bg-white p-3.5 rounded-xl border border-blue-200 shadow-2xs">
           <span className="text-[10px] font-bold uppercase tracking-wider text-blue-800 block">Rate / Price Discrepancies</span>
-          <span className="text-xl font-black text-blue-800 font-mono mt-0.5 block">{rateDiscrepancyCount}</span>
+          <span className="text-xl font-black text-blue-800 font-mono tabular-nums mt-0.5 block">{rateDiscrepancyCount}</span>
           <span className="text-[10px] text-slate-500">Zero rates &amp; variance &gt;30%</span>
         </div>
       </div>
+
+      {/* ================= EXCEPTION CHARTS: STACKED BAR + PARETO + HEATMAP ================= */}
+      {!loading && filteredAnomalies.length > 0 && (
+        <div className="space-y-4">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            {/* Stacked Bar: High & Medium Flag Counts by Section */}
+            <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-2xs space-y-2">
+              <div className="pb-2 border-b border-slate-100">
+                <h4 className="text-xs font-black uppercase tracking-wider text-slate-800">
+                  Flag Severity by Workflow Section
+                </h4>
+                <p className="text-[11px] text-slate-500">Stacked High, Medium &amp; Low alert counts per section</p>
+              </div>
+              <div style={{ width: '100%', height: 270 }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={sectionSeverityData} margin={{ top: 10, right: 16, left: 0, bottom: 24 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
+                    <XAxis dataKey="section" tick={{ fontSize: 10, fill: '#334155', fontWeight: 600 }} angle={-15} textAnchor="end" interval={0} />
+                    <YAxis tick={{ fontSize: 10, fill: '#64748b', fontFamily: 'monospace' }} allowDecimals={false} />
+                    <Tooltip
+                      contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', color: '#f8fafc', borderRadius: '8px', fontSize: '11px', fontFamily: 'monospace' }}
+                    />
+                    <Legend wrapperStyle={{ fontSize: '11px', paddingTop: '6px' }} />
+                    <Bar dataKey="High" stackId="sev" name="High Severity" fill="#be123c" />
+                    <Bar dataKey="Medium" stackId="sev" name="Medium Severity" fill="#d97706" />
+                    <Bar dataKey="Low" stackId="sev" name="Low Severity" fill="#3b82f6" radius={[4, 4, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+
+            {/* Pareto: Exception Causes by Frequency */}
+            <ParetoChart
+              title="Exception Causes Pareto"
+              subtitle="Root causes ranked by frequency with cumulative % curve"
+              data={causeParetoData}
+              volumeUnit="flags"
+              height={270}
+            />
+          </div>
+
+          {/* Heatmap: Section x Issue Type */}
+          <HeatmapChart
+            title="Section × Issue Type Heatmap"
+            subtitle="Pinpoints which workflow sections produce which exception types most frequently"
+            rows={heatmapData.rows}
+            cols={heatmapData.cols}
+            cells={heatmapData.cells}
+            colorScheme="rose"
+          />
+        </div>
+      )}
 
       {/* ================= FILTER TOOLBAR ================= */}
       <div className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-2xs flex flex-wrap items-center justify-between gap-3 text-xs">

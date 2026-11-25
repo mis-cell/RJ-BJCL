@@ -21,6 +21,20 @@ import { ReportFilterCriteria } from '../../services/systemReportEngine';
 import { calculateWeightTolerance } from '../../lib/weightTolerance';
 import { ExcessShortSettlementModal } from '../ExcessShortSettlementModal';
 import { extractFinalArrivalMrNo, extractInspectionMrNo } from '../../lib/mrNumberUtils';
+import { arePoNumbersExactMatch } from '../../lib/contractRelationshipEngine';
+import {
+  ResponsiveContainer,
+  AreaChart,
+  Area,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip
+} from 'recharts';
+import { HorizontalRankBarChart } from '../reports/charts/HorizontalRankBarChart';
+import { HistogramChart } from '../reports/charts/HistogramChart';
+import { TornadoChart } from '../reports/charts/TornadoChart';
+import { WaterfallChart } from '../reports/charts/WaterfallChart';
 
 export type NewReportTab =
   | 'outstanding_po'
@@ -41,8 +55,9 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
   const [loading, setLoading] = useState<boolean>(true);
   const [searchQuery, setSearchQuery] = useState<string>('');
 
-  // Report 1: Outstanding PO State (Default: P.O Number Wise for POs not received in Temporary Arrival)
+  // Report 1: Outstanding PO State (Accurate open POs with pending balance MT)
   const [poList, setPoList] = useState<any[]>([]);
+  const [poStatusFilter, setPoStatusFilter] = useState<'all_open' | 'not_received' | 'partial'>('all_open');
   const [poGroupBy, setPoGroupBy] = useState<'all' | 'broker' | 'supplier' | 'area'>('all');
 
   // Report 2: MR Advance Eligible State
@@ -148,7 +163,7 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
         };
 
         // =========================================================================
-        // 1. Process Outstanding P.O List (P.Os NOT Received in Temporary Arrival)
+        // 1. Process Outstanding P.O List (Open POs with Pending Balance MT)
         // =========================================================================
         const tempArrPoSet = new Set<string>();
         rawTempArrivals.forEach((tmr: any) => {
@@ -157,51 +172,99 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
             .filter(k => k && k !== 'N/A' && k !== 'NO' && k !== 'NONE');
           candidates.forEach(poKey => {
             tempArrPoSet.add(poKey);
-            const suffix = poKey.split('/').pop()?.trim() || '';
-            if (suffix.length >= 3) {
-              tempArrPoSet.add(`SUFFIX_${suffix}`);
-            }
           });
         });
 
-        const isPoReceivedInTempArrival = (poNoStr: string): boolean => {
-          const key = cleanPoKey(poNoStr);
-          if (!key) return false;
-          if (tempArrPoSet.has(key)) return true;
-          const suffix = key.split('/').pop()?.trim() || '';
-          if (suffix.length >= 3 && tempArrPoSet.has(`SUFFIX_${suffix}`)) return true;
-          return false;
+        // Compute accurate received MT per PO across final_arrival, material_inspection, and unpromoted temporary_material_received (exact PO matching)
+        const toMtNormalized = (raw: any): number => {
+          const n = Number(raw || 0);
+          if (!Number.isFinite(n) || n <= 0) return 0;
+          if (n >= 500) return n / 1000;
+          if (n > 60 && n < 500) return n / 10;
+          return n;
         };
+
+        const poMrReceivedMap = new Map<string, Map<string, number>>();
+        const recordPoReceipt = (rawPo: any, mrKey: string, wtMt: number) => {
+          const pk = cleanPoKey(rawPo);
+          if (!pk) return;
+          if (!poMrReceivedMap.has(pk)) poMrReceivedMap.set(pk, new Map());
+          const inner = poMrReceivedMap.get(pk)!;
+          inner.set(mrKey, Math.max(inner.get(mrKey) || 0, wtMt));
+        };
+
+        const promotedTempNos = new Set<string>();
+        rawFa.forEach((f: any, idx: number) => {
+          const wt = toMtNormalized(f.electronic_net_weight || f.weight_reduced || f.final_receipt_wt || f.net_weight || 0);
+          const mrK = String(f.mr_no || f.final_arrival_no || f.arrival_no || `FA_${idx}`).trim().toUpperCase();
+          if (f.temporary_arrival_no) promotedTempNos.add(String(f.temporary_arrival_no).trim().toUpperCase());
+          [f.po_no, f.contract_po_no, f.sauda_no].filter(Boolean).forEach(p => recordPoReceipt(p, mrK, wt));
+        });
+
+        rawMatInsp.forEach((insp: any, idx: number) => {
+          const wt = toMtNormalized(insp.final_receipt_wt || insp.total_final_receipt_wt || insp.challan_gross_wt || insp.reduced_weight || 0);
+          const mrK = String(insp.mr_no || insp.arrival_no || `INSP_${idx}`).trim().toUpperCase();
+          [insp.po_no, insp.mill_po_no, insp.contract_po_no, insp.sauda_no].filter(Boolean).forEach(p => recordPoReceipt(p, mrK, wt));
+        });
+
+        rawTempArrivals.forEach((t: any, idx: number) => {
+          const tNo = String(t.temporary_arrival_no || '').trim().toUpperCase();
+          const isPromoted = Boolean(
+            t.final_arrival_no ||
+            String(t.status || '').toUpperCase() === 'FINALIZED' ||
+            String(t.status || '').toUpperCase() === 'PROMOTED' ||
+            (tNo && promotedTempNos.has(tNo))
+          );
+          if (isPromoted) return;
+          const wt = Number(t.weight_qtl) > 0 ? Number(t.weight_qtl) / 10 : toMtNormalized(t.gross_weight || t.net_weight || t.weight_mt || 0);
+          [t.po_no, t.contract_po_no, t.sauda_no].filter(Boolean).forEach(p => recordPoReceipt(p, tNo || `TEMP_${idx}`, wt));
+        });
+
+        const receivedMtByPo = new Map<string, number>();
+        poMrReceivedMap.forEach((mMap, pk) => {
+          let sum = 0;
+          mMap.forEach(w => { sum += w; });
+          receivedMtByPo.set(pk, sum);
+        });
 
         const combinedPoList: any[] = [];
         const seenPoKeys = new Set<string>();
 
-        const registerUnreceivedPo = (rec: any, isCheckpoint = false) => {
+        const registerOpenPo = (rec: any, isCheckpoint = false) => {
           const statusLower = String(rec.status || '').toLowerCase().trim();
-          if (statusLower === 'cancelled' || statusLower === 'rejected') return;
+          if (statusLower === 'cancelled' || statusLower === 'rejected' || statusLower === 'closed' || statusLower === 'completed') return;
 
           const rawPoNo = String(rec.po_no || rec.po_number || (isCheckpoint ? rec.session : '') || '').trim();
           const poKey = cleanPoKey(rawPoNo);
           if (!poKey || poKey === 'N/A' || seenPoKeys.has(poKey)) return;
 
-          // Exclude if already received in Temporary Arrival
-          if (isPoReceivedInTempArrival(rawPoNo)) return;
-
-          seenPoKeys.add(poKey);
           const totalQty =
+            Number(rec.total_contract_mt) ||
+            Number(rec.contract_weight_mt) ||
             Number(rec.total_qty_mt) ||
             Number(rec.quantity_mt) ||
             Number(rec.qty_mt) ||
             Number(rec.total_wt_in_ton) ||
             Number(rec.quantity) ||
             0;
+
+          if (totalQty <= 0) return;
+
+          const rcvdQty = Number((receivedMtByPo.get(poKey) || 0).toFixed(3));
+          const pendingQty = Math.max(0, Number((totalQty - rcvdQty).toFixed(3)));
+
+          // Exclude fully received POs (within 0.05 MT tolerance)
+          if (pendingQty <= 0.05) return;
+
+          seenPoKeys.add(poKey);
           const rate =
             Number(rec.rate_qntl) ||
             Number(rec.b_rate) ||
             Number(rec.rate_mt) ||
             Number(rec.rate) ||
             0;
-          const pendingValue = totalQty * (rate > 2000 ? rate * 10 : rate);
+          const pendingValue = pendingQty * (rate > 2000 ? rate * 10 : rate);
+          const hasAnyReceipt = rcvdQty > 0.01 || tempArrPoSet.has(poKey);
 
           combinedPoList.push({
             poNo: rawPoNo.toUpperCase(),
@@ -211,17 +274,19 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
             area: String(rec.area || rec.agency || 'MAIN AREA').toUpperCase().trim(),
             agency: String(rec.agency || '-').toUpperCase().trim(),
             totalQty,
-            rcvdQty: 0,
-            pendingQty: totalQty,
+            rcvdQty,
+            pendingQty,
             rate,
             pendingValue,
-            status: 'NOT RECEIVED IN TEMP ARRIVAL'
+            isPartial: hasAnyReceipt,
+            status: hasAnyReceipt ? 'PARTIALLY RECEIVED' : 'NOT RECEIVED YET'
           });
         };
 
-        rawPos.forEach((po: any) => registerUnreceivedPo(po, false));
-        rawCheckpoints.forEach((cp: any) => registerUnreceivedPo(cp, true));
+        rawCheckpoints.forEach((cp: any) => registerOpenPo(cp, true));
+        rawPos.forEach((po: any) => registerOpenPo(po, false));
 
+        combinedPoList.sort((a, b) => b.pendingQty - a.pendingQty);
         setPoList(combinedPoList);
 
         // =========================================================================
@@ -256,16 +321,17 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
           }
         });
 
-        // Deduplicate Mill Inspections by MR No
+        // Deduplicate Mill Inspections strictly by Final M.R. No. (MR...)
         const uniqueInspMap = new Map<string, any>();
         rawMatInsp.forEach((insp: any) => {
-          const rawMr = String(insp.mr_no || insp.arrival_no || '').trim();
-          if (!rawMr) return;
-          const mrFormatted = toMillInspectionMrNo(rawMr);
+          const rawMr = String(insp.mr_no || '').trim();
+          // Strictly require Final MR number (never fabricate MR from AR temporary arrival number)
+          if (!rawMr || !rawMr.toUpperCase().startsWith('MR')) return;
+          const mrFormatted = rawMr.toUpperCase();
           const core = extractCoreDigits(mrFormatted);
-          const mapKey = core ? `CORE_${core}` : mrFormatted.toUpperCase();
+          const mapKey = core ? `CORE_${core}` : mrFormatted;
           const existing = uniqueInspMap.get(mapKey);
-          if (!existing || String(insp.mr_no || '').toUpperCase().startsWith('MR')) {
+          if (!existing || Boolean(insp.grid_details || insp.details)) {
             uniqueInspMap.set(mapKey, { ...existing, ...insp, resolvedMrNo: mrFormatted });
           }
         });
@@ -345,18 +411,17 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
             return;
           }
 
-          // 1. Check Mismatch Status against this MR or PO
+          // 1. Check Mismatch Status against this MR or PO (EXACT PO matching only)
           const matchedMatMm = rawMatMismatches.filter((m: any) => {
-            const mPo = cleanPoKey(m.po_no);
             const mInsp = String(m.inspection_no || m.mr_no || m.arrival_no || '').trim().toUpperCase();
-            if (poKey && mPo && (mPo === poKey || (poSuffix.length >= 3 && mPo.endsWith(poSuffix)))) return true;
+            if (resolvedPoNo && m.po_no && arePoNumbersExactMatch(m.po_no, resolvedPoNo)) return true;
             if (mInsp && (mInsp === mrNo.toUpperCase() || (mrDigits && extractCoreDigits(mInsp) === mrDigits))) return true;
             return false;
           });
 
           const matchedSattaMm = rawSattaMismatches.filter((sm: any) => {
-            const smPo = cleanPoKey(sm.po_no || sm.sauda_no);
-            if (poKey && smPo && (smPo === poKey || (poSuffix.length >= 3 && smPo.endsWith(poSuffix)))) return true;
+            const smPoRaw = sm.po_no || sm.sauda_no;
+            if (resolvedPoNo && smPoRaw && arePoNumbersExactMatch(smPoRaw, resolvedPoNo)) return true;
             return false;
           });
 
@@ -517,11 +582,12 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
         // =========================================================================
         const apmcRecords: any[] = [];
         rawSettlements.forEach((s: any) => {
-          const mrNo = toMillInspectionMrNo(s.mr_no);
-          if (!mrNo) return;
-          const fa = rawFa.find((f: any) => f.mr_no === s.mr_no || f.final_arrival_no === s.mr_no) || {};
+          const rawMr = String(s.mr_no || '').trim();
+          if (!rawMr || !rawMr.toUpperCase().startsWith('MR')) return;
+          const mrNo = rawMr.toUpperCase();
+          const fa = rawFa.find((f: any) => String(f.mr_no || '').trim().toUpperCase() === mrNo || String(f.final_arrival_no || '').trim().toUpperCase() === mrNo) || {};
 
-          const matVal = Number(s.val_material_value || s.summary_material_value) || 0;
+          const matVal = Number(s.value_amt || s.val_material_value || s.summary_material_value) || 0;
           const challanApmc = Number(s.arival_apmc_fees) || Number(fa.arival_apmc_fees) || Number(fa.apmc_fees) || 0;
           const actualApmc = Number(s.actual_apmc_fees) > 0 ? Number(s.actual_apmc_fees) : Math.round(matVal * 0.01);
           const apmcDiff = Number(s.final_apmc_fees) > 0 ? Number(s.final_apmc_fees) : Math.max(0, actualApmc - challanApmc);
@@ -1047,13 +1113,11 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
 
           if (contractMt <= 0) return;
 
-          // Match Mill Inspections for this PO
+          // Match Mill Inspections for this PO using exact PO matching only
           const matchedInsps = rawMatInsp.filter((insp: any) => {
-            const iPo = cleanPoKey(insp.po_no || insp.mill_po_no || insp.contract_po_no || insp.sauda_no);
-            if (!iPo) return false;
-            if (iPo === poKey) return true;
-            if (poSuffix.length >= 3 && (iPo === poSuffix || iPo === `PO-${poSuffix}` || iPo === `PO-${poSuffix.replace(/^0+/, '')}`)) return true;
-            return false;
+            const rawInspPo = insp.po_no || insp.mill_po_no || insp.contract_po_no || insp.sauda_no;
+            if (!rawInspPo) return false;
+            return arePoNumbersExactMatch(rawInspPo, poNo);
           });
 
           const uniqueByMr = new Map<string, any>();
@@ -1485,12 +1549,14 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
     loadReportsData();
   }, []);
 
-  // Filter Outstanding PO Records (POs Not Received in Temporary Arrival)
+  // Filter Outstanding PO Records (Open POs with Pending Balance MT)
   const filteredPoList = useMemo(() => {
     return poList.filter(po => {
+      if (poStatusFilter === 'not_received' && po.isPartial) return false;
+      if (poStatusFilter === 'partial' && !po.isPartial) return false;
       return matchesFilters(po.poDate, po.supplier, po.broker, po.area, po.agency, po.poNo, undefined, filters, searchQuery);
     });
-  }, [poList, searchQuery, filters]);
+  }, [poList, poStatusFilter, searchQuery, filters]);
 
   // Grouped Outstanding POs (Broker / Party / Area Wise)
   const groupedPoSummary = useMemo(() => {
@@ -1570,16 +1636,116 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
     return Number.isInteger(avg) ? String(avg) : avg.toFixed(1);
   }, [filteredDeliveryClaimList]);
 
+  // Outstanding PO Chart 1: Horizontal Bar (Top Pending POs or Grouped Entity by Pending MT)
+  const outstandingPoBarData = useMemo(() => {
+    if (poGroupBy === 'all') {
+      return [...filteredPoList]
+        .sort((a, b) => b.pendingQty - a.pendingQty)
+        .slice(0, 12)
+        .map(po => ({
+          label: po.poNo,
+          fullName: `${po.poNo} · ${po.broker}`,
+          value: Number(po.pendingQty.toFixed(2)),
+          annotation: `${po.pendingQty.toFixed(1)} MT (${po.isPartial ? 'Partial' : '0% Recd'})`,
+          secondaryText: `Contract: ${po.totalQty.toFixed(2)} MT · Recd: ${po.rcvdQty.toFixed(2)} MT`,
+          color: po.isPartial ? '#d97706' : '#D94B5A'
+        }));
+    }
+    return groupedPoSummary.slice(0, 12).map(g => ({
+      label: g.key,
+      fullName: g.key,
+      value: Number(g.pendingQty.toFixed(2)),
+      annotation: `${g.pendingQty.toFixed(1)} MT (${g.totalPoCount} POs)`,
+      secondaryText: `Est. Pending Value: ₹${Math.round(g.pendingValue).toLocaleString('en-IN')}`,
+      color: '#D94B5A'
+    }));
+  }, [filteredPoList, groupedPoSummary, poGroupBy]);
+
+  // Outstanding PO Chart 2: Area Chart (Pending MT build-up / fall over time by PO month)
+  const outstandingPoAreaData = useMemo(() => {
+    const map = new Map<string, { pendingMt: number; poCount: number }>();
+    filteredPoList.forEach(po => {
+      const m = String(po.poDate || '').slice(0, 7);
+      if (!m || m.length < 7) return;
+      const cur = map.get(m) || { pendingMt: 0, poCount: 0 };
+      cur.pendingMt += po.pendingQty;
+      cur.poCount += 1;
+      map.set(m, cur);
+    });
+    return Array.from(map.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([month, v]) => ({
+        month,
+        pendingMt: Number(v.pendingMt.toFixed(2)),
+        poCount: v.poCount
+      }));
+  }, [filteredPoList]);
+
+  // Delivery Claim Chart: Histogram of Delay / Detention Days
+  const deliveryDelayHistogramBins = useMemo(() => {
+    const buckets = [
+      { label: '1–5 Days', min: 1, max: 5, count: 0 },
+      { label: '6–10 Days', min: 6, max: 10, count: 0 },
+      { label: '11–20 Days', min: 11, max: 20, count: 0 },
+      { label: '21–30 Days', min: 21, max: 30, count: 0 },
+      { label: '31+ Days', min: 31, max: Infinity, count: 0 }
+    ];
+    filteredDeliveryClaimList.forEach(item => {
+      const b = buckets.find(x => item.detentionDays >= x.min && item.detentionDays <= x.max);
+      if (b) b.count += 1;
+    });
+    const total = Math.max(1, filteredDeliveryClaimList.length);
+    return buckets.map(b => ({
+      binRange: b.label,
+      count: b.count,
+      pct: Number(((b.count / total) * 100).toFixed(1)),
+      isWarning: b.min >= 11
+    }));
+  }, [filteredDeliveryClaimList]);
+
+  // Short & Excess Chart 1: Tornado Chart (Shortage left of zero, Excess right of zero on SAME MT scale)
+  const shortExcessTornadoData = useMemo(() => {
+    return filteredShortExcessList
+      .filter(r => r.variationType === 'short' || r.variationType === 'excess')
+      .slice(0, 14)
+      .map(r => {
+        const diff = Number((r.totalReceivedMt - r.contractMt).toFixed(3));
+        return {
+          label: r.poNo,
+          fullName: `${r.poNo} · ${r.broker}`,
+          shortageMt: diff < 0 ? Math.abs(diff) : 0,
+          excessMt: diff > 0 ? diff : 0,
+          deductionAmt: r.deductionAmount,
+          contractMt: r.contractMt,
+          receivedMt: r.totalReceivedMt
+        };
+      });
+  }, [filteredShortExcessList]);
+
+  // Short & Excess Chart 2: Waterfall of Contract Value -> -Short -> -Excess -> Final Payable
+  const shortExcessWaterfallData = useMemo(() => {
+    const grossVal = filteredShortExcessList.reduce((acc, r) => acc + (r.saudaMaterialValue || 0), 0);
+    const shortDed = filteredShortExcessList.filter(r => r.variationType === 'short').reduce((acc, r) => acc + r.deductionAmount, 0);
+    const excessDed = filteredShortExcessList.filter(r => r.variationType === 'excess').reduce((acc, r) => acc + r.deductionAmount, 0);
+    const finalPayable = Math.max(0, grossVal - shortDed - excessDed);
+    return [
+      { name: 'Contract Value', value: Math.round(grossVal), isTotal: true, color: '#0f172a' },
+      { name: '− Short Ded.', value: -Math.round(shortDed), color: '#d97706' },
+      { name: '− Excess Ded.', value: -Math.round(excessDed), color: '#4f46e5' },
+      { name: 'Net Payable', value: Math.round(finalPayable), isTotal: true, color: '#0f766e' }
+    ];
+  }, [filteredShortExcessList]);
+
   // CSV Export for active report
   const handleExportCSV = () => {
     if (activeSubReport === 'outstanding_po') {
       if (poGroupBy === 'all') {
-        const headers = ['PO No', 'PO Date', 'Supplier / Party', 'Broker', 'Area', 'Agency', 'Contract Qty (MT)', 'Rate (Rs)', 'Est. Pending Value (Rs)', 'Status'];
-        const rows = filteredPoList.map(po => [po.poNo, po.poDate, po.supplier, po.broker, po.area, po.agency, po.totalQty.toFixed(2), po.rate, po.pendingValue.toFixed(2), po.status]);
-        exportToCSV('Outstanding_PO_Not_Received_In_Temp_Arrival.csv', headers, rows);
+        const headers = ['PO No', 'PO Date', 'Supplier / Party', 'Broker', 'Area', 'Agency', 'Contract Qty (MT)', 'Received Qty (MT)', 'Pending Qty (MT)', 'Rate (Rs)', 'Est. Pending Value (Rs)', 'Status'];
+        const rows = filteredPoList.map(po => [po.poNo, po.poDate, po.supplier, po.broker, po.area, po.agency, po.totalQty.toFixed(3), (po.rcvdQty || 0).toFixed(3), (po.pendingQty ?? po.totalQty).toFixed(3), po.rate, po.pendingValue.toFixed(2), po.status]);
+        exportToCSV('Outstanding_PO_List.csv', headers, rows);
       } else {
-        const headers = ['Group Key', 'Total POs', 'PO Numbers (Not Received in Temp Arrival)', 'Total Qty (MT)', 'Pending Value (Rs)'];
-        const rows = groupedPoSummary.map(g => [g.key, g.totalPoCount, g.poNumbers.join(' | '), g.totalQty.toFixed(2), g.pendingValue.toFixed(2)]);
+        const headers = ['Group Key', 'Total POs', 'Open PO Numbers', 'Contract Qty (MT)', 'Pending Qty (MT)', 'Pending Value (Rs)'];
+        const rows = groupedPoSummary.map(g => [g.key, g.totalPoCount, g.poNumbers.join(' | '), g.totalQty.toFixed(3), (g.pendingQty ?? g.totalQty).toFixed(3), g.pendingValue.toFixed(2)]);
         exportToCSV(`Outstanding_PO_List_${poGroupBy}_wise.csv`, headers, rows);
       }
     } else if (activeSubReport === 'mr_advance_eligible') {
@@ -1714,44 +1880,51 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
           )}
 
           {activeSubReport === 'outstanding_po' && (
-            <div className="flex items-center gap-1.5 bg-slate-100 p-1 rounded-xl border border-slate-200 text-xs font-bold">
-              <span className="text-slate-500 pl-1 text-[11px]">View By:</span>
-              <button
-                type="button"
-                onClick={() => setPoGroupBy('all')}
-                className={`px-2.5 py-1 rounded-lg transition cursor-pointer text-xs ${
-                  poGroupBy === 'all' ? 'bg-[#D94B5A] text-white shadow' : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                P.O Number Wise
-              </button>
-              <button
-                type="button"
-                onClick={() => setPoGroupBy('broker')}
-                className={`px-2.5 py-1 rounded-lg transition cursor-pointer text-xs ${
-                  poGroupBy === 'broker' ? 'bg-[#D94B5A] text-white shadow' : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                Broker Wise
-              </button>
-              <button
-                type="button"
-                onClick={() => setPoGroupBy('supplier')}
-                className={`px-2.5 py-1 rounded-lg transition cursor-pointer text-xs ${
-                  poGroupBy === 'supplier' ? 'bg-[#D94B5A] text-white shadow' : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                Party (Supplier) Wise
-              </button>
-              <button
-                type="button"
-                onClick={() => setPoGroupBy('area')}
-                className={`px-2.5 py-1 rounded-lg transition cursor-pointer text-xs ${
-                  poGroupBy === 'area' ? 'bg-[#D94B5A] text-white shadow' : 'text-slate-600 hover:text-slate-900'
-                }`}
-              >
-                Area Wise
-              </button>
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200 text-xs font-bold">
+                <button
+                  type="button"
+                  onClick={() => setPoStatusFilter('all_open')}
+                  className={`px-2 py-1 rounded-lg transition cursor-pointer text-[11px] ${
+                    poStatusFilter === 'all_open' ? 'bg-slate-900 text-white' : 'text-slate-600'
+                  }`}
+                >
+                  All Open POs
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPoStatusFilter('not_received')}
+                  className={`px-2 py-1 rounded-lg transition cursor-pointer text-[11px] ${
+                    poStatusFilter === 'not_received' ? 'bg-slate-900 text-white' : 'text-slate-600'
+                  }`}
+                >
+                  0% Arrived
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPoStatusFilter('partial')}
+                  className={`px-2 py-1 rounded-lg transition cursor-pointer text-[11px] ${
+                    poStatusFilter === 'partial' ? 'bg-slate-900 text-white' : 'text-slate-600'
+                  }`}
+                >
+                  Partially Received
+                </button>
+              </div>
+              <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200 text-xs font-bold">
+                <span className="text-slate-500 pl-1 text-[11px]">View By:</span>
+                {(['all', 'broker', 'supplier', 'area'] as const).map(grp => (
+                  <button
+                    key={grp}
+                    type="button"
+                    onClick={() => setPoGroupBy(grp)}
+                    className={`px-2.5 py-1 rounded-lg transition cursor-pointer text-xs ${
+                      poGroupBy === grp ? 'bg-[#D94B5A] text-white shadow' : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    {grp === 'all' ? 'P.O Wise' : grp === 'broker' ? 'Broker' : grp === 'supplier' ? 'Supplier' : 'Area'}
+                  </button>
+                ))}
+              </div>
             </div>
           )}
 
@@ -1778,41 +1951,90 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
           {activeSubReport === 'outstanding_po' && (
             <div className="space-y-4">
               {/* Summary Cards */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
-                <div className="bg-gradient-to-br from-slate-900 to-slate-800 text-white p-3.5 rounded-2xl border border-slate-700 shadow-md space-y-1">
-                  <span className="text-[10px] uppercase font-bold text-slate-400">Total Unreceived POs</span>
-                  <div className="text-xl font-black text-white">{filteredPoList.length} POs</div>
-                  <span className="text-[10px] text-slate-300">Not Received in Temporary Arrival</span>
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
+                <div className="bg-slate-900 text-white p-3.5 rounded-xl border border-slate-800 shadow-2xs space-y-1">
+                  <span className="text-[10px] uppercase font-bold text-slate-400">Open Outstanding POs</span>
+                  <div className="text-xl font-black font-mono tabular-nums text-white">{filteredPoList.length} POs</div>
+                  <span className="text-[10px] text-slate-300">
+                    {filteredPoList.filter(p => !p.isPartial).length} zero-arrival · {filteredPoList.filter(p => p.isPartial).length} partial
+                  </span>
                 </div>
 
-                <div className="bg-gradient-to-br from-amber-500 to-amber-600 text-white p-3.5 rounded-2xl shadow-md space-y-1">
-                  <span className="text-[10px] uppercase font-bold text-amber-100">Total Pending Contract Qty</span>
-                  <div className="text-xl font-black text-white">
+                <div className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-2xs space-y-1">
+                  <span className="text-[10px] uppercase font-bold text-slate-500">Total Contract Qty</span>
+                  <div className="text-xl font-black font-mono tabular-nums text-slate-900">
                     {filteredPoList.reduce((a, c) => a + c.totalQty, 0).toFixed(2)} MT
                   </div>
-                  <span className="text-[10px] text-amber-100">Awaiting Temporary Arrival</span>
+                  <span className="text-[10px] text-teal-700 font-semibold">
+                    Recd: {filteredPoList.reduce((a, c) => a + c.rcvdQty, 0).toFixed(2)} MT
+                  </span>
                 </div>
 
-                <div className="bg-gradient-to-br from-rose-600 to-rose-700 text-white p-3.5 rounded-2xl shadow-md space-y-1">
-                  <span className="text-[10px] uppercase font-bold text-rose-100">Est. Outstanding Value</span>
-                  <div className="text-xl font-black text-white">
+                <div className="bg-white p-3.5 rounded-xl border border-amber-200 shadow-2xs space-y-1">
+                  <span className="text-[10px] uppercase font-bold text-amber-700">Total Pending Balance</span>
+                  <div className="text-xl font-black font-mono tabular-nums text-amber-800">
+                    {filteredPoList.reduce((a, c) => a + c.pendingQty, 0).toFixed(2)} MT
+                  </div>
+                  <span className="text-[10px] text-slate-500">Awaiting physical receipt</span>
+                </div>
+
+                <div className="bg-white p-3.5 rounded-xl border border-rose-200 shadow-2xs space-y-1">
+                  <span className="text-[10px] uppercase font-bold text-rose-700">Est. Outstanding Value</span>
+                  <div className="text-xl font-black font-mono tabular-nums text-rose-800">
                     ₹{filteredPoList.reduce((a, c) => a + c.pendingValue, 0).toLocaleString('en-IN', { maximumFractionDigits: 0 })}
                   </div>
-                  <span className="text-[10px] text-rose-100">Pending P.O Value</span>
+                  <span className="text-[10px] text-slate-500">Pending balance value</span>
                 </div>
               </div>
 
+              {/* Outstanding PO Charts: Horizontal Bar + Pending MT Over Time Area */}
+              {filteredPoList.length > 0 && (
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                  <HorizontalRankBarChart
+                    title={poGroupBy === 'all' ? 'Top Outstanding POs by Pending MT' : `Top ${poGroupBy.toUpperCase()}s by Pending MT`}
+                    subtitle="Ranked by remaining balance tonnage (MT)"
+                    data={outstandingPoBarData}
+                    valueFormatter={(v) => `${v.toFixed(2)} MT`}
+                    barColor="#D94B5A"
+                    height={280}
+                  />
+
+                  <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-2xs flex flex-col justify-between space-y-2">
+                    <div className="pb-2 border-b border-slate-100">
+                      <h4 className="text-xs font-black uppercase tracking-wider text-slate-800">
+                        Pending MT Build-Up Over Time
+                      </h4>
+                      <p className="text-[11px] text-slate-500">Open balance tonnage distributed by PO booking month</p>
+                    </div>
+                    <div style={{ width: '100%', height: 280 }}>
+                      <ResponsiveContainer width="100%" height="100%">
+                        <AreaChart data={outstandingPoAreaData} margin={{ top: 10, right: 16, left: 4, bottom: 4 }}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
+                          <XAxis dataKey="month" tick={{ fontSize: 10, fill: '#64748b', fontFamily: 'monospace' }} />
+                          <YAxis tick={{ fontSize: 10, fill: '#64748b', fontFamily: 'monospace' }} tickFormatter={(v) => `${v} MT`} width={58} />
+                          <Tooltip
+                            formatter={(val: any) => [`${Number(val).toFixed(2)} MT`, 'Pending MT']}
+                            contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', color: '#f8fafc', borderRadius: '8px', fontSize: '11px', fontFamily: 'monospace' }}
+                          />
+                          <Area type="monotone" dataKey="pendingMt" stroke="#D94B5A" fill="#fecdd3" fillOpacity={0.55} strokeWidth={2.2} />
+                        </AreaChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* Outstanding PO Table */}
-              <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-                <div className="p-3 bg-slate-100 border-b border-slate-200 flex items-center justify-between">
+              <div className="bg-white rounded-xl border border-slate-200 shadow-2xs overflow-hidden">
+                <div className="p-3 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
                   <h3 className="text-xs font-black uppercase text-slate-800 flex items-center gap-2">
                     <Briefcase className="w-4 h-4 text-[#D94B5A]" />
                     <span>
-                      OUTSTANDING P.O LIST (NOT RECEIVED IN TEMPORARY ARRIVAL) — {poGroupBy === 'all' ? `${filteredPoList.length} POs` : `${groupedPoSummary.length} GROUPS`}
+                      OUTSTANDING P.O LIST — {poGroupBy === 'all' ? `${filteredPoList.length} OPEN POs` : `${groupedPoSummary.length} GROUPS`}
                     </span>
                   </h3>
-                  <span className="text-[10px] bg-rose-100 text-rose-800 font-bold px-2 py-0.5 rounded-md">
-                    P.O Numbers Not Received in Temporary Arrival
+                  <span className="text-[11px] text-slate-500 font-semibold">
+                    Contract vs Received vs Pending Balance (MT)
                   </span>
                 </div>
 
@@ -1820,43 +2042,47 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
                   <div className="overflow-x-auto">
                     <table className="w-full text-[11px] text-left border-collapse">
                       <thead>
-                        <tr className="bg-slate-800 text-white font-bold uppercase text-[10px]">
+                        <tr className="bg-slate-900 text-white font-bold uppercase text-[10px]">
                           <th className="p-2.5">P.O Number</th>
                           <th className="p-2.5">P.O Date</th>
                           <th className="p-2.5">Supplier / Party</th>
                           <th className="p-2.5">Broker</th>
                           <th className="p-2.5">Area / Agency</th>
-                          <th className="p-2.5 text-right">Contract Qty (MT)</th>
+                          <th className="p-2.5 text-right">Contract (MT)</th>
+                          <th className="p-2.5 text-right">Received (MT)</th>
+                          <th className="p-2.5 text-right text-amber-300">Pending (MT)</th>
                           <th className="p-2.5 text-right">Rate (₹)</th>
-                          <th className="p-2.5 text-right">Est. Value (₹)</th>
-                          <th className="p-2.5 text-center">Temporary Arrival Status</th>
+                          <th className="p-2.5 text-right">Pending Value (₹)</th>
+                          <th className="p-2.5 text-center">Status</th>
                         </tr>
                       </thead>
-                      <tbody className="divide-y divide-slate-200">
+                      <tbody className="divide-y divide-slate-200 font-mono tabular-nums">
                         {filteredPoList.length === 0 ? (
                           <tr>
-                            <td colSpan={9} className="p-8 text-center text-slate-500 font-bold">
+                            <td colSpan={11} className="p-8 text-center text-slate-500 font-sans font-bold">
                               No Outstanding P.Os found matching the selected filters.
                             </td>
                           </tr>
                         ) : (
                           filteredPoList.map((po, idx) => (
                             <tr key={idx} className="hover:bg-slate-50 transition">
-                              <td className="p-2.5 font-bold font-mono text-[#D94B5A]">{po.poNo}</td>
-                              <td className="p-2.5 font-mono text-slate-600">{po.poDate || '-'}</td>
-                              <td className="p-2.5 font-bold">{po.supplier}</td>
-                              <td className="p-2.5 text-slate-700">{po.broker}</td>
-                              <td className="p-2.5 text-slate-600">{po.area} / {po.agency}</td>
-                              <td className="p-2.5 text-right font-mono font-bold text-rose-600">{po.totalQty.toFixed(2)} MT</td>
-                              <td className="p-2.5 text-right font-mono text-slate-700">
+                              <td className="p-2.5 font-bold text-[#D94B5A]">{po.poNo}</td>
+                              <td className="p-2.5 text-slate-600">{po.poDate || '-'}</td>
+                              <td className="p-2.5 font-sans font-bold text-slate-900">{po.supplier}</td>
+                              <td className="p-2.5 font-sans text-slate-700">{po.broker}</td>
+                              <td className="p-2.5 font-sans text-slate-600">{po.area} / {po.agency}</td>
+                              <td className="p-2.5 text-right font-bold text-slate-800">{po.totalQty.toFixed(2)}</td>
+                              <td className="p-2.5 text-right text-teal-700 font-bold">{po.rcvdQty.toFixed(2)}</td>
+                              <td className="p-2.5 text-right font-black text-rose-700">{po.pendingQty.toFixed(2)}</td>
+                              <td className="p-2.5 text-right text-slate-700">
                                 {po.rate > 0 ? `₹${po.rate.toLocaleString('en-IN')}` : '-'}
                               </td>
-                              <td className="p-2.5 text-right font-mono font-bold">
+                              <td className="p-2.5 text-right font-bold text-slate-900">
                                 ₹{po.pendingValue.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
                               </td>
-                              <td className="p-2.5 text-center">
-                                <span className="px-2 py-0.5 text-[9px] font-black rounded-full uppercase bg-rose-100 text-rose-800">
-                                  Not Received in Temp Arrival
+                              <td className="p-2.5 text-center font-sans text-[10px] font-bold">
+                                <span className={po.isPartial ? 'text-amber-700' : 'text-rose-700'}>
+                                  {po.status}
                                 </span>
                               </td>
                             </tr>
@@ -2140,6 +2366,17 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
                 </div>
               </div>
 
+              {/* Delivery Claim Histogram: Delay Days Distribution */}
+              {filteredDeliveryClaimList.length > 0 && (
+                <HistogramChart
+                  title="Delivery Delay Days Distribution Histogram"
+                  subtitle="Frequency of delayed MRs grouped by detention / late-delivery day ranges"
+                  bins={deliveryDelayHistogramBins}
+                  metricLabel="Delayed MRs"
+                  height={240}
+                />
+              )}
+
               {/* Table View */}
               <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
                 <div className="p-3 bg-slate-100 border-b border-slate-200 flex items-center justify-between">
@@ -2251,6 +2488,32 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
                   </span>
                 </div>
               </div>
+
+              {/* Short & Excess Charts: Symmetric Tornado (Shortage left, Excess right, same MT scale) + Cost Waterfall */}
+              {filteredShortExcessList.length > 0 && (
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+                  <div className="lg:col-span-7">
+                    <TornadoChart
+                      title="Shortage vs Excess Weight Tornado Chart"
+                      subtitle="Shortage plotted left of 0 and Excess right of 0 on identical MT scale"
+                      data={shortExcessTornadoData}
+                      unit="MT"
+                      leftLabel="Shortage (MT)"
+                      rightLabel="Excess (MT)"
+                      height={310}
+                    />
+                  </div>
+                  <div className="lg:col-span-5">
+                    <WaterfallChart
+                      title="Short & Excess Cost Deduction Impact"
+                      subtitle="Contract Material Value − Short & Excess Deductions = Net Payable"
+                      data={shortExcessWaterfallData}
+                      unit="₹"
+                      height={310}
+                    />
+                  </div>
+                </div>
+              )}
 
               {/* Main Table */}
               <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
