@@ -90,8 +90,59 @@ export function formatAuditValue(val: any): string {
   return String(val).trim();
 }
 
+const CREATION_OLD_VALUE_SENTINELS = new Set([
+  'new',
+  'draft',
+  'none',
+  'n/a',
+  'created',
+  'insert'
+]);
+
 /**
- * Log a single change in the application
+ * Returns true ONLY for genuine UPDATE edits to existing records
+ * (excludes CREATE/INSERT, DELETE, generic activity/login rows, and insert-via-upsert entries).
+ */
+export function isExistingRecordUpdateLog(entry: Partial<AppAuditLogEntry> | null | undefined): boolean {
+  if (!entry) return false;
+  const action = String(entry.action || '').trim().toUpperCase();
+  if (action !== 'UPDATE') return false;
+
+  const id = String(entry.id || '');
+  if (id.startsWith('ual_') || id.startsWith('sah_')) return false;
+
+  const labelLower = String(entry.field_label || '').trim().toLowerCase();
+  const fieldLower = String(entry.field_name || '').trim().toLowerCase();
+  if (
+    labelLower.startsWith('new record created') ||
+    labelLower.startsWith('deleted record') ||
+    labelLower.startsWith('upsert (') ||
+    labelLower === 'activity log details'
+  ) {
+    return false;
+  }
+
+  const formattedOld = formatAuditValue(entry.old_value);
+  const formattedNew = formatAuditValue(entry.new_value);
+  if (formattedOld === formattedNew) return false;
+
+  const oldLower = formattedOld.trim().toLowerCase();
+  if (CREATION_OLD_VALUE_SENTINELS.has(oldLower)) {
+    return false;
+  }
+
+  // Legacy dbModule.update entries before field-level diffing had old_value: null and field_label: "Updated Fields"
+  if (fieldLower === 'record' && (formattedOld === '—' || !formattedOld)) {
+    return false;
+  }
+
+  return true;
+}
+
+/**
+ * Log a single UPDATE change on an existing record in the application.
+ * Inserts (CREATE) and Deletes (DELETE) are intentionally ignored so System Change Log
+ * strictly tracks Edit & Update modifications to existing records.
  */
 export async function logChange(params: {
   module: string;
@@ -106,11 +157,25 @@ export async function logChange(params: {
   user_role?: string;
   remarks?: string;
 }): Promise<AppAuditLogEntry | null> {
+  const action = (params.action || 'UPDATE').toUpperCase() as 'UPDATE' | 'CREATE' | 'DELETE';
+
+  // Strict rule: System Change Log tracks UPDATE of existing records ONLY (never INSERT/CREATE or DELETE)
+  if (action !== 'UPDATE') {
+    return null;
+  }
+
   const formattedOld = formatAuditValue(params.old_value);
   const formattedNew = formatAuditValue(params.new_value);
 
-  // If no actual change occurred, skip logging to avoid spam
-  if (formattedOld === formattedNew && params.action !== 'CREATE' && params.action !== 'DELETE') {
+  // Skip no-op updates or creation-sentinel values
+  if (formattedOld === formattedNew) {
+    return null;
+  }
+  if (CREATION_OLD_VALUE_SENTINELS.has(formattedOld.trim().toLowerCase())) {
+    return null;
+  }
+  const labelLower = String(params.field_label || '').trim().toLowerCase();
+  if (labelLower.startsWith('new record created') || labelLower.startsWith('upsert (')) {
     return null;
   }
 
@@ -284,6 +349,7 @@ export async function fetchAppAuditLogs(filters?: AuditLogFilters): Promise<AppA
       let query = supabase
         .from('app_audit_logs')
         .select('*')
+        .eq('action', 'UPDATE')
         .order('created_at', { ascending: false })
         .limit(filters?.limit || 500);
 
@@ -309,123 +375,25 @@ export async function fetchAppAuditLogs(filters?: AuditLogFilters): Promise<AppA
       if (!error && data && Array.isArray(data)) {
         dbLogs = data;
       }
-
-      // Query sauda_approval_history to include all dedicated approval, rejection, and resubmission events
-      try {
-        let histQuery = supabase
-          .from('sauda_approval_history')
-          .select('*')
-          .order('created_at', { ascending: false })
-          .limit(filters?.limit || 500);
-
-        if (filters?.recordId) {
-          const cleanRecId = String(filters.recordId).replace(/^0+/, '');
-          const padRecId = cleanRecId ? cleanRecId.padStart(4, '0') : '';
-          histQuery = histQuery.or(`sauda_no.ilike.%${filters.recordId}%,sauda_no.ilike.%${cleanRecId}%,sauda_no.ilike.%${padRecId}%,sauda_id.ilike.%${filters.recordId}%`);
-        }
-        if (filters?.userName && filters.userName !== 'ALL') {
-          histQuery = histQuery.ilike('username', `%${filters.userName}%`);
-        }
-        if (filters?.dateFrom) {
-          histQuery = histQuery.gte('created_at', `${filters.dateFrom}T00:00:00`);
-        }
-        if (filters?.dateTo) {
-          histQuery = histQuery.lte('created_at', `${filters.dateTo}T23:59:59`);
-        }
-
-        const { data: histData, error: histErr } = await histQuery;
-        if (!histErr && histData && Array.isArray(histData)) {
-          for (const row of histData) {
-            const rowId = `sah_${row.id || Math.random()}`;
-            dbLogs.push({
-              id: rowId,
-              timestamp: row.created_at || new Date().toISOString(),
-              created_at: row.created_at || new Date().toISOString(),
-              module: 'Sauda Desk',
-              entity_name: row.action_type === 'REJECTED' ? 'Sauda Contract Rejection' : (row.action_type === 'APPROVED' ? 'Sauda Contract Approval' : 'Sauda Contract Resubmission'),
-              record_id: `#${row.sauda_no || row.sauda_id}`,
-              action: 'UPDATE',
-              field_name: 'status',
-              field_label: 'Approval Status',
-              old_value: row.action_type === 'REJECTED' ? 'PENDING' : (row.action_type === 'RESUBMITTED' ? 'REJECTED' : 'PENDING'),
-              new_value: row.action_type,
-              user_name: row.username || 'System User',
-              user_role: row.user_id ? `User ${row.user_id}` : 'Approver',
-              remarks: row.remarks || `${row.action_type} by ${row.username}`
-            });
-          }
-        }
-      } catch (e) {
-        console.warn('Could not query sauda_approval_history:', e);
-      }
-
-      // Also query user_activity_logs table to combine ALL activity logs
-      try {
-        let actQuery = supabase
-          .from('user_activity_logs')
-          .select('*')
-          .order('created_at', { ascending: false })
-          .limit(filters?.limit || 500);
-
-        if (filters?.module && filters.module !== 'ALL') {
-          actQuery = actQuery.ilike('module_name', `%${filters.module}%`);
-        }
-        if (filters?.userName && filters.userName !== 'ALL') {
-          actQuery = actQuery.ilike('username', `%${filters.userName}%`);
-        }
-        if (filters?.dateFrom) {
-          actQuery = actQuery.gte('created_at', `${filters.dateFrom}T00:00:00`);
-        }
-        if (filters?.dateTo) {
-          actQuery = actQuery.lte('created_at', `${filters.dateTo}T23:59:59`);
-        }
-
-        const { data: actData, error: actErr } = await actQuery;
-        if (!actErr && actData && Array.isArray(actData)) {
-          for (const row of actData) {
-            const rowId = `ual_${row.log_id || Math.random()}`;
-            dbLogs.push({
-              id: rowId,
-              timestamp: row.created_at || new Date().toISOString(),
-              created_at: row.created_at || new Date().toISOString(),
-              module: row.module_name || 'System Activity',
-              entity_name: row.activity_type || 'User Activity',
-              record_id: `LOG-${row.log_id || 'REF'}`,
-              action: (row.activity_type?.toUpperCase() as any) || 'UPDATE',
-              field_name: row.activity_type || 'Activity',
-              field_label: 'Activity Log Details',
-              old_value: '—',
-              new_value: row.action_details || 'Recorded',
-              user_name: row.username || 'System User',
-              user_role: 'User',
-              remarks: row.action_details || 'Activity log'
-            });
-          }
-        }
-      } catch (e) {
-        console.warn('Could not query user_activity_logs:', e);
-      }
     } catch (e) {
       console.warn('Could not query app_audit_logs from Supabase:', e);
     }
   }
 
-  // Merge with local logs to ensure 100% data visibility
+  // Merge with local logs, strictly keeping ONLY UPDATE edits to existing records
   const localLogs = getLocalAuditLogs();
   const seenIds = new Set<string>();
   const combined: AppAuditLogEntry[] = [];
 
-  // Add DB logs first
   for (const log of dbLogs) {
-    if (log && log.id && !seenIds.has(log.id)) {
+    if (log && log.id && !seenIds.has(log.id) && isExistingRecordUpdateLog(log)) {
       seenIds.add(log.id);
       combined.push(log);
     }
   }
 
-  // Add local logs that might not yet be synced or are recent
   for (const log of localLogs) {
-    if (log && log.id && !seenIds.has(log.id)) {
+    if (log && log.id && !seenIds.has(log.id) && isExistingRecordUpdateLog(log)) {
       seenIds.add(log.id);
       combined.push(log);
     }

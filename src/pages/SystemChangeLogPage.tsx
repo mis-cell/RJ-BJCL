@@ -136,11 +136,11 @@ export const SystemChangeLogPage: React.FC<SystemChangeLogPageProps> = ({
                 System Change Log & Audit Trail
               </h1>
               <span className="bg-emerald-800/80 text-emerald-200 text-[10px] px-2 py-0.5 rounded-full font-mono font-bold uppercase border border-emerald-600/50">
-                Live Audit Active
+                Updates Only
               </span>
             </div>
             <p className="text-xs text-emerald-200/80 font-medium">
-              System-wide modification history, rate adjustments, operator activity, and field-level change audit
+              Tracks Edit &amp; Update modifications on existing records only (new record inserts excluded)
             </p>
           </div>
         </div>

@@ -1,5 +1,5 @@
 import { supabase } from "../lib/supabase";
-import { logChange } from "./auditLogService";
+import { logObjectDiff } from "./auditLogService";
 import { assertBaseRateApproved } from "./sattaRateService";
 
 export const APP_DATA_UPDATED_EVENT = "app-data-updated";
@@ -438,39 +438,42 @@ export const dbModule = {
     const savedRow = (insertedRows && insertedRows.length > 0) ? insertedRows[0] : payload;
     notifyDataChanged(table);
 
-    if (table !== "app_audit_logs" && table !== "user_activity_logs") {
-      const recId =
-        savedRow.po_no ||
-        savedRow.sauda_no ||
-        savedRow.mr_no ||
-        savedRow.temporary_arrival_no ||
-        savedRow.amad_no ||
-        savedRow.payment_id ||
-        savedRow.issue_no ||
-        savedRow.id ||
-        "NEW";
-      logChange({
-        module: MODULE_LABELS[table] || table,
-        entity_name: table,
-        record_id: String(recId),
-        action: "CREATE",
-        field_name: "record",
-        field_label: "New Record Created",
-        old_value: null,
-        new_value: recId,
-      }).catch(() => {});
-    }
-
+    // Inserts are intentionally NOT written to System Change Log (Update-only audit rule)
     return savedRow;
   },
 
   /**
    * Strict upsert that never strips columns and verifies an authoritative returned row.
+   * Only logs field-level changes to System Change Log when an EXISTING row is updated.
    */
   async upsert(table: string, data: any, onConflictColumn?: string): Promise<any> {
     assertOnlineAndConnected("upsert", table);
     await assertSaudaBaseRateApprovedForTable(table);
     const payload = sanitizePayload(data);
+
+    // Snapshot existing row BEFORE upsert so we only audit genuine updates to existing records (never inserts)
+    let beforeRow: Record<string, any> | null = null;
+    if (
+      table !== "app_audit_logs" &&
+      table !== "user_activity_logs" &&
+      onConflictColumn &&
+      payload[onConflictColumn] !== undefined &&
+      payload[onConflictColumn] !== null &&
+      String(payload[onConflictColumn]).trim() !== ""
+    ) {
+      try {
+        const existingRes = await supabase!
+          .from(table)
+          .select("*")
+          .eq(onConflictColumn, payload[onConflictColumn])
+          .maybeSingle();
+        if (!existingRes.error && existingRes.data) {
+          beforeRow = existingRes.data;
+        }
+      } catch {
+        // Non-blocking audit snapshot
+      }
+    }
 
     const options = onConflictColumn ? { onConflict: onConflictColumn } : undefined;
     const { data: upsertedRows, error } = await executeWithSchemaRetry(
@@ -500,23 +503,29 @@ export const dbModule = {
     }
     notifyDataChanged(table);
 
-    if (table !== "app_audit_logs" && table !== "user_activity_logs") {
+    if (beforeRow && table !== "app_audit_logs" && table !== "user_activity_logs") {
       const recId =
-        savedRow[onConflictColumn!] ||
         savedRow.po_no ||
         savedRow.sauda_no ||
         savedRow.mr_no ||
+        savedRow.temporary_arrival_no ||
+        savedRow.amad_no ||
+        savedRow.payment_id ||
+        savedRow[onConflictColumn!] ||
         savedRow.id ||
-        "UPSERT";
-      logChange({
+        "RECORD";
+      const subsetBefore: Record<string, any> = {};
+      const subsetAfter: Record<string, any> = {};
+      for (const k of Object.keys(payload)) {
+        subsetBefore[k] = beforeRow[k];
+        subsetAfter[k] = savedRow[k] !== undefined ? savedRow[k] : payload[k];
+      }
+      logObjectDiff({
         module: MODULE_LABELS[table] || table,
         entity_name: table,
         record_id: String(recId),
-        action: "UPDATE",
-        field_name: onConflictColumn,
-        field_label: `Upsert (${onConflictColumn})`,
-        old_value: null,
-        new_value: recId,
+        oldObj: subsetBefore,
+        newObj: subsetAfter,
       }).catch(() => {});
     }
 
@@ -525,6 +534,7 @@ export const dbModule = {
 
   /**
    * Strict update that requires at least one matched & returned row from Supabase.
+   * Captures the pre-update snapshot and logs only modified fields to System Change Log.
    */
   async update(
     table: string,
@@ -541,6 +551,33 @@ export const dbModule = {
     }
 
     const payload = sanitizePayload(data);
+
+    // Snapshot existing row BEFORE update for exact before -> after field audit
+    let beforeRow: Record<string, any> | null = null;
+    if (table !== "app_audit_logs" && table !== "user_activity_logs") {
+      try {
+        const snapRes = await supabase!
+          .from(table)
+          .select("*")
+          .eq(idColumn, idValue)
+          .maybeSingle();
+        if (!snapRes.error && snapRes.data) {
+          beforeRow = snapRes.data;
+        } else if (idColumn !== "id" && payload.id !== undefined && payload.id !== null && String(payload.id).trim() !== "") {
+          const snapById = await supabase!
+            .from(table)
+            .select("*")
+            .eq("id", payload.id)
+            .maybeSingle();
+          if (!snapById.error && snapById.data) {
+            beforeRow = snapById.data;
+          }
+        }
+      } catch {
+        // Non-blocking audit snapshot
+      }
+    }
+
     let { data: updatedRows, error } = await executeWithSchemaRetry(
       table,
       async (pl) => {
@@ -582,16 +619,28 @@ export const dbModule = {
     const savedRow = updatedRows[0];
     notifyDataChanged(table);
 
-    if (table !== "app_audit_logs" && table !== "user_activity_logs") {
-      logChange({
+    if (beforeRow && table !== "app_audit_logs" && table !== "user_activity_logs") {
+      const recId =
+        savedRow.po_no ||
+        savedRow.sauda_no ||
+        savedRow.mr_no ||
+        savedRow.temporary_arrival_no ||
+        savedRow.amad_no ||
+        savedRow.payment_id ||
+        savedRow.issue_no ||
+        String(idValue);
+      const subsetBefore: Record<string, any> = {};
+      const subsetAfter: Record<string, any> = {};
+      for (const k of Object.keys(payload)) {
+        subsetBefore[k] = beforeRow[k];
+        subsetAfter[k] = savedRow[k] !== undefined ? savedRow[k] : payload[k];
+      }
+      logObjectDiff({
         module: MODULE_LABELS[table] || table,
         entity_name: table,
-        record_id: String(idValue),
-        action: "UPDATE",
-        field_name: Object.keys(payload).join(", "),
-        field_label: "Updated Fields",
-        old_value: null,
-        new_value: JSON.stringify(payload),
+        record_id: String(recId),
+        oldObj: subsetBefore,
+        newObj: subsetAfter,
       }).catch(() => {});
     }
 
@@ -599,7 +648,8 @@ export const dbModule = {
   },
 
   /**
-   * Strict delete that verifies database execution and logs only after confirmed deletion.
+   * Strict delete that verifies database execution.
+   * Deletes are not written to System Change Log (Update-only audit rule).
    */
   async delete(table: string, idColumn: string, idValue: any): Promise<any> {
     assertOnlineAndConnected("delete", table);
@@ -622,25 +672,6 @@ export const dbModule = {
     }
 
     notifyDataChanged(table);
-
-    if (
-      deletedRows &&
-      deletedRows.length > 0 &&
-      table !== "app_audit_logs" &&
-      table !== "user_activity_logs"
-    ) {
-      logChange({
-        module: MODULE_LABELS[table] || table,
-        entity_name: table,
-        record_id: String(idValue),
-        action: "DELETE",
-        field_name: idColumn,
-        field_label: "Deleted Record",
-        old_value: idValue,
-        new_value: null,
-      }).catch(() => {});
-    }
-
     return deletedRows || [];
   },
 };

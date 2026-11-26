@@ -189,10 +189,10 @@ export const SystemChangeLogReportView: React.FC = () => {
         <div>
           <h3 className="text-sm font-black uppercase tracking-wider text-slate-900 flex items-center gap-2">
             <History className="w-4 h-4 text-[#D94B5A]" />
-            <span>System Change Log &amp; Audit Analytics</span>
+            <span>System Change Log &amp; Audit Analytics (Updates Only)</span>
           </h3>
           <p className="text-[11px] text-slate-500 mt-0.5">
-            Daily edit trends, section/operator activity, section × date heatmap, PO/MR timeline &amp; full change ledger
+            Tracks Edit &amp; Update modifications on existing records only (new inserts excluded) — daily trends, operator activity, heatmap, timeline &amp; ledger
           </p>
         </div>
 
