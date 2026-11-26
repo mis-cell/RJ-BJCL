@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { ChevronRight, Table2 } from 'lucide-react';
+import { ChevronRight, Table2, Info } from 'lucide-react';
 import {
   ResponsiveContainer,
   PieChart,
@@ -31,6 +31,7 @@ export const Priority1Dashboard: React.FC<Priority1DashboardProps> = ({
 }) => {
   const { metrics, filtered } = dataset;
   const [showAllPoRegister, setShowAllPoRegister] = useState(false);
+  const [showFormulaGuide, setShowFormulaGuide] = useState(false);
 
   // 1. Completion % for Half-Doughnut
   const receivedPct = useMemo(() => {
@@ -65,6 +66,77 @@ export const Priority1Dashboard: React.FC<Priority1DashboardProps> = ({
 
   return (
     <div className="space-y-5 font-sans">
+      {/* Formula Transparency Toggle */}
+      <div className="flex items-center justify-between">
+        <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
+          Executive Summary · {filtered.length} Active Contracts (Void/Cancelled &amp; Duplicate Saudas Excluded)
+        </span>
+        <button
+          type="button"
+          onClick={() => setShowFormulaGuide(prev => !prev)}
+          className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-[11px] font-bold text-slate-700 cursor-pointer transition"
+        >
+          <Info className="w-3.5 h-3.5 text-[#D94B5A]" />
+          <span>{showFormulaGuide ? 'Hide Card Calculation Logic' : 'How Cards Are Calculated'}</span>
+        </button>
+      </div>
+
+      {showFormulaGuide && (
+        <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-2xs text-xs space-y-2">
+          <div className="font-black uppercase tracking-wider text-slate-900 text-[11px]">
+            Executive Overview — Card Formula &amp; Database Source Logic
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse text-[11px]">
+              <thead className="bg-slate-50 border-y border-slate-200 text-slate-600 uppercase text-[10px]">
+                <tr>
+                  <th className="p-2">Card / Chart</th>
+                  <th className="p-2">Formula</th>
+                  <th className="p-2">Database Tables Used</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 text-slate-700">
+                <tr>
+                  <td className="p-2 font-bold text-slate-900">Contracted Volume</td>
+                  <td className="p-2 font-mono">SUM(total_contract_mt) across deduplicated active POs &amp; unpromoted Saudas</td>
+                  <td className="p-2">sauda_check_point, purchase_master, sauda_master</td>
+                </tr>
+                <tr>
+                  <td className="p-2 font-bold text-slate-900">Purchase Value &amp; Avg Rate</td>
+                  <td className="p-2 font-mono">SUM(Contract MT × Weighted PO Rate/Qtl × 10); Avg Rate = Σ(MT × Rate) / Σ(MT)</td>
+                  <td className="p-2">sauda_check_point_details, purchase_detail_master, sauda_check_point</td>
+                </tr>
+                <tr>
+                  <td className="p-2 font-bold text-slate-900">Disbursed Payment &amp; Settled</td>
+                  <td className="p-2 font-mono">SUM(paid_amount) per PO; Settled = SUM(value_amt) deduplicated per MR</td>
+                  <td className="p-2">payment_master, mr_settlement_master</td>
+                </tr>
+                <tr>
+                  <td className="p-2 font-bold text-slate-900">Total Premium</td>
+                  <td className="p-2 font-mono">SUM(explicit MR premium amounts) matched by exact PO number</td>
+                  <td className="p-2">payment_master, payment_details</td>
+                </tr>
+                <tr>
+                  <td className="p-2 font-bold text-slate-900">Total Deductions</td>
+                  <td className="p-2 font-mono">SUM(MAX(inspection deduction, settlement less + short/excess) + PO short/excess)</td>
+                  <td className="p-2">material_inspection, mr_settlement_master, sauda_check_point_deductions</td>
+                </tr>
+                <tr>
+                  <td className="p-2 font-bold text-slate-900">Flagged Deals</td>
+                  <td className="p-2 font-mono">Count of POs with active Mismatch, Overdue (&gt;0.5 MT pending past due date), Moisture &gt;18%, Grade Down &gt;0, or High Deduction (&gt;3%)</td>
+                  <td className="p-2">material_mismatch, satta_mismatch, material_inspection, sauda_check_point</td>
+                </tr>
+                <tr>
+                  <td className="p-2 font-bold text-slate-900">Contracted MT Received %</td>
+                  <td className="p-2 font-mono">(Deduplicated Received MT ÷ Contracted MT) × 100 across Final Arrival, Mill Inspection &amp; Settlement</td>
+                  <td className="p-2">final_arrival, material_inspection, material_inspection_details, mr_settlement_master</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
       {/* ================= TOP EXECUTIVE KPI STRIP ================= */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
         <button

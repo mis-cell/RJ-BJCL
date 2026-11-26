@@ -11,6 +11,7 @@ import {
   DollarSign,
   Clock,
   Scale,
+  TrendingDown,
   History,
   RefreshCcw,
   Download,
@@ -34,6 +35,7 @@ import { ExceptionAuditView } from '../components/system-reports/ExceptionAuditV
 import { DrillDownModal, DrillDownViewMode } from '../components/system-reports/DrillDownModal';
 import { NewCustomReportsView, NewReportTab } from '../components/system-reports/NewCustomReportsView';
 import { SystemChangeLogReportView } from '../components/system-reports/SystemChangeLogReportView';
+import { GradeDownReportView } from '../components/system-reports/GradeDownReportView';
 
 import { screenDraftService } from '../services/screenDraftService';
 import { useLiveAutoRefresh } from '../hooks/useLiveAutoRefresh';
@@ -50,6 +52,7 @@ export type ReportNavSection =
   | 'mr_apmc_details'
   | 'mr_delivery_claim'
   | 'short_excess_deduction'
+  | 'grade_down_wise'
   | 'change_log';
 
 interface ReportsProps {
@@ -69,6 +72,7 @@ const VALID_SECTIONS: ReportNavSection[] = [
   'mr_apmc_details',
   'mr_delivery_claim',
   'short_excess_deduction',
+  'grade_down_wise',
   'change_log'
 ];
 
@@ -325,7 +329,8 @@ export default function Reports({ onClose, initialReportType }: ReportsProps) {
     { id: 'mr_apmc_details', label: '9. MR Wise APMC Details', icon: DollarSign, badge: 'APMC' },
     { id: 'mr_delivery_claim', label: '10. MR Wise Delivery Claim', icon: Clock, badge: 'Claim' },
     { id: 'short_excess_deduction', label: '11. Short and Excess Deduction', icon: Scale, badge: 'Deduction' },
-    { id: 'change_log', label: '12. System Change Log', icon: History, badge: 'Audit' }
+    { id: 'grade_down_wise', label: '12. Grade Down Wise Report', icon: TrendingDown, badge: 'Grade Down' },
+    { id: 'change_log', label: '13. System Change Log', icon: History, badge: 'Audit' }
   ];
 
   const isCustomReportActive = CUSTOM_REPORT_TABS.includes(activeSection as NewReportTab);
@@ -508,6 +513,8 @@ export default function Reports({ onClose, initialReportType }: ReportsProps) {
                 filters={filters}
               />
             )}
+
+            {activeSection === 'grade_down_wise' && <GradeDownReportView filters={filters} />}
 
             {activeSection === 'change_log' && <SystemChangeLogReportView />}
           </div>

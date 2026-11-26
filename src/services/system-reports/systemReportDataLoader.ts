@@ -58,55 +58,57 @@ export async function loadAndProcessSystemReportData(forceRefresh = false): Prom
         pos,
         poDetails,
         scps,
-      scpDetails,
-      amad,
-      finals,
-      inspections,
-      payments,
-      paymentDetails,
-      sattaRates,
-      brokers,
-      suppliers,
-      agencies,
-      areas,
-      grades,
-      markas,
-      saudas,
-      saudaQualityList,
-      settlements,
-      mrSettMaster,
-      mrSettDetail,
-      mRSetts,
-      scpDeductions,
-      materialMismatches,
-      sattaMismatches
-    ] = await Promise.all([
-      dbModule.fetchAll('purchase_master').catch(() => []),
-      dbModule.fetchAll('purchase_detail_master').catch(() => []),
-      dbModule.fetchAll('sauda_check_point').catch(() => []),
-      dbModule.fetchAll('sauda_check_point_details').catch(() => []),
-      dbModule.fetchAll('temporary_material_received').catch(() => []),
-      dbModule.fetchAll('final_arrival').catch(() => []),
-      dbModule.fetchAll('material_inspection').catch(() => []),
-      dbModule.fetchAll('payment_master').catch(() => []),
-      dbModule.fetchAll('payment_details').catch(() => []),
-      dbModule.fetchAll('satta_base_rates').catch(() => []),
-      dbModule.fetchAll('broker_master').catch(() => []),
-      dbModule.fetchAll('supply_master').catch(() => []),
-      dbModule.fetchAll('agency_master').catch(() => []),
-      dbModule.fetchAll('area_master').catch(() => []),
-      dbModule.fetchAll('grade_master').catch(() => []),
-      dbModule.fetchAll('marka_master').catch(() => []),
-      dbModule.fetchAll('sauda_master').catch(() => []),
-      dbModule.fetchAll('sauda_quality_details').catch(() => []),
-      dbModule.fetchAll('settlement_master').catch(() => []),
-      dbModule.fetchAll('mr_settlement_master').catch(() => []),
-      dbModule.fetchAll('mr_settlement_detail').catch(() => []),
-      dbModule.fetchAll('m_r_settlement').catch(() => []),
-      dbModule.fetchAll('sauda_check_point_deductions').catch(() => []),
-      dbModule.fetchAll('material_mismatch').catch(() => []),
-      dbModule.fetchAll('satta_mismatch').catch(() => [])
-    ]);
+        scpDetails,
+        amad,
+        finals,
+        inspections,
+        inspectionDetails,
+        payments,
+        paymentDetails,
+        sattaRates,
+        brokers,
+        suppliers,
+        agencies,
+        areas,
+        grades,
+        markas,
+        saudas,
+        saudaQualityList,
+        settlements,
+        mrSettMaster,
+        mrSettDetail,
+        mRSetts,
+        scpDeductions,
+        materialMismatches,
+        sattaMismatches
+      ] = await Promise.all([
+        dbModule.fetchAll('purchase_master').catch(() => []),
+        dbModule.fetchAll('purchase_detail_master').catch(() => []),
+        dbModule.fetchAll('sauda_check_point').catch(() => []),
+        dbModule.fetchAll('sauda_check_point_details').catch(() => []),
+        dbModule.fetchAll('temporary_material_received').catch(() => []),
+        dbModule.fetchAll('final_arrival').catch(() => []),
+        dbModule.fetchAll('material_inspection').catch(() => []),
+        dbModule.fetchAll('material_inspection_details').catch(() => []),
+        dbModule.fetchAll('payment_master').catch(() => []),
+        dbModule.fetchAll('payment_details').catch(() => []),
+        dbModule.fetchAll('satta_base_rates').catch(() => []),
+        dbModule.fetchAll('broker_master').catch(() => []),
+        dbModule.fetchAll('supply_master').catch(() => []),
+        dbModule.fetchAll('agency_master').catch(() => []),
+        dbModule.fetchAll('area_master').catch(() => []),
+        dbModule.fetchAll('grade_master').catch(() => []),
+        dbModule.fetchAll('marka_master').catch(() => []),
+        dbModule.fetchAll('sauda_master').catch(() => []),
+        dbModule.fetchAll('sauda_quality_details').catch(() => []),
+        dbModule.fetchAll('settlement_master').catch(() => []),
+        dbModule.fetchAll('mr_settlement_master').catch(() => []),
+        dbModule.fetchAll('mr_settlement_detail').catch(() => []),
+        dbModule.fetchAll('m_r_settlement').catch(() => []),
+        dbModule.fetchAll('sauda_check_point_deductions').catch(() => []),
+        dbModule.fetchAll('material_mismatch').catch(() => []),
+        dbModule.fetchAll('satta_mismatch').catch(() => [])
+      ]);
 
     // Build early broker and entity lookups to properly resolve settlement brokers
     const brokerMap = new Map<string, string>();
@@ -876,30 +878,114 @@ export async function loadAndProcessSystemReportData(forceRefresh = false): Prom
       return defaultLatestBaseRate;
     };
 
-    const normKey = (v: any): string => String(v || '').trim().toUpperCase();
+    const normKey = (v: any): string =>
+      String(v || '')
+        .trim()
+        .replace(/^#+/, '')
+        .replace(/\(PTF\)/gi, '')
+        .trim()
+        .toUpperCase();
+
+    const canonicalMrKey = (v: any): string => {
+      const s = String(v || '').trim().toUpperCase();
+      if (!s || s === '-' || s === 'N/A' || s.startsWith('AR')) return '';
+      const seq = s.match(/(\d+)$/);
+      return seq ? `MR_${parseInt(seq[1], 10)}` : s;
+    };
+
     const toMtSafe = (raw: any): number => {
       const n = Number(raw || 0);
       if (!Number.isFinite(n) || n <= 0) return 0;
       if (n >= 500) return n / 1000; // Stored in kg
-      if (n > 60 && n < 500) return n / 10; // Stored in quintals
+      if (n > 50 && n < 500) return n / 10; // Stored in quintals
       return n; // Stored in MT
     };
 
-    // Build authoritative MR -> PO lookup across final_arrival, material_inspection, mr_settlement_master
+    const getFinalArrivalWeightMt = (f: any): number => {
+      if (!f) return 0;
+      if (Number(f.final_weight_mt) > 0) return toMtSafe(f.final_weight_mt);
+      if (Number(f.received_weight_mt) > 0) return toMtSafe(f.received_weight_mt);
+      if (Number(f.weight_qtl) > 0) return Number(f.weight_qtl) / 10;
+      if (Number(f.electronic_net_weight) > 0) return toMtSafe(f.electronic_net_weight);
+      if (Number(f.supplier_net_weight) > 0) return toMtSafe(f.supplier_net_weight);
+      if (Number(f.challan_material_weight) > 0) return toMtSafe(f.challan_material_weight);
+      if (Number(f.weight_reduced) > 0) return toMtSafe(f.weight_reduced);
+      if (Number(f.final_receipt_wt) > 0) return toMtSafe(f.final_receipt_wt);
+      if (Number(f.net_weight) > 0) return toMtSafe(f.net_weight);
+      if (Number(f.weight) > 0) return toMtSafe(f.weight);
+      return 0;
+    };
+
+    // Index material_inspection_details by canonical MR key so row-level weights & quality are always captured
+    const inspDetailsByMr = new Map<string, any[]>();
+    (inspectionDetails || []).forEach((d: any) => {
+      const mk = canonicalMrKey(d.mr_no || d.arrival_no);
+      if (!mk) return;
+      const list = inspDetailsByMr.get(mk) || [];
+      list.push(d);
+      inspDetailsByMr.set(mk, list);
+    });
+
+    const getInspectionWeightMt = (insp: any, mk: string): number => {
+      if (!insp) return 0;
+      let rows: any[] = [];
+      const rawGrid = insp.grid_details || insp.details;
+      if (rawGrid) {
+        try {
+          const parsed = typeof rawGrid === 'string' ? JSON.parse(rawGrid) : rawGrid;
+          if (Array.isArray(parsed) && parsed.length > 0) rows = parsed;
+        } catch {
+          // ignore
+        }
+      }
+      if (rows.length === 0 && mk) {
+        rows = inspDetailsByMr.get(mk) || [];
+      }
+      if (rows.length > 0) {
+        const sum = rows.reduce((acc: number, it: any) => {
+          if (!it || typeof it !== 'object') return acc;
+          return acc + toMtSafe(
+            it.final_receipt_wt ||
+            it.reduced_weight ||
+            it.netto_pnto ||
+            it.receipt_gross_wt ||
+            it.challan_gross_wt ||
+            it.gross_weight ||
+            0
+          );
+        }, 0);
+        if (sum > 0) return Math.round(sum * 1000) / 1000;
+      }
+      return toMtSafe(
+        insp.final_receipt_wt ||
+        insp.total_final_receipt_wt ||
+        insp.reduced_weight ||
+        insp.weight_reduced ||
+        insp.receipt_gross_wt ||
+        insp.challan_gross_wt ||
+        insp.gross_weight ||
+        insp.net_weight ||
+        0
+      );
+    };
+
+    // Build authoritative MR -> PO lookup across final_arrival, material_inspection, mr_settlement_master, payment_master
     const mrToPoExactMap = new Map<string, string>();
     const registerMrPo = (mrRaw: any, poRaw: any) => {
       const m = normKey(mrRaw);
+      const mk = canonicalMrKey(mrRaw);
       const p = normKey(poRaw);
-      if (m && p && !m.startsWith('AR') && m !== '-' && m !== 'N/A') {
+      if (p && m && !m.startsWith('AR') && m !== '-' && m !== 'N/A') {
         if (!mrToPoExactMap.has(m)) mrToPoExactMap.set(m, p);
+        if (mk && !mrToPoExactMap.has(mk)) mrToPoExactMap.set(mk, p);
       }
     };
-    (finals || []).forEach((f: any) => registerMrPo(f.mr_no || f.final_arrival_no || f.arrival_no, f.po_no || f.contract_po_no || f.sauda_no));
-    (inspections || []).forEach((i: any) => registerMrPo(i.mr_no || i.arrival_no, i.po_no || i.mill_po_no || i.contract_po_no || i.sauda_no));
+    (finals || []).forEach((f: any) => registerMrPo(f.mr_no || f.final_arrival_no || f.arrival_no, f.po_no || f.contract_no || f.contract_po_no || f.sauda_no));
+    (inspections || []).forEach((i: any) => registerMrPo(i.mr_no || i.arrival_no, i.po_no || i.mill_po_no || i.contract_no || i.contract_po_no || i.sauda_no));
     (mrSettMaster || []).forEach((s: any) => registerMrPo(s.mr_no, s.po_no || s.contract_po_no || s.sauda_no));
     (payments || []).forEach((p: any) => registerMrPo(p.mr_no, p.po_no || p.sauda_no));
 
-    // Arrival by PO (deduplicated per MR across final_arrival + material_inspection so zero double-counting)
+    // Arrival by PO (deduplicated per canonical MR key across final_arrival + material_inspection + mr_settlement_master)
     const poMrWeightMap = new Map<string, Map<string, number>>();
     const finalArrivalSet = new Set<string>();
 
@@ -912,10 +998,10 @@ export async function loadAndProcessSystemReportData(forceRefresh = false): Prom
     };
 
     (finals || []).forEach((f: any, idx: number) => {
-      const wt = toMtSafe(f.electronic_net_weight || f.weight_reduced || f.final_receipt_wt || f.net_weight || 0);
-      const mrKey = normKey(f.mr_no || f.final_arrival_no || f.arrival_no) || `FA_${f.id || idx}`;
+      const wt = getFinalArrivalWeightMt(f);
+      const mrKey = canonicalMrKey(f.mr_no || f.final_arrival_no || f.arrival_no) || `FA_${f.id || idx}`;
       const rowKeys = new Set<string>(
-        [f.po_no, f.contract_po_no, f.sauda_no]
+        [f.po_no, f.contract_no, f.contract_po_no, f.sauda_no, f.ptf_no]
           .map(normKey)
           .filter(Boolean)
       );
@@ -924,39 +1010,68 @@ export async function loadAndProcessSystemReportData(forceRefresh = false): Prom
         finalArrivalSet.add(k);
       });
       if (mrKey) finalArrivalSet.add(mrKey);
+      const tempTok = normKey(f.temporary_arrival_no);
+      if (tempTok) finalArrivalSet.add(tempTok);
     });
 
-    // Inspection deductions, quality & weight backfill (for POs whose MR is in material_inspection)
-    const inspectionDeductionByPo = new Map<string, { deduction: number; moisture: number; gradeDown: number; hasInspection: boolean; mrSet: Set<string> }>();
+    // Inspection deductions, quality & weight backfill (matching Sauda Check Point & Club PO-MR)
+    const inspectionDeductionByPo = new Map<string, { deduction: number; moisture: number; moistureClaim: number; gradeDown: number; hasInspection: boolean; mrSet: Set<string> }>();
     const inspectionSet = new Set<string>();
     (inspections || []).forEach((i: any, idx: number) => {
-      const mrKey = normKey(i.mr_no || i.arrival_no);
+      const mrRaw = normKey(i.mr_no || i.arrival_no);
+      const mk = canonicalMrKey(i.mr_no || i.arrival_no);
       const poKeys = new Set<string>(
-        [i.po_no, i.mill_po_no, i.contract_po_no, i.sauda_no, mrKey ? mrToPoExactMap.get(mrKey) : '']
+        [i.po_no, i.mill_po_no, i.contract_no, i.contract_po_no, i.sauda_no, mrRaw ? mrToPoExactMap.get(mrRaw) : '', mk ? mrToPoExactMap.get(mk) : '']
           .map(normKey)
           .filter(Boolean)
       );
-      if (mrKey) inspectionSet.add(mrKey);
-      const inspWt = toMtSafe(i.final_receipt_wt || i.total_final_receipt_wt || i.challan_gross_wt || i.reduced_weight || i.weight_reduced || 0);
+      if (mrRaw) inspectionSet.add(mrRaw);
+      const inspWt = getInspectionWeightMt(i, mk);
       const ded = Number(i.deduction_amount || 0);
-      const moist = Number(i.actual_moisture || i.claim_moisture || i.settlement_moisture || 0);
-      const gd = Number(i.grade_down_qty || i.deduction_qty || i.claim_grade_down || 0);
+      const moistActual = Number(i.actual_moisture || 0);
+      const moistClaim = Number(i.claim_moisture || i.settlement_moisture || 0);
+      const detailRows = mk ? (inspDetailsByMr.get(mk) || []) : [];
+      const detailGdMax = detailRows.reduce((m: number, r: any) => Math.max(m, Number(r.settlement_grade_down || r.grade_down_claim || r.claim_grade_down || r.grade_down_act || r.actual_grade_down || 0)), 0);
+      const gd = Math.max(Number(i.settlement_grade_down || i.claim_grade_down || i.actual_grade_down || i.grade_down_qty || 0), detailGdMax);
 
       poKeys.forEach(poKey => {
         inspectionSet.add(poKey);
         if (inspWt > 0) {
-          recordPoMrWeight(poKey, mrKey || `INSP_${i.id || idx}`, inspWt);
+          recordPoMrWeight(poKey, mk || `INSP_${i.id || idx}`, inspWt);
         }
-        const prev = inspectionDeductionByPo.get(poKey) || { deduction: 0, moisture: 0, gradeDown: 0, hasInspection: false, mrSet: new Set<string>() };
-        if (mrKey && mrKey.startsWith('MR')) prev.mrSet.add(mrKey);
+        const prev = inspectionDeductionByPo.get(poKey) || { deduction: 0, moisture: 0, moistureClaim: 0, gradeDown: 0, hasInspection: false, mrSet: new Set<string>() };
+        if (mrRaw && mrRaw.startsWith('MR')) prev.mrSet.add(mrRaw);
         inspectionDeductionByPo.set(poKey, {
           deduction: prev.deduction + ded,
-          moisture: Math.max(prev.moisture, moist),
-          gradeDown: prev.gradeDown + gd,
+          moisture: Math.max(prev.moisture, moistActual),
+          moistureClaim: Math.max(prev.moistureClaim, moistClaim),
+          gradeDown: Math.max(prev.gradeDown, gd),
           hasInspection: true,
           mrSet: prev.mrSet
         });
       });
+    });
+
+    // Backfill arrived weight from settled MRs (mr_settlement_master) when inspection/arrival weight was blank
+    (mrSettMaster || []).forEach((s: any) => {
+      const mk = canonicalMrKey(s.mr_no);
+      if (!mk) return;
+      const settWt = toMtSafe(
+        s.final_weight ||
+        s.final_weight_mt ||
+        s.settled_weight ||
+        s.net_weight ||
+        s.weight_mt ||
+        (Number(s.total_weight_qtl) > 0 ? Number(s.total_weight_qtl) / 10 : 0) ||
+        0
+      );
+      if (settWt <= 0) return;
+      const poKeys = new Set<string>(
+        [s.po_no, s.contract_po_no, s.sauda_no, mrToPoExactMap.get(mk) || '']
+          .map(normKey)
+          .filter(Boolean)
+      );
+      poKeys.forEach(pk => recordPoMrWeight(pk, mk, settWt));
     });
 
     const arrivalByPo = new Map<string, number>();
@@ -964,7 +1079,7 @@ export async function loadAndProcessSystemReportData(forceRefresh = false): Prom
     poMrWeightMap.forEach((mMap, poKey) => {
       let sum = 0;
       mMap.forEach(w => { sum += w; });
-      arrivalByPo.set(poKey, sum);
+      arrivalByPo.set(poKey, Number(sum.toFixed(3)));
       mrCountByPo.set(poKey, mMap.size);
     });
 
@@ -972,8 +1087,8 @@ export async function loadAndProcessSystemReportData(forceRefresh = false): Prom
     const amadSet = new Set<string>();
     const inTransitByPo = new Map<string, number>();
     (amad || []).forEach((a: any) => {
-      const poKey = normKey(a.po_no || a.contract_po_no || a.sauda_no);
-      const tempNo = normKey(a.temporary_arrival_no);
+      const poKey = normKey(a.po_no || a.contract_no || a.contract_po_no || a.sauda_no);
+      const tempNo = normKey(a.temporary_arrival_no || a.amad_no);
       if (poKey) amadSet.add(poKey);
       if (tempNo) amadSet.add(tempNo);
       const isPromoted = Boolean(
@@ -983,9 +1098,7 @@ export async function loadAndProcessSystemReportData(forceRefresh = false): Prom
         (tempNo && finalArrivalSet.has(tempNo))
       );
       if (poKey && !isPromoted) {
-        const wt = Number(a.weight_qtl) > 0
-          ? Number(a.weight_qtl) / 10
-          : toMtSafe(a.gross_weight || a.net_weight || a.weight_mt || 0);
+        const wt = getFinalArrivalWeightMt(a);
         if (wt > 0) {
           inTransitByPo.set(poKey, (inTransitByPo.get(poKey) || 0) + wt);
         }
@@ -1347,43 +1460,62 @@ export async function loadAndProcessSystemReportData(forceRefresh = false): Prom
     };
 
     const uniquePosMap = new Map<string, any>();
+    const saudaKeyToPoKey = new Map<string, string>();
+
+    const isVoidContractStatus = (st: any): boolean => {
+      const s = String(st || '').trim().toUpperCase();
+      return s === 'CANCELLED' || s === 'VOID' || s === 'REJECTED' || s === 'DELETED';
+    };
+
+    // Index all Sauda numbers that have already been promoted into Sauda Check Point or Final PO
+    // so the same contract is NEVER double-counted once under sauda_no and once under po_no!
+    [...(scps || []), ...(pos || [])].forEach((rec: any) => {
+      if (isVoidContractStatus(rec.status)) return;
+      const pk = normKey(rec.po_no || rec.contract_po_no || rec.ptf_no);
+      const sk = normKey(rec.sauda_no || rec.po_contract);
+      if (pk && sk && sk !== pk) {
+        saudaKeyToPoKey.set(sk, pk);
+      }
+    });
 
     const pushUniquePo = (item: any, prefix: string) => {
-      if (!item) return;
-      const rawNo = String(item.po_no || item.sauda_no || item.contract_po_no || item.session || item.id || '').trim().toUpperCase();
-      if (!rawNo) return;
-      // Exact normalized contract key (never collapse distinct PO numbers by stripping prefixes)
-      const canonicalKey = rawNo;
-      if (!uniquePosMap.has(canonicalKey) || prefix === 'FINAL_PO' || prefix === 'SCP') {
-        const existing = uniquePosMap.get(canonicalKey) || {};
-        uniquePosMap.set(canonicalKey, {
+      if (!item || isVoidContractStatus(item.status || item.approval_status)) return;
+      const rawPo = normKey(item.po_no || item.contract_po_no || item.ptf_no);
+      const rawSauda = normKey(item.sauda_no || item.po_contract);
+      const resolvedKey =
+        rawPo ||
+        (rawSauda && saudaKeyToPoKey.get(rawSauda)) ||
+        rawSauda ||
+        normKey(item.session || item.id);
+      if (!resolvedKey) return;
+
+      const existing = uniquePosMap.get(resolvedKey);
+      if (!existing) {
+        uniquePosMap.set(resolvedKey, { ...item });
+      } else if (prefix === 'FINAL_PO' || prefix === 'SCP') {
+        uniquePosMap.set(resolvedKey, {
           ...existing,
           ...item,
+          po_no: item.po_no || existing.po_no,
+          sauda_no: item.sauda_no || existing.sauda_no,
           total_contract_mt: Number(item.total_contract_mt) > 0 ? Number(item.total_contract_mt) : Number(existing.total_contract_mt || 0),
           b_rate: Number(item.b_rate) > 0 ? Number(item.b_rate) : Number(existing.b_rate || 0),
           delivery_to: item.delivery_to || existing.delivery_to,
           contract_date: item.contract_date || existing.contract_date
         });
+      } else {
+        // Merging fallback Sauda metadata into an already-registered PO without overriding PO fields
+        uniquePosMap.set(resolvedKey, {
+          ...item,
+          ...existing,
+          sauda_no: existing.sauda_no || item.sauda_no,
+          total_contract_mt: Number(existing.total_contract_mt) > 0 ? Number(existing.total_contract_mt) : Number(item.total_contract_mt || 0),
+          b_rate: Number(existing.b_rate) > 0 ? Number(existing.b_rate) : Number(item.b_rate || 0),
+          delivery_to: existing.delivery_to || item.delivery_to,
+          contract_date: existing.contract_date || item.contract_date
+        });
       }
     };
-
-    (saudas || []).forEach((s: any) => {
-      pushUniquePo({
-        ...s,
-        po_no: s.po_no || s.sauda_no,
-        sauda_no: s.sauda_no || s.po_no,
-        contract_date: normalizeToISODate(s.date || s.b_date || s.created_at),
-        supplier: s.supplier || s.challan_supplier || s.party_name,
-        broker: s.broker,
-        agency: resolvePoAgency(s),
-        area: s.area,
-        grade: s.quality || s.grade,
-        total_contract_mt: Number(s.total_wt_in_ton || s.total_contract_mt || s.wt_per_lorry || 0),
-        b_rate: Number(s.b_rate || s.rate || s.rate_per_qtl || 0),
-        status: s.approval_status || s.status || 'Active',
-        id: s.sauda_id || s.id
-      }, 'SAUDA_DESK');
-    });
 
     (scps || []).forEach((sc: any) => {
       pushUniquePo({
@@ -1421,6 +1553,24 @@ export async function loadAndProcessSystemReportData(forceRefresh = false): Prom
       }, 'FINAL_PO');
     });
 
+    (saudas || []).forEach((s: any) => {
+      pushUniquePo({
+        ...s,
+        po_no: s.po_no || s.sauda_no,
+        sauda_no: s.sauda_no || s.po_no,
+        contract_date: normalizeToISODate(s.date || s.b_date || s.created_at),
+        supplier: s.supplier || s.challan_supplier || s.party_name,
+        broker: s.broker,
+        agency: resolvePoAgency(s),
+        area: s.area,
+        grade: s.quality || s.grade,
+        total_contract_mt: Number(s.total_wt_in_ton || s.total_contract_mt || s.wt_per_lorry || 0),
+        b_rate: Number(s.b_rate || s.rate || s.rate_per_qtl || 0),
+        status: s.approval_status || s.status || 'Active',
+        id: s.sauda_id || s.id
+      }, 'SAUDA_DESK');
+    });
+
     const uniquePosList: any[] = Array.from(uniquePosMap.values());
 
     const transactionLines: ReportTransactionLine[] = [];
@@ -1456,22 +1606,38 @@ export async function loadAndProcessSystemReportData(forceRefresh = false): Prom
           grade = Array.from(new Set(gradeNames)).join(', ');
         }
 
-        const detailsTotalQty = details.reduce((acc: number, d: any) => acc + (Number(d.weight_mt || d.qty) || 0), 0);
-        if (quantityMT === 0) quantityMT = detailsTotalQty;
+        const detailsTotalMt = details.reduce((acc: number, d: any) => acc + (Number(d.weight_mt) || 0), 0);
+        if (quantityMT === 0 && detailsTotalMt > 0) quantityMT = detailsTotalMt;
 
-        const weightedRateSum = details.reduce((acc: number, d: any) => {
-          const q = Number(d.weight_mt || d.qty) || 1;
-          const r = Number(d.rate_qntl || d.rate || po.b_rate || 0);
-          return acc + (q * r);
-        }, 0);
-        const calcWeight = detailsTotalQty > 0 ? detailsTotalQty : details.length;
-        if (weightedRateSum > 0) purchaseRate = Number((weightedRateSum / calcWeight).toFixed(2));
+        // Strict weighted average rate: denominator ALWAYS equals sum of weights actually multiplied into numerator
+        let rateWeightSum = 0;
+        let rateValueSum = 0;
+        let simpleRateSum = 0;
+        let simpleRateCount = 0;
+        details.forEach((d: any) => {
+          let r = Number(d.rate_qntl || d.rate || 0);
+          if (r <= 0) return;
+          if (r > 25000) r = r / 10; // Guard against per-MT rate accidentally saved in rate column
+          simpleRateSum += r;
+          simpleRateCount += 1;
+          const wMt = Number(d.weight_mt || 0);
+          if (wMt > 0) {
+            rateWeightSum += wMt;
+            rateValueSum += wMt * r;
+          }
+        });
+        if (rateWeightSum > 0) {
+          purchaseRate = Number((rateValueSum / rateWeightSum).toFixed(2));
+        } else if (simpleRateCount > 0) {
+          purchaseRate = Number((simpleRateSum / simpleRateCount).toFixed(2));
+        }
       } else {
         const rawGName = String(po.grade_name || po.grade || po.quality || '').trim();
         const rawGCode = String(po.grade_code || (po.quality_details && po.quality_details[0]?.quality) || '').trim();
         grade = resolveGradeName(rawGName, rawGCode, saudaNo, poNo);
       }
 
+      if (purchaseRate > 25000) purchaseRate = Number((purchaseRate / 10).toFixed(2));
       if (quantityMT === 0) quantityMT = Number(po.total_wt_in_ton || po.wt_per_lorry || 0);
 
       const baseRate = getEffectiveBaseRate(date) || Number(po.b_rate || purchaseRate);
@@ -1484,7 +1650,7 @@ export async function loadAndProcessSystemReportData(forceRefresh = false): Prom
       const poKeyUpper = normKey(poNo);
       const saudaKeyUpper = normKey(saudaNo);
 
-      const cleanPoKey = poNo.toUpperCase().replace(/[^A-Z0-9]/g, '');
+      const cleanPoKey = poKeyUpper.replace(/[^A-Z0-9]/g, '');
       const matchedMrs = unifiedPremiums.byPoMap.get(cleanPoKey) || [];
       const poTotalPremium = matchedMrs.reduce((s, m) => s + m.totalPremiumAmount, 0);
       const poAvgRate = matchedMrs.length > 0 ? (matchedMrs[0].avgPremiumRatePerQtl || 0) : 0;
@@ -1501,7 +1667,7 @@ export async function loadAndProcessSystemReportData(forceRefresh = false): Prom
       }
       const premiumPct = grossPurchaseValue > 0 ? (premiumAmount / grossPurchaseValue) * 100 : 0;
 
-      const inspInfo = inspectionDeductionByPo.get(poKeyUpper) || (saudaKeyUpper !== poKeyUpper ? inspectionDeductionByPo.get(saudaKeyUpper) : undefined) || { deduction: 0, moisture: 0, gradeDown: 0, hasInspection: false, mrSet: new Set<string>() };
+      const inspInfo = inspectionDeductionByPo.get(poKeyUpper) || (saudaKeyUpper !== poKeyUpper ? inspectionDeductionByPo.get(saudaKeyUpper) : undefined) || { deduction: 0, moisture: 0, moistureClaim: 0, gradeDown: 0, hasInspection: false, mrSet: new Set<string>() };
       const settInfo = settlementByPo.get(poKeyUpper) || (saudaKeyUpper !== poKeyUpper ? settlementByPo.get(saudaKeyUpper) : undefined);
       const scpDedAmt = scpDedByPo.get(poKeyUpper) || (saudaKeyUpper !== poKeyUpper ? scpDedByPo.get(saudaKeyUpper) : 0) || 0;
 
@@ -1523,15 +1689,18 @@ export async function loadAndProcessSystemReportData(forceRefresh = false): Prom
 
       const arrivedWeightMT = arrivalByPo.get(poKeyUpper) || (saudaKeyUpper !== poKeyUpper ? arrivalByPo.get(saudaKeyUpper) : 0) || 0;
       const inTransitWeightMT = inTransitByPo.get(poKeyUpper) || (saudaKeyUpper !== poKeyUpper ? inTransitByPo.get(saudaKeyUpper) : 0) || 0;
-      const pendingWeightMT = Math.max(0, quantityMT - arrivedWeightMT);
+      const pendingWeightMT = Math.max(0, Number((quantityMT - arrivedWeightMT).toFixed(3)));
       const paidAmount = paymentByPo.get(poKeyUpper) || (saudaKeyUpper !== poKeyUpper ? paymentByPo.get(saudaKeyUpper) : 0) || 0;
       const settledAmount = settInfo?.settledValue || 0;
       const isSettled = Boolean(settInfo?.hasSettled && (settledAmount > 0 || (settInfo.settledMrs.size > 0 && arrivedWeightMT > 0)));
       const pendingPayable = isSettled ? 0 : Math.max(0, effectiveCost - paidAmount);
 
+      const poStatusUpper = String(po.status || '').trim().toUpperCase();
+      const isContractClosed = poStatusUpper === 'CLOSED' || poStatusUpper === 'COMPLETED' || (quantityMT > 0 && arrivedWeightMT >= quantityMT * 0.95);
+
       const deliveryToDate = po.delivery_to;
       let deliveryDelayDays = 0;
-      if (deliveryToDate && pendingWeightMT > 0.01) {
+      if (deliveryToDate && !isContractClosed && pendingWeightMT > 0.5) {
         const dueMs = new Date(normalizeToISODate(deliveryToDate)).getTime();
         const nowMs = Date.now();
         if (!Number.isNaN(dueMs) && nowMs > dueMs) {
@@ -1546,7 +1715,7 @@ export async function loadAndProcessSystemReportData(forceRefresh = false): Prom
       if (premiumRate > 100) abnormalReasons.push(`High Premium (+₹${premiumRate.toFixed(0)}/Qtl)`);
       if (deductionPct > 3) abnormalReasons.push(`High Deduction (${deductionPct.toFixed(1)}%)`);
       if (isDelayed) abnormalReasons.push(`Overdue Delivery (${deliveryDelayDays}d, ${pendingWeightMT.toFixed(2)} MT pending)`);
-      if (gradeDownQty > 0) abnormalReasons.push(`Grade Down (${gradeDownQty})`);
+      if (gradeDownQty > 0) abnormalReasons.push(`Grade Down (${gradeDownQty.toFixed(1)}%)`);
 
       const mrSetCombined = new Set<string>([
         ...matchedMrs.map(m => m.mrNo).filter(Boolean),
@@ -1594,8 +1763,8 @@ export async function loadAndProcessSystemReportData(forceRefresh = false): Prom
         grossProfit,
         profitPct,
         profitStatus,
-        saudaStatus: pendingWeightMT <= 0.01 ? 'COMPLETED' : (isDelayed ? 'DELAYED' : 'IN_PROGRESS'),
-        arrivalStatus: (quantityMT > 0 && arrivedWeightMT >= quantityMT * 0.97) ? 'COMPLETED' : (arrivedWeightMT > 0 || inTransitWeightMT > 0 ? 'IN_TRANSIT' : 'PENDING'),
+        saudaStatus: isContractClosed || pendingWeightMT <= 0.5 ? 'COMPLETED' : (isDelayed ? 'DELAYED' : 'IN_PROGRESS'),
+        arrivalStatus: (quantityMT > 0 && arrivedWeightMT >= quantityMT * 0.95) ? 'COMPLETED' : (arrivedWeightMT > 0 || inTransitWeightMT > 0 ? 'IN_TRANSIT' : 'PENDING'),
         inspectionStatus: inspInfo.hasInspection || inspInfo.deduction > 0 || inspInfo.moisture > 0 ? 'COMPLETED' : 'PENDING',
         paymentStatus: (paidAmount >= effectiveCost * 0.98 && effectiveCost > 0) ? 'PAID' : (paidAmount > 0 ? 'PARTIAL' : 'PENDING'),
         settlementStatus: isSettled ? 'SETTLED' : 'PENDING',
