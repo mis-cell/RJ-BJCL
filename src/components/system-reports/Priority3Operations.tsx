@@ -47,66 +47,56 @@ export const Priority3Operations: React.FC<Priority3OperationsProps> = ({
     const funnelStages = [
       {
         id: 'sauda',
-        name: '1. Sauda Check Point Contracts',
+        name: 'Sauda Check Point',
         volume: scpCount,
-        unit: 'POs',
+        unit: '',
         conversionPct: 100,
         overallPct: 100,
         color: '#0f172a'
       },
       {
         id: 'temp_arrival',
-        name: '2. Temporary Arrival (Inward)',
+        name: 'Temporary Arrival',
         volume: tempCount,
-        unit: 'MRs',
+        unit: '',
         conversionPct: pct(tempCount, Math.max(1, scpCount)),
         overallPct: pct(tempCount, baseTop),
-        dropOffVolume: Math.max(0, scpCount - tempCount),
-        dropOffPct: pct(Math.max(0, scpCount - tempCount), Math.max(1, scpCount)),
         color: '#2563eb'
       },
       {
         id: 'receipt',
-        name: '3. Final Arrival (FMR)',
+        name: 'Final Arrival',
         volume: finalCount,
-        unit: 'MRs',
+        unit: '',
         conversionPct: pct(finalCount, Math.max(1, tempCount)),
         overallPct: pct(finalCount, baseTop),
-        dropOffVolume: Math.max(0, tempCount - finalCount),
-        dropOffPct: pct(Math.max(0, tempCount - finalCount), Math.max(1, tempCount)),
         color: '#0284c7'
       },
       {
         id: 'inspection',
-        name: '4. Mill Inspection',
+        name: 'Mill Inspection',
         volume: inspCount,
-        unit: 'MRs',
+        unit: '',
         conversionPct: pct(inspCount, Math.max(1, finalCount)),
         overallPct: pct(inspCount, baseTop),
-        dropOffVolume: Math.max(0, finalCount - inspCount),
-        dropOffPct: pct(Math.max(0, finalCount - inspCount), Math.max(1, finalCount)),
         color: '#0f766e'
       },
       {
         id: 'payment',
-        name: '5. Payment Disbursed',
+        name: 'Payment',
         volume: payCount,
-        unit: 'Vouchers',
+        unit: '',
         conversionPct: pct(payCount, Math.max(1, inspCount)),
         overallPct: pct(payCount, baseTop),
-        dropOffVolume: Math.max(0, inspCount - payCount),
-        dropOffPct: pct(Math.max(0, inspCount - payCount), Math.max(1, inspCount)),
         color: '#d97706'
       },
       {
         id: 'settlement',
-        name: '6. Final Settlement',
+        name: 'Settlement',
         volume: settCount,
-        unit: 'MRs',
+        unit: '',
         conversionPct: pct(settCount, Math.max(1, payCount)),
         overallPct: pct(settCount, baseTop),
-        dropOffVolume: Math.max(0, payCount - settCount),
-        dropOffPct: pct(Math.max(0, payCount - settCount), Math.max(1, payCount)),
         color: '#7c3aed'
       }
     ];
@@ -208,8 +198,9 @@ export const Priority3Operations: React.FC<Priority3OperationsProps> = ({
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <FunnelChart
           title="PO Lifecycle Conversion Funnel"
-          subtitle="Full live procurement pipeline matching the Main Dashboard across all 6 stages"
+          subtitle="Stage-wise record count: Sauda Check Point → Temporary Arrival → Final Arrival → Mill Inspection → Payment → Settlement"
           stages={stageMetrics.funnelStages}
+          countOnly
           onStageClick={(stage) => {
             if (stage.id === 'receipt' || stage.id === 'temp_arrival') setStageFilter('pending_arrival');
             else if (stage.id === 'inspection') setStageFilter('pending_insp');

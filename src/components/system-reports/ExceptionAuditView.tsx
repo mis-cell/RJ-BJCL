@@ -28,7 +28,6 @@ import {
   Tooltip,
   Legend
 } from 'recharts';
-import { ParetoChart } from '../reports/charts/ParetoChart';
 
 interface ExceptionAuditViewProps {
   dataset: SystemReportDataset;
@@ -40,7 +39,7 @@ interface PartyExceptionItem {
   id: string;
   part: 'Grade Down Wise' | 'Moisture Wise';
   polarity: 'Too Good' | 'Too Bad';
-  entityType: 'Broker' | 'Supplier';
+  entityType: 'Broker' | 'Supplier' | 'Broker / Supplier';
   entityName: string;
   mrCount: number;
   poCount: number;
@@ -86,32 +85,200 @@ export const ExceptionAuditView: React.FC<ExceptionAuditViewProps> = ({
   const [statusOverrides, setStatusOverrides] = useState<Record<string, VerificationStatus>>({});
 
   // =========================================================================
-  // PARTY POOL FROM MILL INSPECTION (BROKERS & SUPPLIERS)
+  // PARTY POOL FROM MILL INSPECTION (COMBINED BROKERS & SUPPLIERS, DEDUPLICATED)
   // =========================================================================
+  const brokerRows = useMemo(
+    () =>
+      calculateMillInspectionRankings(filteredMillInspections, 'broker').map(r => ({
+        ...r,
+        entityType: 'Broker' as const
+      })),
+    [filteredMillInspections]
+  );
+
+  const supplierRows = useMemo(
+    () =>
+      calculateMillInspectionRankings(filteredMillInspections, 'supplier').map(r => ({
+        ...r,
+        entityType: 'Supplier' as const
+      })),
+    [filteredMillInspections]
+  );
+
   const allPartyRows = useMemo(() => {
-    const brokers = calculateMillInspectionRankings(filteredMillInspections, 'broker').map(r => ({
-      ...r,
-      entityType: 'Broker' as const
-    }));
-    const suppliers = calculateMillInspectionRankings(filteredMillInspections, 'supplier').map(r => ({
-      ...r,
-      entityType: 'Supplier' as const
-    }));
-    return [...brokers, ...suppliers];
-  }, [filteredMillInspections]);
+    if (entityTypeFilter === 'Broker') return brokerRows;
+    if (entityTypeFilter === 'Supplier') return supplierRows;
+
+    // Combine matching Broker & Supplier entries under one normalized party key
+    // and deduplicate overlapping MRs so no party or MR is double-counted
+    const combinedMap = new Map<
+      string,
+      {
+        key: string;
+        hasBroker: boolean;
+        hasSupplier: boolean;
+        recordsByMr: Map<string, (typeof filteredMillInspections)[number]>;
+      }
+    >();
+
+    const addGroup = (
+      rows: Array<MillInspectionRankingRow & { entityType: 'Broker' | 'Supplier' }>,
+      role: 'broker' | 'supplier'
+    ) => {
+      rows.forEach(row => {
+        const norm = row.key.trim().replace(/\s+/g, ' ').toUpperCase();
+        if (!combinedMap.has(norm)) {
+          combinedMap.set(norm, {
+            key: norm,
+            hasBroker: false,
+            hasSupplier: false,
+            recordsByMr: new Map()
+          });
+        }
+        const entry = combinedMap.get(norm)!;
+        if (role === 'broker') entry.hasBroker = true;
+        else entry.hasSupplier = true;
+        row.records.forEach((rec, idx) => {
+          const mrKey = String(rec.mrNo || rec.id || `${norm}-${idx}`).trim().toUpperCase();
+          if (!entry.recordsByMr.has(mrKey)) {
+            entry.recordsByMr.set(mrKey, rec);
+          }
+        });
+      });
+    };
+
+    addGroup(brokerRows, 'broker');
+    addGroup(supplierRows, 'supplier');
+
+    const totalAllValue = filteredMillInspections.reduce((s, r) => s + r.estimatedValue, 0);
+    const totalAllMt = filteredMillInspections.reduce((s, r) => s + r.receivedMt, 0);
+
+    return Array.from(combinedMap.values()).map(entry => {
+      const records = Array.from(entry.recordsByMr.values());
+      const poSet = new Set<string>();
+      let totalMt = 0;
+      let estimatedValue = 0;
+      let weightSum = 0;
+      let wGradeDown = 0;
+      let wMoisture = 0;
+      let wMoistureLimit = 0;
+      let wExcessMoisture = 0;
+      let wDust = 0;
+      let wNcv = 0;
+      let wCtPct = 0;
+      let totalHabijabiChattaRopeKg = 0;
+      let excessMoistureLots = 0;
+      let gradeDownLots = 0;
+      let dustLots = 0;
+      let ncvLots = 0;
+      let ctLots = 0;
+      let cleanLots = 0;
+
+      records.forEach(rec => {
+        if (rec.poNo && rec.poNo !== '-') poSet.add(rec.poNo);
+        const wt = rec.receivedMt > 0 ? rec.receivedMt : 1;
+        totalMt += rec.receivedMt;
+        estimatedValue += rec.estimatedValue;
+        weightSum += wt;
+        wGradeDown += rec.gradeDownPct * wt;
+        wMoisture += rec.actualMoisture * wt;
+        wMoistureLimit += rec.moistureLimit * wt;
+        wExcessMoisture += rec.excessMoisture * wt;
+        wDust += rec.dustPct * wt;
+        wNcv += rec.ncvPct * wt;
+        wCtPct += rec.ctPct * wt;
+        totalHabijabiChattaRopeKg += rec.habijabiChattaRopeKg;
+
+        const hasMoist = rec.excessMoisture > 0.01;
+        const hasGd = rec.gradeDownPct > 0.01;
+        const hasDust = rec.dustPct > 0.01;
+        const hasNcv = rec.ncvPct > 0.01;
+        const hasCt = rec.habijabiChattaRopeKg > 0.01 || rec.ctPct > 0.01;
+
+        if (hasMoist) excessMoistureLots += 1;
+        if (hasGd) gradeDownLots += 1;
+        if (hasDust) dustLots += 1;
+        if (hasNcv) ncvLots += 1;
+        if (hasCt) ctLots += 1;
+        if (!hasMoist && !hasGd && !hasDust && !hasNcv && !hasCt) cleanLots += 1;
+      });
+
+      const denom = weightSum > 0 ? weightSum : 1;
+      const avgGradeDown = wGradeDown / denom;
+      const avgMoisture = wMoisture / denom;
+      const avgMoistureLimit = wMoistureLimit / denom;
+      const avgExcessMoisture = wExcessMoisture / denom;
+      const avgDust = wDust / denom;
+      const avgNcv = wNcv / denom;
+      const avgCtPct = wCtPct / denom;
+
+      const penaltyGradeDown = Math.min(35, avgGradeDown * 2.5);
+      const penaltyMoisture = Math.min(30, avgExcessMoisture * 4.0);
+      const penaltyDust = Math.min(15, avgDust * 3.0);
+      const penaltyNcv = Math.min(10, avgNcv * 3.0);
+      const penaltyCt = Math.min(10, avgCtPct * 2.5);
+
+      const performanceScore = Math.max(
+        0,
+        Math.min(100, Number((100 - penaltyGradeDown - penaltyMoisture - penaltyDust - penaltyNcv - penaltyCt).toFixed(1)))
+      );
+      const defectScore = Number((100 - performanceScore).toFixed(1));
+      const cleanRatePct = records.length > 0 ? (cleanLots / records.length) * 100 : 100;
+
+      let tier: MillInspectionRankingRow['tier'] = 'Excellent';
+      if (performanceScore < 50) tier = 'Poor';
+      else if (performanceScore < 70) tier = 'Watch';
+      else if (performanceScore < 85) tier = 'Good';
+
+      const entityType: 'Broker' | 'Supplier' | 'Broker / Supplier' =
+        entry.hasBroker && entry.hasSupplier
+          ? 'Broker / Supplier'
+          : entry.hasBroker
+            ? 'Broker'
+            : 'Supplier';
+
+      return {
+        key: entry.key,
+        entityType,
+        mrCount: records.length,
+        poCount: poSet.size,
+        totalMt,
+        estimatedValue,
+        avgGradeDown,
+        avgMoisture,
+        avgMoistureLimit,
+        avgExcessMoisture,
+        avgDust,
+        avgNcv,
+        totalHabijabiChattaRopeKg,
+        avgCtPct,
+        excessMoistureLots,
+        gradeDownLots,
+        dustLots,
+        ncvLots,
+        ctLots,
+        cleanLots,
+        cleanRatePct,
+        performanceScore,
+        defectScore,
+        tier,
+        valueSharePct: totalAllValue > 0 ? (estimatedValue / totalAllValue) * 100 : 0,
+        mtSharePct: totalAllMt > 0 ? (totalMt / totalAllMt) * 100 : 0,
+        records
+      };
+    });
+  }, [brokerRows, supplierRows, entityTypeFilter, filteredMillInspections]);
 
   const entityOptions = useMemo(() => {
     const set = new Set<string>();
     allPartyRows.forEach(p => {
-      if (entityTypeFilter !== 'ALL' && p.entityType !== entityTypeFilter) return;
       set.add(p.key);
     });
     return Array.from(set).sort();
-  }, [allPartyRows, entityTypeFilter]);
+  }, [allPartyRows]);
 
   const filteredPartyRows = useMemo(() => {
     return allPartyRows.filter(p => {
-      if (entityTypeFilter !== 'ALL' && p.entityType !== entityTypeFilter) return false;
       if (selectedEntity !== 'ALL' && p.key.toUpperCase() !== selectedEntity.toUpperCase()) return false;
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase().trim();
@@ -119,7 +286,7 @@ export const ExceptionAuditView: React.FC<ExceptionAuditViewProps> = ({
       }
       return true;
     });
-  }, [allPartyRows, entityTypeFilter, selectedEntity, searchQuery]);
+  }, [allPartyRows, selectedEntity, searchQuery]);
 
   // Helper to convert MillInspectionRankingRow into a rich PartyExceptionItem
   const toPartyExceptionItem = (
@@ -204,9 +371,9 @@ export const ExceptionAuditView: React.FC<ExceptionAuditViewProps> = ({
           else if (r.gradeDownPct >= 5) medium += 1;
           else if (r.gradeDownPct > 0.01) low += 1;
         });
-        const shortName = p.key.length > 16 ? `${p.key.slice(0, 14)}…` : p.key;
+        const shortName = p.key.length > 15 ? `${p.key.slice(0, 13)}…` : p.key;
         return {
-          party: `${shortName} (${p.entityType === 'Broker' ? 'B' : 'S'})`,
+          party: shortName,
           fullName: `${p.key} (${p.entityType})`,
           High: high,
           Medium: medium,
@@ -222,16 +389,27 @@ export const ExceptionAuditView: React.FC<ExceptionAuditViewProps> = ({
   }, [filteredPartyRows]);
 
   // =========================================================================
-  // CHART 2: MOISTURE WISE (Pareto of Parties by Excess Seasonal Moisture Lots)
+  // CHART 2: MOISTURE WISE (Avg Moisture % Split into Within Limit % + Excess Above Limit %)
   // =========================================================================
-  const moistureParetoData = useMemo(() => {
+  const moistureChartData = useMemo(() => {
     return filteredPartyRows
-      .filter(p => p.excessMoistureLots > 0 || p.avgExcessMoisture > 0.05)
-      .map(p => ({
-        name: `${p.key} (${p.entityType === 'Broker' ? 'B' : 'S'})`,
-        countOrVolume: p.excessMoistureLots > 0 ? p.excessMoistureLots : 1
-      }))
-      .sort((a, b) => b.countOrVolume - a.countOrVolume)
+      .filter(p => p.avgMoisture > 0 && (p.avgExcessMoisture > 0.01 || p.excessMoistureLots > 0))
+      .map(p => {
+        const shortName = p.key.length > 15 ? `${p.key.slice(0, 13)}…` : p.key;
+        const withinLimit = Number(Math.min(p.avgMoisture, p.avgMoistureLimit).toFixed(2));
+        const excessPct = Number(Math.max(0, p.avgMoisture - p.avgMoistureLimit).toFixed(2));
+        return {
+          party: shortName,
+          fullName: `${p.key} (${p.entityType})`,
+          withinLimit,
+          excessPct,
+          avgMoisture: Number(p.avgMoisture.toFixed(2)),
+          avgMoistureLimit: Number(p.avgMoistureLimit.toFixed(1)),
+          avgExcessMoisture: Number(p.avgExcessMoisture.toFixed(2)),
+          mrCount: p.mrCount
+        };
+      })
+      .sort((a, b) => b.avgExcessMoisture - a.avgExcessMoisture || b.avgMoisture - a.avgMoisture || b.mrCount - a.mrCount)
       .slice(0, 12);
   }, [filteredPartyRows]);
 
@@ -293,11 +471,9 @@ export const ExceptionAuditView: React.FC<ExceptionAuditViewProps> = ({
       'Insp MRs',
       'Received MT',
       'Avg Grade Down %',
-      'Grade Down Lots',
       'Avg Moisture %',
       'Moisture Limit %',
       'Avg Excess Moisture %',
-      'Excess Moisture Lots',
       'Quality Score',
       'Status'
     ];
@@ -312,11 +488,9 @@ export const ExceptionAuditView: React.FC<ExceptionAuditViewProps> = ({
         a.mrCount,
         a.receivedMt.toFixed(2),
         a.avgGradeDown.toFixed(2),
-        a.gradeDownLots,
         a.avgMoisture.toFixed(1),
         a.avgMoistureLimit.toFixed(0),
         a.avgExcessMoisture.toFixed(2),
-        a.excessMoistureLots,
         a.performanceScore.toFixed(1),
         `"${statusOverrides[a.id] || 'Pending Review'}"`
       ]);
@@ -397,15 +571,11 @@ export const ExceptionAuditView: React.FC<ExceptionAuditViewProps> = ({
                 <th className="p-2 text-right">MRs</th>
                 <th className="p-2 text-right">MT</th>
                 {isGd ? (
-                  <>
-                    <th className="p-2 text-right">Avg GD %</th>
-                    <th className="p-2 text-right">GD Lots</th>
-                  </>
+                  <th className="p-2 text-right">Avg GD %</th>
                 ) : (
                   <>
                     <th className="p-2 text-right">Avg Moist</th>
                     <th className="p-2 text-right">Excess %</th>
-                    <th className="p-2 text-right">Exc Lots</th>
                   </>
                 )}
                 <th className="p-2 text-right">Score</th>
@@ -414,7 +584,7 @@ export const ExceptionAuditView: React.FC<ExceptionAuditViewProps> = ({
             <tbody className="divide-y divide-slate-100 font-mono text-[11px] text-slate-700">
               {items.length === 0 ? (
                 <tr>
-                  <td colSpan={isGd ? 8 : 9} className="p-8 text-center text-slate-400 font-sans">
+                  <td colSpan={isGd ? 7 : 8} className="p-8 text-center text-slate-400 font-sans">
                     <CheckCircle2 className="w-6 h-6 text-emerald-500 mx-auto mb-1" />
                     No parties match this criteria under active filters.
                   </td>
@@ -435,7 +605,9 @@ export const ExceptionAuditView: React.FC<ExceptionAuditViewProps> = ({
                         'px-1.5 py-0.5 rounded text-[9.5px] font-bold border',
                         item.entityType === 'Broker'
                           ? 'bg-slate-100 text-slate-700 border-slate-200'
-                          : 'bg-sky-50 text-sky-700 border-sky-200'
+                          : item.entityType === 'Broker / Supplier'
+                            ? 'bg-indigo-50 text-indigo-700 border-indigo-200'
+                            : 'bg-sky-50 text-sky-700 border-sky-200'
                       )}>
                         {item.entityType}
                       </span>
@@ -446,17 +618,12 @@ export const ExceptionAuditView: React.FC<ExceptionAuditViewProps> = ({
                     <td className="p-2 text-right">{item.mrCount}</td>
                     <td className="p-2 text-right font-semibold">{item.receivedMt.toFixed(1)}</td>
                     {isGd ? (
-                      <>
-                        <td className={cn(
-                          'p-2 text-right font-black',
-                          item.avgGradeDown >= 5 ? 'text-rose-700' : item.avgGradeDown > 0 ? 'text-amber-700' : 'text-emerald-700'
-                        )}>
-                          {item.avgGradeDown.toFixed(2)}%
-                        </td>
-                        <td className="p-2 text-right text-slate-600">
-                          {item.gradeDownLots}/{item.mrCount}
-                        </td>
-                      </>
+                      <td className={cn(
+                        'p-2 text-right font-black',
+                        item.avgGradeDown >= 5 ? 'text-rose-700' : item.avgGradeDown > 0 ? 'text-amber-700' : 'text-emerald-700'
+                      )}>
+                        {item.avgGradeDown.toFixed(2)}%
+                      </td>
                     ) : (
                       <>
                         <td className="p-2 text-right font-semibold text-slate-800">
@@ -467,9 +634,6 @@ export const ExceptionAuditView: React.FC<ExceptionAuditViewProps> = ({
                           item.avgExcessMoisture >= 1.5 ? 'text-rose-700' : item.avgExcessMoisture > 0.05 ? 'text-amber-700' : 'text-emerald-700'
                         )}>
                           {item.avgExcessMoisture > 0.01 ? `+${item.avgExcessMoisture.toFixed(2)}%` : '0.00%'}
-                        </td>
-                        <td className="p-2 text-right text-slate-600">
-                          {item.excessMoistureLots}/{item.mrCount}
                         </td>
                       </>
                     )}
@@ -567,16 +731,23 @@ export const ExceptionAuditView: React.FC<ExceptionAuditViewProps> = ({
             </div>
             <span className="text-[10px] font-mono text-slate-400 shrink-0">Mill Inspection</span>
           </div>
-          <div style={{ width: '100%', height: 280 }}>
+          <div style={{ width: '100%', height: 300 }}>
             {gradeDownChartData.length === 0 ? (
               <div className="h-full flex items-center justify-center text-xs text-slate-400">
                 No Grade Down lots recorded in current filter range.
               </div>
             ) : (
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={gradeDownChartData} margin={{ top: 10, right: 16, left: 0, bottom: 36 }}>
+                <BarChart data={gradeDownChartData} margin={{ top: 10, right: 16, left: 0, bottom: 8 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
-                  <XAxis dataKey="party" tick={{ fontSize: 9.5, fill: '#334155', fontWeight: 600 }} angle={-18} textAnchor="end" interval={0} />
+                  <XAxis
+                    dataKey="party"
+                    tick={{ fontSize: 9.5, fill: '#334155', fontWeight: 600 }}
+                    angle={-25}
+                    textAnchor="end"
+                    interval={0}
+                    height={68}
+                  />
                   <YAxis tick={{ fontSize: 10, fill: '#64748b', fontFamily: 'monospace' }} allowDecimals={false} />
                   <Tooltip
                     formatter={(val: any, name: any) => [`${val} MRs`, name]}
@@ -586,7 +757,7 @@ export const ExceptionAuditView: React.FC<ExceptionAuditViewProps> = ({
                     }}
                     contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', color: '#f8fafc', borderRadius: '8px', fontSize: '11px', fontFamily: 'monospace' }}
                   />
-                  <Legend wrapperStyle={{ fontSize: '11px', paddingTop: '6px' }} />
+                  <Legend wrapperStyle={{ fontSize: '11px', paddingTop: '4px' }} />
                   <Bar dataKey="High" stackId="gd" name="High GD (≥10%)" fill="#be123c" />
                   <Bar dataKey="Medium" stackId="gd" name="Medium GD (5–10%)" fill="#d97706" />
                   <Bar dataKey="Low" stackId="gd" name="Low GD (>0–5%)" fill="#3b82f6" radius={[4, 4, 0, 0]} />
@@ -597,13 +768,58 @@ export const ExceptionAuditView: React.FC<ExceptionAuditViewProps> = ({
         </div>
 
         {/* Chart 2: Moisture Wise */}
-        <ParetoChart
-          title="Moisture Wise"
-          subtitle="Top parties exceeding active seasonal moisture limit (Jul–Dec: 20%/18% · Jan–Jun: 18%/16%)"
-          data={moistureParetoData}
-          volumeUnit="MRs"
-          height={280}
-        />
+        <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-2xs space-y-2">
+          <div className="pb-2 border-b border-slate-100 flex items-center justify-between gap-2">
+            <div>
+              <h4 className="text-xs font-black uppercase tracking-wider text-slate-800">
+                Moisture Wise
+              </h4>
+              <p className="text-[11px] text-slate-500">
+                Top parties ranked by Avg Excess Moisture % above active seasonal limit (Jul–Dec: 20%/18% · Jan–Jun: 18%/16%)
+              </p>
+            </div>
+            <span className="text-[10px] font-mono text-slate-400 shrink-0">Mill Inspection</span>
+          </div>
+          <div style={{ width: '100%', height: 300 }}>
+            {moistureChartData.length === 0 ? (
+              <div className="h-full flex items-center justify-center text-xs text-slate-400">
+                No excess moisture records found in current filter range.
+              </div>
+            ) : (
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={moistureChartData} margin={{ top: 10, right: 16, left: 0, bottom: 8 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
+                  <XAxis
+                    dataKey="party"
+                    tick={{ fontSize: 9.5, fill: '#334155', fontWeight: 600 }}
+                    angle={-25}
+                    textAnchor="end"
+                    interval={0}
+                    height={68}
+                  />
+                  <YAxis
+                    tick={{ fontSize: 10, fill: '#64748b', fontFamily: 'monospace' }}
+                    tickFormatter={(v) => `${v}%`}
+                    width={44}
+                  />
+                  <Tooltip
+                    formatter={(val: any, name: any) => [`${Number(val).toFixed(2)}%`, name]}
+                    labelFormatter={(label: any, payload: any) => {
+                      const row = payload?.[0]?.payload;
+                      return row
+                        ? `${row.fullName} · Avg: ${row.avgMoisture}% (Limit ${row.avgMoistureLimit}%, Excess +${row.avgExcessMoisture}% · ${row.mrCount} MRs)`
+                        : label;
+                    }}
+                    contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', color: '#f8fafc', borderRadius: '8px', fontSize: '11px', fontFamily: 'monospace' }}
+                  />
+                  <Legend wrapperStyle={{ fontSize: '11px', paddingTop: '4px' }} />
+                  <Bar dataKey="withinLimit" stackId="moist" name="Within Limit (%)" fill="#0284c7" />
+                  <Bar dataKey="excessPct" stackId="moist" name="Excess Above Limit (%)" fill="#e11d48" radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            )}
+          </div>
+        </div>
       </div>
 
       {/* ================= FILTER & 2-PART SELECTION TOOLBAR ================= */}
@@ -705,21 +921,8 @@ export const ExceptionAuditView: React.FC<ExceptionAuditViewProps> = ({
         </div>
       </div>
 
-      {/* ================= BROKER & SUPPLIER PERFORMANCE EXCEPTION REGISTER (2 PARTS: GRADE DOWN & MOISTURE) ================= */}
+      {/* ================= PERFORMANCE EXCEPTION REGISTER (2 PARTS: GRADE DOWN & MOISTURE) ================= */}
       <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 space-y-5">
-        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-3">
-          <div>
-            <h4 className="text-xs font-black uppercase tracking-wider text-slate-900">
-              Broker &amp; Supplier Performance Exception Register (Too Good / Too Bad)
-            </h4>
-            <p className="text-[11px] text-slate-500 mt-0.5">
-              2-Part Performance Register: Top 10 Too Good vs Top 10 Too Bad Parties by Grade Down Wise &amp; Moisture Wise
-            </p>
-          </div>
-          <span className="text-[10.5px] font-mono font-bold text-slate-500">
-            Active Filter: {entityTypeFilter === 'ALL' ? 'Brokers & Suppliers' : `${entityTypeFilter}s`}
-          </span>
-        </div>
 
         {/* PART 1: GRADE DOWN WISE */}
         {(registerPart === 'BOTH' || registerPart === 'GRADE_DOWN') && (

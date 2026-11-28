@@ -298,9 +298,10 @@ export function calculateMillInspectionRankings(
 
   millInspections.forEach((rec, idx) => {
     const rawName = entity === 'broker' ? rec.broker : rec.supplier;
-    const key = rawName && rawName.trim() && rawName.trim() !== '-'
-      ? rawName.trim()
-      : (entity === 'broker' ? 'Direct / Unassigned' : 'Unassigned Supplier');
+    const cleaned = String(rawName || '').trim().replace(/\s+/g, ' ');
+    const key = cleaned && cleaned !== '-'
+      ? cleaned.toUpperCase()
+      : (entity === 'broker' ? 'DIRECT / UNASSIGNED' : 'UNASSIGNED SUPPLIER');
 
     if (!map.has(key)) {
       map.set(key, {

@@ -18,6 +18,7 @@ interface FunnelChartProps {
   subtitle?: string;
   stages: FunnelStage[];
   height?: number;
+  countOnly?: boolean;
   onStageClick?: (stage: FunnelStage) => void;
 }
 
@@ -34,6 +35,7 @@ export const FunnelChart: React.FC<FunnelChartProps> = ({
   title = "End-to-End Procurement Lifecycle Funnel",
   subtitle = "Stage-by-stage volume conversion and pipeline dropout tracking",
   stages,
+  countOnly = false,
   onStageClick
 }) => {
   const maxVolume = stages.length > 0 ? Math.max(...stages.map(s => s.volume), 1) : 1;
@@ -48,11 +50,13 @@ export const FunnelChart: React.FC<FunnelChartProps> = ({
           </h4>
           {subtitle && <p className="text-[10px] text-slate-500">{subtitle}</p>}
         </div>
-        <div className="flex items-center gap-2">
-          <span className="text-[10px] font-bold bg-emerald-50 text-emerald-800 px-2 py-0.5 rounded border border-emerald-200">
-            Overall Conversion: {stages.length > 0 ? stages[stages.length - 1].overallPct : 0}%
-          </span>
-        </div>
+        {!countOnly && (
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] font-bold bg-emerald-50 text-emerald-800 px-2 py-0.5 rounded border border-emerald-200">
+              Overall Conversion: {stages.length > 0 ? stages[stages.length - 1].overallPct : 0}%
+            </span>
+          </div>
+        )}
       </div>
 
       <div className="space-y-3">
@@ -61,6 +65,7 @@ export const FunnelChart: React.FC<FunnelChartProps> = ({
           const color = stage.color || STAGE_COLORS[idx % STAGE_COLORS.length];
           const isLast = idx === stages.length - 1;
           const dropOff = stage.dropOffVolume !== undefined ? stage.dropOffVolume : (idx > 0 ? stages[idx - 1].volume - stage.volume : 0);
+          const countLabel = Math.round(stage.volume).toLocaleString('en-IN');
 
           return (
             <div 
@@ -79,12 +84,20 @@ export const FunnelChart: React.FC<FunnelChartProps> = ({
                 </div>
                 
                 <div className="flex items-center gap-3 font-mono">
-                  <span className="text-slate-900 font-black">
-                    {stage.volume.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })} {stage.unit || 'MT'}
-                  </span>
-                  <span className="text-[10px] bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded border border-slate-200 font-bold">
-                    {stage.overallPct}% of Start
-                  </span>
+                  {countOnly ? (
+                    <span className="text-slate-900 font-black text-xs">
+                      {countLabel}
+                    </span>
+                  ) : (
+                    <>
+                      <span className="text-slate-900 font-black">
+                        {stage.volume.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 })} {stage.unit || 'MT'}
+                      </span>
+                      <span className="text-[10px] bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded border border-slate-200 font-bold">
+                        {stage.overallPct}% of Start
+                      </span>
+                    </>
+                  )}
                 </div>
               </div>
 
@@ -99,14 +112,18 @@ export const FunnelChart: React.FC<FunnelChartProps> = ({
                   }}
                 >
                   <span className="truncate">{stage.name}</span>
-                  <span className="font-black text-[9px] bg-black/20 px-1.5 py-0.2 rounded">
-                    {idx === 0 ? '100% (Baseline)' : `${stage.conversionPct}% Step Pass`}
+                  <span className="font-black text-[9.5px] bg-black/20 px-1.5 py-0.2 rounded shrink-0">
+                    {countOnly
+                      ? countLabel
+                      : idx === 0
+                        ? '100% (Baseline)'
+                        : `${stage.conversionPct}% Step Pass`}
                   </span>
                 </div>
               </div>
 
               {/* Stage Drop-off indicator if not the last item */}
-              {!isLast && dropOff > 0.01 && (
+              {!countOnly && !isLast && dropOff > 0.01 && (
                 <div className="pl-6 pt-1 flex items-center gap-1.5 text-[9px] text-rose-600 font-mono font-bold">
                   <TrendingDown className="w-3 h-3 text-rose-500" />
                   <span>

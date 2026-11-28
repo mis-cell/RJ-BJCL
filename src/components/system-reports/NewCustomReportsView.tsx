@@ -57,7 +57,7 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
 
   // Report 1: Outstanding PO State (Accurate open POs with pending balance MT)
   const [poList, setPoList] = useState<any[]>([]);
-  const [poStatusFilter, setPoStatusFilter] = useState<'all_open' | 'not_received' | 'partial'>('all_open');
+  const [poStatusFilter, setPoStatusFilter] = useState<'all_open' | 'not_received'>('all_open');
   const [poGroupBy, setPoGroupBy] = useState<'all' | 'broker' | 'supplier' | 'area'>('all');
 
   // Report 2: MR Advance Eligible State
@@ -1523,7 +1523,6 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
   const filteredPoList = useMemo(() => {
     return poList.filter(po => {
       if (poStatusFilter === 'not_received' && po.isPartial) return false;
-      if (poStatusFilter === 'partial' && !po.isPartial) return false;
       return matchesFilters(po.poDate, po.supplier, po.broker, po.area, po.agency, po.poNo, undefined, filters, searchQuery);
     });
   }, [poList, poStatusFilter, searchQuery, filters]);
@@ -1616,9 +1615,9 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
           label: po.poNo,
           fullName: `${po.poNo} · ${po.broker}`,
           value: Number(po.pendingQty.toFixed(2)),
-          annotation: `${po.pendingQty.toFixed(1)} MT (${po.isPartial ? 'Partial' : '0% Recd'})`,
-          secondaryText: `Contract: ${po.totalQty.toFixed(2)} MT · Recd: ${po.rcvdQty.toFixed(2)} MT`,
-          color: po.isPartial ? '#d97706' : '#D94B5A'
+          annotation: `${po.pendingQty.toFixed(1)} MT`,
+          secondaryText: `Contract: ${po.totalQty.toFixed(2)} MT · Pending: ${po.pendingQty.toFixed(2)} MT`,
+          color: '#D94B5A'
         }));
     }
     return groupedPoSummary.slice(0, 12).map(g => ({
@@ -1870,15 +1869,6 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
                 >
                   0% Arrived
                 </button>
-                <button
-                  type="button"
-                  onClick={() => setPoStatusFilter('partial')}
-                  className={`px-2 py-1 rounded-lg transition cursor-pointer text-[11px] ${
-                    poStatusFilter === 'partial' ? 'bg-slate-900 text-white' : 'text-slate-600'
-                  }`}
-                >
-                  Partially Received
-                </button>
               </div>
               <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200 text-xs font-bold">
                 <span className="text-slate-500 pl-1 text-[11px]">View By:</span>
@@ -1926,7 +1916,7 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
                   <span className="text-[10px] uppercase font-bold text-slate-400">Open Outstanding POs</span>
                   <div className="text-xl font-black font-mono tabular-nums text-white">{filteredPoList.length} POs</div>
                   <span className="text-[10px] text-slate-300">
-                    {filteredPoList.filter(p => !p.isPartial).length} zero-arrival · {filteredPoList.filter(p => p.isPartial).length} partial
+                    Sauda Check Point POs pending Mill Inspection
                   </span>
                 </div>
 

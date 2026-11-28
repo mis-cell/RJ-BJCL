@@ -20,8 +20,6 @@ import {
   groupTransactionsByDimension,
   calculateMillInspectionRankings
 } from '../../services/systemReportEngine';
-import { WaterfallChart } from '../reports/charts/WaterfallChart';
-import { HistogramChart } from '../reports/charts/HistogramChart';
 import { HorizontalRankBarChart } from '../reports/charts/HorizontalRankBarChart';
 import { BrokerPremiumDetailsModal } from './BrokerPremiumDetailsModal';
 
@@ -250,45 +248,6 @@ export const UnifiedBusinessAnalysisView: React.FC<UnifiedBusinessAnalysisViewPr
         totalPremLakh: Number((v.premSum / 100000).toFixed(2)),
         vouchersWithPrem: v.count
       }));
-  }, [filteredPaymentOperations]);
-
-  const costWaterfallData = useMemo(() => {
-    const payable = Math.round(paymentSummaryTotals.payable);
-    const prem = Math.round(paymentSummaryTotals.premium);
-    const ded = Math.round(paymentSummaryTotals.deduction);
-    const netLanded = Math.max(0, payable + prem - ded);
-    return [
-      { name: 'Payable Amt', value: payable, isTotal: true, color: '#0f172a' },
-      { name: '+ Premiums', value: prem, color: '#d97706' },
-      { name: '− Deductions', value: -ded, color: '#0f766e' },
-      { name: 'Effective Cost', value: netLanded, isTotal: true, color: '#D94B5A' }
-    ];
-  }, [paymentSummaryTotals]);
-
-  const premiumHistogramBins = useMemo(() => {
-    const premVouchers = filteredPaymentOperations.filter(p => p.premiumAmount > 0);
-    const buckets = [
-      { label: '₹1–50/Qtl', min: 0.01, max: 50, count: 0 },
-      { label: '₹51–100/Qtl', min: 50.01, max: 100, count: 0 },
-      { label: '₹101–200/Qtl', min: 100.01, max: 200, count: 0 },
-      { label: '₹201–400/Qtl', min: 200.01, max: 400, count: 0 },
-      { label: '₹400+/Qtl', min: 400.01, max: Infinity, count: 0 }
-    ];
-    premVouchers.forEach(p => {
-      const rate = p.premiumRatePerQtl > 0
-        ? p.premiumRatePerQtl
-        : (p.quantityQtl > 0 ? p.premiumAmount / p.quantityQtl : 0);
-      if (rate <= 0) return;
-      const b = buckets.find(x => rate >= x.min && rate <= x.max);
-      if (b) b.count += 1;
-    });
-    const total = Math.max(1, premVouchers.length);
-    return buckets.map(b => ({
-      binRange: b.label,
-      count: b.count,
-      pct: Number(((b.count / total) * 100).toFixed(1)),
-      isWarning: b.min >= 200
-    }));
   }, [filteredPaymentOperations]);
 
   const brokerPremiumRows = useMemo(() => {
@@ -779,74 +738,53 @@ export const UnifiedBusinessAnalysisView: React.FC<UnifiedBusinessAnalysisViewPr
   // =========================================================================
   return (
     <div className="space-y-5 font-sans">
-      {/* Row 1: Monthly Premium Line + Effective Cost Waterfall */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-2xs space-y-2">
-          <div className="pb-2 border-b border-slate-100">
-            <h4 className="text-xs font-black uppercase tracking-wider text-slate-800">
-              Monthly Average Premium Trend (₹/Qtl)
-            </h4>
-            <p className="text-[11px] text-slate-500">Weighted monthly premium per quintal strictly from Payment Operations</p>
-          </div>
-          <div style={{ width: '100%', height: 270 }}>
-            {monthlyPremiumTrend.length === 0 ? (
-              <div className="h-full flex items-center justify-center text-xs text-slate-400">
-                No monthly premium records found in Payment Operations for current filters.
-              </div>
-            ) : (
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={monthlyPremiumTrend} margin={{ top: 10, right: 16, left: 4, bottom: 4 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
-                  <XAxis dataKey="month" tick={{ fontSize: 10, fill: '#64748b', fontFamily: 'monospace' }} />
-                  <YAxis tick={{ fontSize: 10, fill: '#64748b', fontFamily: 'monospace' }} tickFormatter={(v) => `₹${v}`} width={52} />
-                  <Tooltip
-                    formatter={(val: any, name: any) => [
-                      name === 'Avg Premium (₹/Qtl)' ? `₹${Number(val).toFixed(1)}/Qtl` : `₹${Number(val).toFixed(2)} L`,
-                      name
-                    ]}
-                    contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', color: '#f8fafc', borderRadius: '8px', fontSize: '11px', fontFamily: 'monospace' }}
-                  />
-                  <Legend wrapperStyle={{ fontSize: '11px' }} />
-                  <Line
-                    type="monotone"
-                    dataKey="avgPremPerQtl"
-                    name="Avg Premium (₹/Qtl)"
-                    stroke="#d97706"
-                    strokeWidth={2.5}
-                    dot={{ r: 4, fill: '#d97706' }}
-                  />
-                </LineChart>
-              </ResponsiveContainer>
-            )}
-          </div>
+      {/* Row 1: Monthly Premium Trend */}
+      <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-2xs space-y-2">
+        <div className="pb-2 border-b border-slate-100">
+          <h4 className="text-xs font-black uppercase tracking-wider text-slate-800">
+            Monthly Average Premium Trend (₹/Qtl)
+          </h4>
+          <p className="text-[11px] text-slate-500">Weighted monthly premium per quintal strictly from Payment Operations</p>
         </div>
-
-        <WaterfallChart
-          title="Effective Landed Cost Waterfall"
-          subtitle="Payment Operations: Payable Amt + Premiums − Deductions = Effective Landed Cost"
-          data={costWaterfallData}
-          unit="₹"
-          height={270}
-        />
+        <div style={{ width: '100%', height: 270 }}>
+          {monthlyPremiumTrend.length === 0 ? (
+            <div className="h-full flex items-center justify-center text-xs text-slate-400">
+              No monthly premium records found in Payment Operations for current filters.
+            </div>
+          ) : (
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={monthlyPremiumTrend} margin={{ top: 10, right: 16, left: 4, bottom: 4 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
+                <XAxis dataKey="month" tick={{ fontSize: 10, fill: '#64748b', fontFamily: 'monospace' }} />
+                <YAxis tick={{ fontSize: 10, fill: '#64748b', fontFamily: 'monospace' }} tickFormatter={(v) => `₹${v}`} width={52} />
+                <Tooltip
+                  formatter={(val: any, name: any) => [
+                    name === 'Avg Premium (₹/Qtl)' ? `₹${Number(val).toFixed(1)}/Qtl` : `₹${Number(val).toFixed(2)} L`,
+                    name
+                  ]}
+                  contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', color: '#f8fafc', borderRadius: '8px', fontSize: '11px', fontFamily: 'monospace' }}
+                />
+                <Legend wrapperStyle={{ fontSize: '11px' }} />
+                <Line
+                  type="monotone"
+                  dataKey="avgPremPerQtl"
+                  name="Avg Premium (₹/Qtl)"
+                  stroke="#d97706"
+                  strokeWidth={2.5}
+                  dot={{ r: 4, fill: '#d97706' }}
+                />
+              </LineChart>
+            </ResponsiveContainer>
+          )}
+        </div>
       </div>
 
-      {/* Row 2: Premium Histogram + Broker Premium Ledger (Payment Operations) */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-        <div className="lg:col-span-5">
-          <HistogramChart
-            title="Premium / Qtl Distribution Histogram"
-            subtitle="Frequency of Payment Operations vouchers across premium rate tiers"
-            bins={premiumHistogramBins}
-            metricLabel="Vouchers"
-            height={280}
-          />
-        </div>
-
-        <div className="lg:col-span-7 bg-white rounded-xl border border-slate-200 shadow-2xs overflow-hidden">
-          <div className="p-3 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
-            <span className="text-xs font-black uppercase text-slate-900">
-              Broker-Wise Premium Ledger ({brokerPremiumRows.length} Brokers)
-            </span>
+      {/* Row 2: Broker Premium Ledger (Payment Operations) */}
+      <div className="bg-white rounded-xl border border-slate-200 shadow-2xs overflow-hidden">
+        <div className="p-3 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+          <span className="text-xs font-black uppercase text-slate-900">
+            Broker-Wise Premium Ledger ({brokerPremiumRows.length} Brokers)
+          </span>
             <span className="text-[11px] font-mono font-bold text-amber-800">
               Total: ₹{Math.round(paymentSummaryTotals.premium).toLocaleString('en-IN')}
             </span>
@@ -900,7 +838,6 @@ export const UnifiedBusinessAnalysisView: React.FC<UnifiedBusinessAnalysisViewPr
               </tbody>
             </table>
           </div>
-        </div>
       </div>
 
       {selectedPremiumBroker && (
