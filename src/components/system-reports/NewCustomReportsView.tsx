@@ -2409,22 +2409,12 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
           {activeSubReport === 'short_excess_deduction' && (
             <div className="space-y-4">
               {/* Summary KPI Cards */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div className="bg-gradient-to-br from-slate-900 to-slate-800 text-white p-3.5 rounded-2xl border border-slate-700 shadow-md space-y-1">
                   <span className="text-[10px] uppercase font-bold text-slate-400">Total Settled / Deducted P.Os</span>
                   <div className="text-xl font-black text-white">{filteredShortExcessList.length} P.Os</div>
                   <span className="text-[10px] text-slate-300">
                     Excess: {filteredShortExcessList.filter(r => r.variationType === 'excess').length} • Short: {filteredShortExcessList.filter(r => r.variationType === 'short').length}
-                  </span>
-                </div>
-
-                <div className="bg-slate-900 text-white p-3.5 rounded-2xl border border-slate-700 shadow-md space-y-1">
-                  <span className="text-[10px] uppercase font-bold text-amber-300">Total Deductible Weight</span>
-                  <div className="text-xl font-black text-white">
-                    {filteredShortExcessList.reduce((a, c) => a + c.deductionQtyQtl, 0).toFixed(2)} Qtl
-                  </div>
-                  <span className="text-[10px] text-slate-300">
-                    {filteredShortExcessList.reduce((a, c) => a + c.deductionQtyKg, 0).toLocaleString('en-IN')} kg ({filteredShortExcessList.reduce((a, c) => a + c.deductionQtyMt, 0).toFixed(3)} MT)
                   </span>
                 </div>
 
