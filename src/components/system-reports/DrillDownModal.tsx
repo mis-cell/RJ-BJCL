@@ -93,7 +93,7 @@ export const DrillDownModal: React.FC<DrillDownModalProps> = ({
     return Array.from(map.values()).sort((a, b) => b.totalQuantityMT - a.totalQuantityMT);
   }, [transactions]);
 
-  // 3. Grouped Agencies
+  // 3. Grouped Agencies (Purchase Order Details Items Table Matrix — AGENCY Name)
   const agencyGroups = useMemo(() => {
     const map = new Map<string, {
       agency: string;
@@ -103,19 +103,29 @@ export const DrillDownModal: React.FC<DrillDownModalProps> = ({
     }>();
 
     transactions.forEach(t => {
-      const name = t.agency && t.agency !== '-' ? t.agency : 'Unassigned Agency';
-      if (!map.has(name)) {
-        map.set(name, {
-          agency: name,
-          poSet: new Set<string>(),
-          saudaSet: new Set<string>(),
-          totalQuantityMT: 0
-        });
-      }
-      const entry = map.get(name)!;
-      if (t.poNo && t.poNo !== 'Pending P.O.' && t.poNo !== '-') entry.poSet.add(t.poNo);
-      if (t.saudaNo && t.saudaNo !== '-') entry.saudaSet.add(t.saudaNo);
-      entry.totalQuantityMT += t.quantityMT;
+      const names: string[] = Array.isArray(t.detailAgencies) && t.detailAgencies.length > 0
+        ? t.detailAgencies
+        : (t.agency && t.agency !== '-' && t.agency !== 'Direct Purchase / Head Office'
+          ? t.agency.split(',').map(s => s.trim()).filter(Boolean)
+          : []);
+
+      names.forEach(rawName => {
+        const name = rawName.trim();
+        if (!name || name === '-' || name.toUpperCase() === 'DIRECT PURCHASE / HEAD OFFICE') return;
+        const key = name.toUpperCase();
+        if (!map.has(key)) {
+          map.set(key, {
+            agency: name,
+            poSet: new Set<string>(),
+            saudaSet: new Set<string>(),
+            totalQuantityMT: 0
+          });
+        }
+        const entry = map.get(key)!;
+        if (t.poNo && t.poNo !== 'Pending P.O.' && t.poNo !== '-') entry.poSet.add(t.poNo);
+        if (t.saudaNo && t.saudaNo !== '-') entry.saudaSet.add(t.saudaNo);
+        entry.totalQuantityMT += t.quantityMT;
+      });
     });
 
     return Array.from(map.values()).sort((a, b) => b.totalQuantityMT - a.totalQuantityMT);
@@ -286,7 +296,10 @@ export const DrillDownModal: React.FC<DrillDownModalProps> = ({
       if (selectedSubFilter.type === 'grade') return (t.grade || '').toLowerCase().trim() === val;
       if (selectedSubFilter.type === 'supplier') return (t.supplier || '').toLowerCase().trim() === val;
       if (selectedSubFilter.type === 'broker') return (t.broker || '').toLowerCase().trim() === val;
-      if (selectedSubFilter.type === 'agency') return (t.agency || '').toLowerCase().trim() === val;
+      if (selectedSubFilter.type === 'agency') {
+        if (Array.isArray(t.detailAgencies) && t.detailAgencies.some(a => a.toLowerCase().trim() === val)) return true;
+        return (t.agency || '').split(',').some(a => a.toLowerCase().trim() === val);
+      }
       if (selectedSubFilter.type === 'area') return (t.area || '').toLowerCase().trim() === val;
       return true;
     });

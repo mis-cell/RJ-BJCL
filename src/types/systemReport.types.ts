@@ -58,6 +58,7 @@ export interface ReportTransactionLine {
   mismatchCount?: number;
   deliveryDelayDays?: number;
   mrCount?: number;
+  detailAgencies?: string[];
 }
 
 export interface ReportFilterCriteria {
@@ -238,7 +239,9 @@ export interface ExecutiveOverviewMetrics {
   scpUniqueGrades: number;
   // Backlog cards
   pendingArrivalCount: number;       // SCP POs NOT present in Mill Inspection
-  inspectionPendingCount: number;    // Final Arrival MRs NOT present in Mill Inspection
+  inspectionPendingCount: number;    // Final Arrival - Mill Inspection
+  finalArrivalCount?: number;        // Unique Final Arrival count
+  millInspectionCount?: number;      // Unique Mill Inspection count
   settlementPendingCount: number;    // Mill Inspection POs NOT present in Settlement
 }
 

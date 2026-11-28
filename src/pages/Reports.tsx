@@ -229,7 +229,11 @@ export default function Reports({ onClose, initialReportType }: ReportsProps) {
       if (filters.month && t.month !== filters.month) return false;
       if (filters.broker && t.broker !== filters.broker) return false;
       if (filters.supplier && t.supplier !== filters.supplier) return false;
-      if (filters.agency && t.agency !== filters.agency) return false;
+      if (filters.agency) {
+        const matchesDetail = Array.isArray(t.detailAgencies) && t.detailAgencies.includes(filters.agency);
+        const parts = (t.agency || '').split(',').map(p => p.trim());
+        if (!matchesDetail && t.agency !== filters.agency && !parts.includes(filters.agency)) return false;
+      }
       if (filters.area && t.area !== filters.area) return false;
       if (filters.grade && t.grade !== filters.grade) return false;
       if (filters.saudaStatus && t.saudaStatus !== filters.saudaStatus) return false;
@@ -385,7 +389,7 @@ export default function Reports({ onClose, initialReportType }: ReportsProps) {
   }> = [
     { id: 'dashboard', label: 'Executive Overview', icon: LayoutDashboard, badge: `${executiveOverview.scpPoCount}` },
     { id: 'business_analysis', label: 'Business & Dimensions', icon: BarChart3 },
-    { id: 'performance_ranking', label: 'Broker Ranking & Pareto', icon: Award },
+    { id: 'performance_ranking', label: 'Broker Ranking', icon: Award },
     { id: 'premium_analysis', label: 'Premium & Cost Waterfall', icon: Percent },
     { id: 'sauda_checkpoints', label: 'Checkpoints Pipeline', icon: Truck },
     { id: 'exception_abnormal', label: 'Exception / Abnormal', icon: AlertTriangle, badge: `${metrics.abnormalCount}` }

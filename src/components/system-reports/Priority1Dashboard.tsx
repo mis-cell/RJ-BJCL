@@ -148,9 +148,14 @@ export const Priority1Dashboard: React.FC<Priority1DashboardProps> = ({
                   <td className="p-2">Sauda Check Point ∩ Mill Inspection</td>
                 </tr>
                 <tr>
-                  <td className="p-2 font-bold text-slate-900">Suppliers / Brokers / Agencies / Areas / Grades</td>
+                  <td className="p-2 font-bold text-slate-900">Suppliers / Brokers / Areas / Grades</td>
                   <td className="p-2 font-mono">COUNT(DISTINCT entity) strictly from Sauda Check Point</td>
                   <td className="p-2">Sauda Check Point (sauda_check_point)</td>
+                </tr>
+                <tr>
+                  <td className="p-2 font-bold text-slate-900">Agencies</td>
+                  <td className="p-2 font-mono">COUNT(DISTINCT AGENCY Name) from Purchase Order Details (Items Table Matrix)</td>
+                  <td className="p-2">Purchase Order Details (sauda_check_point_details)</td>
                 </tr>
                 <tr>
                   <td className="p-2 font-bold text-slate-900">Pending Arrival</td>
@@ -159,8 +164,8 @@ export const Priority1Dashboard: React.FC<Priority1DashboardProps> = ({
                 </tr>
                 <tr>
                   <td className="p-2 font-bold text-slate-900">Inspection Pending</td>
-                  <td className="p-2 font-mono">COUNT(DISTINCT M.R. No.) in Final Arrival NOT present in Mill Inspection</td>
-                  <td className="p-2">Final Arrival (final_arrival) − Mill Inspection</td>
+                  <td className="p-2 font-mono">Final Arrival Count − Mill Inspection Count</td>
+                  <td className="p-2">Final Arrival − Mill Inspection</td>
                 </tr>
                 <tr>
                   <td className="p-2 font-bold text-slate-900">Settlement Pending</td>
@@ -427,11 +432,11 @@ export const Priority1Dashboard: React.FC<Priority1DashboardProps> = ({
           {[
             { label: 'Suppliers', value: String(eo.scpUniqueSuppliers), sub: 'Unique in SCP', onClick: () => onDrillDown('Unique Sourcing Suppliers (Sauda Check Point)', filtered, 'suppliers') },
             { label: 'Brokers', value: String(eo.scpUniqueBrokers), sub: 'Unique in SCP', onClick: () => onDrillDown('Unique Sourcing Brokers (Sauda Check Point)', filtered, 'brokers') },
-            { label: 'Agencies', value: String(eo.scpUniqueAgencies), sub: 'Unique in SCP', onClick: () => onDrillDown('Unique Purchasing Agencies (Sauda Check Point)', filtered, 'agencies') },
+            { label: 'Agencies', value: String(eo.scpUniqueAgencies), sub: 'PO Items Matrix Name', onClick: () => onDrillDown('Unique Purchasing Agencies (Purchase Order Details Items Table Matrix)', filtered, 'agencies') },
             { label: 'Areas', value: String(eo.scpUniqueAreas), sub: 'Unique in SCP', onClick: () => onDrillDown('Unique Sourcing Areas (Sauda Check Point)', filtered, 'areas') },
             { label: 'Grades', value: String(eo.scpUniqueGrades), sub: 'Unique in SCP', onClick: () => onDrillDown('Unique Quality Grades (Sauda Check Point)', filtered, 'grades') },
             { label: 'Pending Arrival', value: `${eo.pendingArrivalCount}`, sub: 'SCP PO not in Mill Insp', onClick: () => onDrillDown('Pending Arrival (SCP P.O. Not Present in Mill Inspection)', filtered.filter(t => !t.hasInspection)) },
-            { label: 'Inspection Pending', value: `${eo.inspectionPendingCount}`, sub: 'Final Arr MR not in Insp', onClick: () => onDrillDown('Inspection Pending (Final Arrival Not in Mill Inspection)', filtered.filter(t => t.hasFinalArrival && !t.hasInspection)) },
+            { label: 'Inspection Pending', value: `${eo.inspectionPendingCount}`, sub: eo.finalArrivalCount !== undefined && eo.millInspectionCount !== undefined ? `${eo.finalArrivalCount} − ${eo.millInspectionCount} (Final − Insp)` : 'Final Arrival − Mill Insp', onClick: () => onDrillDown('Inspection Pending (Final Arrival − Mill Inspection)', filtered.filter(t => t.hasFinalArrival && !t.hasInspection)) },
             { label: 'Settlement Pending', value: `${eo.settlementPendingCount}`, sub: 'Mill Insp PO not Settled', onClick: () => onDrillDown('Settlement Pending (Mill Inspection P.O. Not in Settlement)', filtered.filter(t => t.hasInspection && t.settlementStatus !== 'SETTLED')) }
           ].map(item => (
             <button

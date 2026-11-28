@@ -75,7 +75,11 @@ export function filterByReportCriteria<
     if (filters.month && item.month && item.month !== filters.month) return false;
     if (filters.broker && (item.broker || '') !== filters.broker) return false;
     if (filters.supplier && (item.supplier || '') !== filters.supplier) return false;
-    if (filters.agency && (item.agency || '') !== filters.agency) return false;
+    if (filters.agency) {
+      const aStr = item.agency || '';
+      const parts = aStr.split(',').map(p => p.trim());
+      if (aStr !== filters.agency && !parts.includes(filters.agency)) return false;
+    }
     if (filters.area && (item.area || '') !== filters.area) return false;
     if (filters.grade) {
       const gStr = item.grade || '';
@@ -155,8 +159,21 @@ export function calculateExecutiveOverviewMetrics(params: {
     if (!isPlaceholderText(t.broker, ['Direct', 'Direct Purchase'])) {
       brokerSet.add(t.broker.trim().toUpperCase());
     }
-    if (!isPlaceholderText(t.agency) && !isInvalidAgency(t.agency)) {
-      agencySet.add(t.agency.trim().toUpperCase());
+    // Unique AGENCY Name from Purchase Order Details (Items Table Matrix)
+    if (Array.isArray(t.detailAgencies) && t.detailAgencies.length > 0) {
+      t.detailAgencies.forEach(ag => {
+        const clean = (ag || '').trim();
+        if (!isPlaceholderText(clean, ['Direct Purchase / Head Office']) && !isInvalidAgency(clean)) {
+          agencySet.add(clean.toUpperCase());
+        }
+      });
+    } else if (!isPlaceholderText(t.agency, ['Direct Purchase / Head Office']) && !isInvalidAgency(t.agency)) {
+      t.agency.split(',').forEach(part => {
+        const clean = part.trim();
+        if (!isPlaceholderText(clean, ['Direct Purchase / Head Office']) && !isInvalidAgency(clean)) {
+          agencySet.add(clean.toUpperCase());
+        }
+      });
     }
     if (!isPlaceholderText(t.area, ['Unassigned Area'])) {
       areaSet.add(t.area.trim().toUpperCase());
@@ -200,13 +217,22 @@ export function calculateExecutiveOverviewMetrics(params: {
     }
   });
 
-  // 13. Inspection Pending: Unique M.R No. in Final Arrival NOT present in Mill Inspection
-  const inspectionPendingMrSet = new Set<string>();
+  // 13. Inspection Pending: Final Arrival - Mill Inspection
+  const finalArrivalUniqueSet = new Set<string>();
   finalArrivalMrs.forEach(m => {
-    if (!m.hasMillInspection && !isPlaceholderText(m.mrNo)) {
-      inspectionPendingMrSet.add(m.mrNo.trim().toUpperCase());
+    if (!isPlaceholderText(m.mrNo)) {
+      finalArrivalUniqueSet.add(m.mrNo.trim().toUpperCase().replace(/[\s\-_]/g, ''));
     }
   });
+  const millInspectionUniqueSet = new Set<string>();
+  millInspections.forEach(m => {
+    if (!isPlaceholderText(m.mrNo)) {
+      millInspectionUniqueSet.add(m.mrNo.trim().toUpperCase().replace(/[\s\-_]/g, ''));
+    }
+  });
+  const finalArrivalCount = finalArrivalUniqueSet.size;
+  const millInspectionCount = millInspectionUniqueSet.size;
+  const inspectionPendingCount = Math.max(0, finalArrivalCount - millInspectionCount);
 
   // 14. Settlement Pending: Unique P.O No. in Mill Inspection NOT present in Settlement
   const settlementPendingPoSet = new Set<string>();
@@ -234,7 +260,9 @@ export function calculateExecutiveOverviewMetrics(params: {
     scpUniqueAreas: areaSet.size,
     scpUniqueGrades: gradeSet.size,
     pendingArrivalCount: pendingArrivalPoSet.size,
-    inspectionPendingCount: inspectionPendingMrSet.size,
+    inspectionPendingCount,
+    finalArrivalCount,
+    millInspectionCount,
     settlementPendingCount: settlementPendingPoSet.size
   };
 }

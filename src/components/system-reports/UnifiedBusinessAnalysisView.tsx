@@ -10,11 +10,6 @@ import {
   CartesianGrid,
   Tooltip,
   Legend,
-  RadarChart,
-  PolarGrid,
-  PolarAngleAxis,
-  PolarRadiusAxis,
-  Radar,
   LabelList
 } from 'recharts';
 import { ChevronRight, ArrowUpDown, Droplets } from 'lucide-react';
@@ -25,8 +20,6 @@ import {
   groupTransactionsByDimension,
   calculateMillInspectionRankings
 } from '../../services/systemReportEngine';
-import { ScatterPlotChart } from '../reports/charts/ScatterPlotChart';
-import { ParetoChart } from '../reports/charts/ParetoChart';
 import { WaterfallChart } from '../reports/charts/WaterfallChart';
 import { HistogramChart } from '../reports/charts/HistogramChart';
 import { HorizontalRankBarChart } from '../reports/charts/HorizontalRankBarChart';
@@ -41,7 +34,21 @@ interface UnifiedBusinessAnalysisViewProps {
   onDrillDown: (title: string, txns: ReportTransactionLine[]) => void;
 }
 
-const RADAR_COLORS = ['#D94B5A', '#0f766e', '#2563eb'];
+function formatIndianCurrencyShort(value: number): string {
+  const num = Number(value || 0);
+  const abs = Math.abs(num);
+  const sign = num < 0 ? '-' : '';
+  if (abs >= 10000000) {
+    return `${sign}₹${(abs / 10000000).toFixed(2)} Cr`;
+  }
+  if (abs >= 100000) {
+    return `${sign}₹${(abs / 100000).toFixed(2)} L`;
+  }
+  if (abs >= 1000) {
+    return `${sign}₹${(abs / 1000).toFixed(1)} K`;
+  }
+  return `${sign}₹${Math.round(abs).toLocaleString('en-IN')}`;
+}
 
 function paymentVoucherToTxnLine(v: PaymentOperationsVoucher): ReportTransactionLine {
   const qtyMt = v.quantityQtl / 10;
@@ -107,21 +114,17 @@ export const UnifiedBusinessAnalysisView: React.FC<UnifiedBusinessAnalysisViewPr
 
   // Business Analysis state (Report 2)
   const [dimension, setDimension] = useState<DimensionType>('broker');
-  const [scatterMode, setScatterMode] = useState<'mt' | 'rate'>('mt');
   const [stackedMode, setStackedMode] = useState<'delivery' | 'quality'>('delivery');
   const [sortBy, setSortBy] = useState<'value' | 'qty' | 'delivery' | 'premium' | 'deduction'>('value');
 
-  // Ranking & Pareto state (Report 3)
+  // Broker Ranking state (Report 3)
   const [rankEntity, setRankEntity] = useState<'broker' | 'supplier'>('broker');
   const [rankMetric, setRankMetric] = useState<'score' | 'value'>('score');
 
-  // Radar broker comparison selection
-  const brokerGrouped = useMemo(() => groupTransactionsByDimension(filtered, 'broker'), [filtered]);
   const brokerMillRankings = useMemo(
     () => calculateMillInspectionRankings(filteredMillInspections, 'broker'),
     [filteredMillInspections]
   );
-  const [selectedRadarBrokers, setSelectedRadarBrokers] = useState<string[]>([]);
 
   // Premium modal state (Report 4)
   const [selectedPremiumBroker, setSelectedPremiumBroker] = useState<{ name: string; txns: ReportTransactionLine[] } | null>(null);
@@ -178,83 +181,8 @@ export const UnifiedBusinessAnalysisView: React.FC<UnifiedBusinessAnalysisViewPr
     });
   }, [brokerMillRankings]);
 
-  // 3. Scatter Plot Data (Sauda Check Point Contract MT vs Mill Inspection Received MT)
-  const scatterPoints = useMemo(() => {
-    return filtered
-      .filter(t => (scatterMode === 'mt' ? t.quantityMT > 0 : t.purchaseRate > 0 && t.baseRate > 0))
-      .slice(0, 180)
-      .map(t => ({
-        x: Number((scatterMode === 'mt' ? t.quantityMT : t.baseRate).toFixed(2)),
-        y: Number((scatterMode === 'mt' ? t.arrivedWeightMT : t.purchaseRate).toFixed(2)),
-        z: Math.max(10, Math.round(t.quantityMT)),
-        name: `${t.poNo} · ${t.broker}`,
-        category: t.isAbnormal ? 'Flagged' : 'Normal'
-      }));
-  }, [filtered, scatterMode]);
-
-  // 4. Side-by-Side Broker Radar Comparison (Sauda Check Point -> Mill Inspection)
-  const brokerRadarPool = useMemo(() => {
-    const millMap = new Map(brokerMillRankings.map(r => [r.key.toUpperCase(), r]));
-    return brokerGrouped.map(b => {
-      const mill = millMap.get(b.key.toUpperCase());
-      const inspCoveragePct = b.txnCount > 0
-        ? (filtered.filter(t => t.broker === b.key && t.hasInspection).length / b.txnCount) * 100
-        : 0;
-      const moistCompliancePct = mill && mill.mrCount > 0
-        ? Math.max(0, ((mill.mrCount - mill.excessMoistureLots) / mill.mrCount) * 100)
-        : 100;
-      return {
-        key: b.key,
-        deliveryPct: Math.min(100, b.deliveryPct),
-        inspCoveragePct: Math.min(100, inspCoveragePct),
-        moistCompliancePct: Math.min(100, moistCompliancePct),
-        qualityScore: mill ? mill.performanceScore : 100,
-        receivedMt: mill ? mill.totalMt : b.arrivedMT
-      };
-    });
-  }, [brokerGrouped, brokerMillRankings, filtered]);
-
-  const activeRadarBrokers = useMemo(() => {
-    if (selectedRadarBrokers.length > 0) {
-      return selectedRadarBrokers.filter(name => brokerRadarPool.some(b => b.key === name));
-    }
-    return brokerRadarPool.slice(0, 3).map(b => b.key);
-  }, [selectedRadarBrokers, brokerRadarPool]);
-
-  const radarData = useMemo(() => {
-    const maxMt = Math.max(1, ...brokerRadarPool.map(b => b.receivedMt));
-    const axes = [
-      { key: 'Delivery %', get: (b: (typeof brokerRadarPool)[number]) => b.deliveryPct },
-      { key: 'Mill Insp %', get: (b: (typeof brokerRadarPool)[number]) => b.inspCoveragePct },
-      { key: 'Moisture OK %', get: (b: (typeof brokerRadarPool)[number]) => b.moistCompliancePct },
-      { key: 'Quality Score', get: (b: (typeof brokerRadarPool)[number]) => b.qualityScore },
-      { key: 'Volume Index', get: (b: (typeof brokerRadarPool)[number]) => Math.min(100, (b.receivedMt / maxMt) * 100) }
-    ];
-    return axes.map(axis => {
-      const row: Record<string, any> = { subject: axis.key };
-      activeRadarBrokers.forEach(bName => {
-        const found = brokerRadarPool.find(b => b.key === bName);
-        row[bName] = found ? Number(axis.get(found).toFixed(1)) : 0;
-      });
-      return row;
-    });
-  }, [brokerRadarPool, activeRadarBrokers]);
-
-  const toggleRadarBroker = (name: string) => {
-    setSelectedRadarBrokers(prev => {
-      const current = prev.length > 0 ? prev : brokerRadarPool.slice(0, 3).map(b => b.key);
-      if (current.includes(name)) {
-        return current.length > 1 ? current.filter(x => x !== name) : current;
-      }
-      if (current.length >= 3) {
-        return [...current.slice(1), name];
-      }
-      return [...current, name];
-    });
-  };
-
   // =========================================================================
-  // REPORT 3 DATA: MILL INSPECTION QUALITY RANKING & PARETO (BROKERS & SUPPLIERS)
+  // REPORT 3 DATA: MILL INSPECTION QUALITY RANKING (BROKERS & SUPPLIERS)
   // =========================================================================
   const millRankings = useMemo(
     () => calculateMillInspectionRankings(filteredMillInspections, rankEntity),
@@ -272,8 +200,8 @@ export const UnifiedBusinessAnalysisView: React.FC<UnifiedBusinessAnalysisViewPr
         label: item.key,
         fullName: item.key,
         value: item.performanceScore,
-        annotation: `${item.performanceScore.toFixed(1)}/100 (${item.mrCount} MRs · ${item.totalMt.toFixed(1)} MT)`,
-        secondaryText: `GD ${item.avgGradeDown.toFixed(1)}% · Moist ${item.avgMoisture.toFixed(1)}% (+${item.avgExcessMoisture.toFixed(1)}%) · Dust ${item.avgDust.toFixed(1)}% · NCV ${item.avgNcv.toFixed(1)}% · CT ${Math.round(item.totalHabijabiChattaRopeKg)} kg`,
+        annotation: `${formatIndianCurrencyShort(item.estimatedValue)} · Score ${item.performanceScore.toFixed(0)}/100 (${item.mrCount} MRs)`,
+        secondaryText: `Grade Down ${item.avgGradeDown.toFixed(1)}% · Moisture ${item.avgMoisture.toFixed(1)}% (+${item.avgExcessMoisture.toFixed(1)}% excess) · ${item.totalMt.toFixed(1)} MT · Dust ${item.avgDust.toFixed(1)}% · NCV ${item.avgNcv.toFixed(1)}% · CT ${Math.round(item.totalHabijabiChattaRopeKg)} kg`,
         color: item.performanceScore >= 85 ? '#0f766e' : item.performanceScore >= 70 ? '#0284c7' : item.performanceScore >= 50 ? '#d97706' : '#be123c'
       }));
     }
@@ -281,21 +209,11 @@ export const UnifiedBusinessAnalysisView: React.FC<UnifiedBusinessAnalysisViewPr
       label: item.key,
       fullName: item.key,
       value: Math.round(item.estimatedValue),
-      annotation: `₹${(item.estimatedValue / 100000).toFixed(1)}L · Score ${item.performanceScore.toFixed(0)}/100 (${item.mrCount} MRs)`,
-      secondaryText: `${item.totalMt.toFixed(1)} MT inspected · GD ${item.avgGradeDown.toFixed(1)}% · Excess Moist ${item.avgExcessMoisture.toFixed(1)}%`,
+      annotation: `${formatIndianCurrencyShort(item.estimatedValue)} · Score ${item.performanceScore.toFixed(0)}/100 (${item.mrCount} MRs)`,
+      secondaryText: `Grade Down ${item.avgGradeDown.toFixed(1)}% · Moisture ${item.avgMoisture.toFixed(1)}% (+${item.avgExcessMoisture.toFixed(1)}% excess) · ${item.totalMt.toFixed(1)} MT inspected`,
       color: item.performanceScore >= 70 ? '#0f766e' : '#d97706'
     }));
   }, [millRankings, millRankingsByValue, rankMetric]);
-
-  const paretoData = useMemo(() => {
-    const hasVal = millRankingsByValue.some(r => r.estimatedValue > 0);
-    return millRankingsByValue.slice(0, 12).map(item => ({
-      name: item.key,
-      countOrVolume: hasVal
-        ? Number((item.estimatedValue / 100000).toFixed(2))
-        : Number(item.totalMt.toFixed(2))
-    }));
-  }, [millRankingsByValue]);
 
   // =========================================================================
   // REPORT 4 DATA: STRICTLY FROM PAYMENT OPERATIONS (payment_master + payment_details)
@@ -492,14 +410,18 @@ export const UnifiedBusinessAnalysisView: React.FC<UnifiedBusinessAnalysisViewPr
             </div>
           </div>
 
-          {/* 100% Stacked Bar: Broker Delivery Share & Quality Mix from Mill Inspection */}
+          {/* 100% Stacked Bar: Mill Inspection Delivery Share & Quality Mix */}
           <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-2xs space-y-2">
             <div className="pb-2 border-b border-slate-100 flex flex-wrap items-center justify-between gap-2">
               <div>
                 <h4 className="text-xs font-black uppercase tracking-wider text-slate-800">
-                  Broker 100% Mix ({stackedMode === 'delivery' ? 'Delivery Share · Mill Inspection' : 'Clean vs Defect MRs · Mill Inspection'})
+                  Mill Inspection
                 </h4>
-                <p className="text-[11px] text-slate-500">Strictly from Mill Inspection receipts (MT &amp; inspected MR count shown)</p>
+                <p className="text-[11px] text-slate-500">
+                  {stackedMode === 'delivery'
+                    ? 'Broker delivery share strictly from Mill Inspection receipts (MT & MR count)'
+                    : 'Clean vs defect-flagged MRs strictly from Mill Inspection receipts'}
+                </p>
               </div>
               <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded-lg">
                 <button
@@ -549,101 +471,6 @@ export const UnifiedBusinessAnalysisView: React.FC<UnifiedBusinessAnalysisViewPr
                     </>
                   )}
                 </BarChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
-        </div>
-
-        {/* ROW 2: Scatter Plot + Multi-Broker Radar (SCP -> Mill Inspection) */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          <div className="space-y-2">
-            <div className="flex items-center justify-end gap-1.5">
-              <button
-                type="button"
-                onClick={() => setScatterMode('mt')}
-                className={`px-2.5 py-1 rounded-lg text-[11px] font-bold cursor-pointer border ${
-                  scatterMode === 'mt' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200'
-                }`}
-              >
-                Contract MT vs Received MT
-              </button>
-              <button
-                type="button"
-                onClick={() => setScatterMode('rate')}
-                className={`px-2.5 py-1 rounded-lg text-[11px] font-bold cursor-pointer border ${
-                  scatterMode === 'rate' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200'
-                }`}
-              >
-                Base Rate vs Purchase Rate
-              </button>
-            </div>
-            <ScatterPlotChart
-              title={scatterMode === 'mt' ? 'Contract MT vs Received MT Outliers' : 'Satta Base Rate vs Purchase Rate Outliers'}
-              subtitle={scatterMode === 'mt' ? 'Sauda Check Point Contract MT vs Mill Inspection Received MT' : 'Spots contracts priced well above comparable Satta base rate'}
-              data={scatterPoints}
-              xLabel={scatterMode === 'mt' ? 'Contract MT (SCP)' : 'Base Rate'}
-              yLabel={scatterMode === 'mt' ? 'Received MT (Mill Insp)' : 'Purchase Rate'}
-              xUnit={scatterMode === 'mt' ? ' MT' : ''}
-              yUnit={scatterMode === 'mt' ? ' MT' : ''}
-              height={260}
-            />
-          </div>
-
-          {/* Side-by-Side Broker Radar Comparison */}
-          <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-2xs flex flex-col justify-between space-y-2">
-            <div className="pb-2 border-b border-slate-100">
-              <div className="flex items-center justify-between gap-2">
-                <div>
-                  <h4 className="text-xs font-black uppercase tracking-wider text-slate-800">
-                    Side-by-Side Broker Radar Comparison
-                  </h4>
-                  <p className="text-[11px] text-slate-500">Sauda Check Point to Mill Inspection performance (0–100 scale, select up to 3)</p>
-                </div>
-              </div>
-              <div className="flex flex-wrap gap-1.5 mt-2">
-                {brokerRadarPool.slice(0, 8).map(b => {
-                  const isActive = activeRadarBrokers.includes(b.key);
-                  return (
-                    <button
-                      type="button"
-                      key={b.key}
-                      onClick={() => toggleRadarBroker(b.key)}
-                      className={`px-2 py-0.5 rounded text-[10px] font-bold border transition cursor-pointer ${
-                        isActive
-                          ? 'bg-slate-900 text-white border-slate-900'
-                          : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'
-                      }`}
-                    >
-                      {b.key.length > 18 ? `${b.key.slice(0, 16)}…` : b.key}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            <div style={{ width: '100%', height: 255 }}>
-              <ResponsiveContainer width="100%" height="100%">
-                <RadarChart data={radarData} cx="50%" cy="50%" outerRadius="72%">
-                  <PolarGrid stroke="#e2e8f0" />
-                  <PolarAngleAxis dataKey="subject" tick={{ fontSize: 10, fill: '#334155', fontWeight: 700 }} />
-                  <PolarRadiusAxis angle={30} domain={[0, 100]} tick={{ fontSize: 9, fill: '#94a3b8' }} />
-                  {activeRadarBrokers.map((bName, i) => (
-                    <Radar
-                      key={bName}
-                      name={bName}
-                      dataKey={bName}
-                      stroke={RADAR_COLORS[i % RADAR_COLORS.length]}
-                      fill={RADAR_COLORS[i % RADAR_COLORS.length]}
-                      fillOpacity={0.16}
-                      strokeWidth={2}
-                    />
-                  ))}
-                  <Legend wrapperStyle={{ fontSize: '10.5px' }} />
-                  <Tooltip
-                    formatter={(val: any) => [`${Number(val).toFixed(1)} / 100`]}
-                    contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', color: '#f8fafc', borderRadius: '8px', fontSize: '11px', fontFamily: 'monospace' }}
-                  />
-                </RadarChart>
               </ResponsiveContainer>
             </div>
           </div>
@@ -741,23 +568,22 @@ export const UnifiedBusinessAnalysisView: React.FC<UnifiedBusinessAnalysisViewPr
   }
 
   // =========================================================================
-  // RENDER MODE 2: BROKER & SUPPLIER QUALITY RANKING & PARETO (REPORT 3)
+  // RENDER MODE 2: BROKER & SUPPLIER QUALITY RANKING (REPORT 3)
   // Strictly calculated from Mill Inspection (Grade Down, Seasonal Moisture, NCV, Dust, CT Habijabi/Chatta/Rope)
   // =========================================================================
   if (mode === 'ranking') {
     const entityLabel = rankEntity === 'broker' ? 'Broker' : 'Supplier';
     const entityPlural = rankEntity === 'broker' ? 'Brokers' : 'Suppliers';
-    const hasValForPareto = millRankingsByValue.some(r => r.estimatedValue > 0);
 
     return (
       <div className="space-y-5 font-sans">
         <div className="bg-white border border-slate-200 rounded-xl p-3.5 shadow-2xs flex flex-wrap items-center justify-between gap-3">
           <div>
             <h3 className="text-xs font-black uppercase tracking-wider text-slate-900">
-              {entityLabel} Quality Performance Ranking &amp; Pareto (Mill Inspection)
+              {entityLabel} Ranking (Mill Inspection)
             </h3>
             <p className="text-[11px] text-slate-500">
-              Calculated strictly from Mill Inspection: High Grade Down, Excess Seasonal Moisture, Dust, NCV &amp; Habijabi/Chatta/Rope reduce performance rank
+              Grade Down &amp; Seasonal Moisture based Mill Inspection quality ranking with Indian currency Purchase Value (Cr / L / K)
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -803,62 +629,48 @@ export const UnifiedBusinessAnalysisView: React.FC<UnifiedBusinessAnalysisViewPr
           </div>
         </div>
 
-        {/* 2-View Horizontal Bar + Pareto */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          <HorizontalRankBarChart
-            title={
-              rankMetric === 'score'
-                ? `Top ${entityPlural} by Mill Inspection Quality Performance`
-                : `Top ${entityPlural} by Purchase Value (Mill Inspection)`
-            }
-            subtitle={
-              rankMetric === 'score'
-                ? 'Score 0–100 (High Grade Down, Excess Moisture, Dust, NCV, Habijabi/Chatta/Rope lower score)'
-                : 'Mill Inspection estimated purchase value with Quality Performance Score annotated'
-            }
-            data={horizontalRankingData}
-            valueFormatter={(v) => (rankMetric === 'score' ? `${v.toFixed(1)} / 100` : `₹${v.toLocaleString('en-IN')}`)}
-            rightSlot={
-              <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded-lg">
-                <button
-                  type="button"
-                  onClick={() => setRankMetric('score')}
-                  className={`px-2.5 py-1 rounded text-[11px] font-bold cursor-pointer ${
-                    rankMetric === 'score' ? 'bg-[#D94B5A] text-white' : 'text-slate-600'
-                  }`}
-                >
-                  Quality Score
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setRankMetric('value')}
-                  className={`px-2.5 py-1 rounded text-[11px] font-bold cursor-pointer ${
-                    rankMetric === 'value' ? 'bg-[#D94B5A] text-white' : 'text-slate-600'
-                  }`}
-                >
-                  Purchase Value
-                </button>
-              </div>
-            }
-            onBarClick={(item) => {
-              const name = item.fullName || item.label;
-              const subTxns = filtered.filter(t => String(t[rankEntity] || 'UNASSIGNED').toUpperCase() === name.toUpperCase());
-              onDrillDown(`${entityLabel.toUpperCase()}: ${name}`, subTxns);
-            }}
-          />
-
-          <ParetoChart
-            title={`Pareto 80/20 Concentration (${entityPlural})`}
-            subtitle={
-              hasValForPareto
-                ? 'Mill Inspection purchase value (₹ Lakhs) sorted descending with cumulative % curve'
-                : 'Mill Inspection received volume (MT) sorted descending with cumulative % curve'
-            }
-            data={paretoData}
-            volumeUnit={hasValForPareto ? 'L' : ' MT'}
-            height={360}
-          />
-        </div>
+        {/* Full-Width Horizontal Ranking Bar Chart (Grade Down & Moisture Based + Purchase Value in Cr / L / K) */}
+        <HorizontalRankBarChart
+          title={
+            rankMetric === 'score'
+              ? `Top ${entityPlural} by Mill Inspection Quality Performance`
+              : `Top ${entityPlural} by Purchase Value (Mill Inspection)`
+          }
+          subtitle={
+            rankMetric === 'score'
+              ? 'Grade Down & Seasonal Moisture based score (0–100) with Purchase Value (Cr / L / K) & inspected MR count'
+              : 'Mill Inspection Purchase Value (Cr / L / K) with Grade Down, Moisture & Quality Performance Score'
+          }
+          data={horizontalRankingData}
+          valueFormatter={(v) => (rankMetric === 'score' ? `${v.toFixed(1)} / 100` : formatIndianCurrencyShort(v))}
+          rightSlot={
+            <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded-lg">
+              <button
+                type="button"
+                onClick={() => setRankMetric('score')}
+                className={`px-2.5 py-1 rounded text-[11px] font-bold cursor-pointer ${
+                  rankMetric === 'score' ? 'bg-[#D94B5A] text-white' : 'text-slate-600'
+                }`}
+              >
+                Quality Score
+              </button>
+              <button
+                type="button"
+                onClick={() => setRankMetric('value')}
+                className={`px-2.5 py-1 rounded text-[11px] font-bold cursor-pointer ${
+                  rankMetric === 'value' ? 'bg-[#D94B5A] text-white' : 'text-slate-600'
+                }`}
+              >
+                Purchase Value
+              </button>
+            </div>
+          }
+          onBarClick={(item) => {
+            const name = item.fullName || item.label;
+            const subTxns = filtered.filter(t => String(t[rankEntity] || 'UNASSIGNED').toUpperCase() === name.toUpperCase());
+            onDrillDown(`${entityLabel.toUpperCase()}: ${name}`, subTxns);
+          }}
+        />
 
         {/* Mill Inspection Quality Performance Ledger Table */}
         <div className="bg-white rounded-xl border border-slate-200 shadow-2xs overflow-hidden">
@@ -876,6 +688,7 @@ export const UnifiedBusinessAnalysisView: React.FC<UnifiedBusinessAnalysisViewPr
                   <th className="p-2.5">{entityLabel} Name</th>
                   <th className="p-2.5 text-right">Insp MRs</th>
                   <th className="p-2.5 text-right">Received MT</th>
+                  <th className="p-2.5 text-right">Purchase Value</th>
                   <th className="p-2.5 text-right">Grade Down %</th>
                   <th className="p-2.5 text-right">Moisture (Excess)</th>
                   <th className="p-2.5 text-right">Dust %</th>
@@ -888,7 +701,7 @@ export const UnifiedBusinessAnalysisView: React.FC<UnifiedBusinessAnalysisViewPr
               <tbody className="divide-y divide-slate-100 font-mono tabular-nums text-[11px] text-slate-700">
                 {millRankings.length === 0 ? (
                   <tr>
-                    <td colSpan={11} className="p-10 text-center text-slate-400 font-sans">
+                    <td colSpan={12} className="p-10 text-center text-slate-400 font-sans">
                       No Mill Inspection records match the active filters.
                     </td>
                   </tr>
@@ -915,6 +728,9 @@ export const UnifiedBusinessAnalysisView: React.FC<UnifiedBusinessAnalysisViewPr
                         </td>
                         <td className="p-2.5 text-right">{item.mrCount}</td>
                         <td className="p-2.5 text-right font-bold">{item.totalMt.toFixed(2)} MT</td>
+                        <td className="p-2.5 text-right font-bold text-slate-900">
+                          {formatIndianCurrencyShort(item.estimatedValue)}
+                        </td>
                         <td className={`p-2.5 text-right font-bold ${item.avgGradeDown >= 5 ? 'text-rose-700' : item.avgGradeDown > 0 ? 'text-amber-700' : 'text-emerald-700'}`}>
                           {item.avgGradeDown.toFixed(2)}%
                         </td>

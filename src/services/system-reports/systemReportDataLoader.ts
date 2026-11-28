@@ -1066,8 +1066,14 @@ export async function loadAndProcessSystemReportData(forceRefresh = false): Prom
       if (mrRaw) {
         inspectionSet.add(mrRaw);
         millInspectedMrSet.add(mrRaw);
+        millInspectedMrSet.add(mrRaw.replace(/[\s\-_]/g, ''));
       }
       if (mk) millInspectedMrSet.add(mk);
+      const inspFinalRef = normKey(i.final_arrival_no || i.arrival_no || i.temporary_arrival_no);
+      if (inspFinalRef) {
+        millInspectedMrSet.add(inspFinalRef);
+        millInspectedMrSet.add(inspFinalRef.replace(/[\s\-_]/g, ''));
+      }
       const inspWt = getInspectionWeightMt(i, mk);
       const ded = Number(i.deduction_amount || 0);
       const moistActual = Number(i.actual_moisture || 0);
@@ -1303,20 +1309,22 @@ export async function loadAndProcessSystemReportData(forceRefresh = false): Prom
       return [s];
     };
 
-    // Group PO details by all alias variations
+    // Group PO details by all alias variations (sauda_check_point_details first, then purchase_detail_master)
     const poDetailsMap = new Map<string, any[]>();
     [...(scpDetails || []), ...(poDetails || [])].forEach((item: any) => {
       const keys = [
         ...getPoKeys(item.po_no),
         ...getPoKeys(item.ptf_no),
         ...getPoKeys(item.sauda_no),
-        ...getPoKeys(item.contract_po_no)
+        ...getPoKeys(item.contract_po_no),
+        ...(item.po_id ? [`ID_${String(item.po_id).trim().toUpperCase()}`] : [])
       ];
       keys.forEach(k => {
         const list = poDetailsMap.get(k) || [];
-        const isDuplicate = list.some(existing => 
-          existing.srl_no === item.srl_no && 
+        const isDuplicate = list.some(existing =>
+          existing.srl_no === item.srl_no &&
           (existing.grade_name === item.grade_name || existing.grade_code === item.grade_code) &&
+          (existing.agency_name === item.agency_name || existing.agency_code === item.agency_code) &&
           (existing.rate_qntl === item.rate_qntl || existing.rate === item.rate)
         );
         if (!isDuplicate) {
@@ -1326,10 +1334,11 @@ export async function loadAndProcessSystemReportData(forceRefresh = false): Prom
       });
     });
 
-    const findPoDetails = (poNo: string, saudaNo: string): any[] => {
+    const findPoDetails = (poNo: string, saudaNo: string, poId?: any): any[] => {
       const candidateKeys = [
         ...getPoKeys(poNo),
-        ...getPoKeys(saudaNo)
+        ...getPoKeys(saudaNo),
+        ...(poId ? [`ID_${String(poId).trim().toUpperCase()}`] : [])
       ];
       for (const k of candidateKeys) {
         const found = poDetailsMap.get(k);
@@ -1616,12 +1625,28 @@ export async function loadAndProcessSystemReportData(forceRefresh = false): Prom
       const rawBrk = String(po.broker || '').trim();
       const broker = brokerMap.get(rawBrk.toUpperCase()) || rawBrk || 'Direct';
 
-      const agency = resolvePoAgency(po);
+      const details = findPoDetails(poNo, saudaNo, po.po_id || po.id);
+
+      // Extract unique Agency Name values strictly from Purchase Order Details (Items Table Matrix)
+      const detailAgencySet = new Set<string>();
+      details.forEach((d: any) => {
+        const rawName = String(d.agency_name || '').trim();
+        const rawCode = String(d.agency_code || d.agency || '').trim();
+        let resolved = '';
+        if (rawName && !isInvalidAgency(rawName)) {
+          resolved = agencyMap.get(rawName.toUpperCase()) || rawName;
+        } else if (rawCode && !isInvalidAgency(rawCode)) {
+          resolved = agencyMap.get(rawCode.toUpperCase()) || rawCode;
+        }
+        if (resolved && !isInvalidAgency(resolved)) {
+          detailAgencySet.add(resolved);
+        }
+      });
+      const detailAgencies = Array.from(detailAgencySet);
+      const agency = detailAgencies.length > 0 ? detailAgencies.join(', ') : resolvePoAgency(po);
 
       const rawArea = String(po.area || '').trim();
       const area = areaMap.get(rawArea.toUpperCase()) || (rawArea && rawArea !== '-' ? rawArea : 'Unassigned Area');
-
-      const details = findPoDetails(poNo, saudaNo);
 
       let grade = po.grade || po.quality || '-';
       let purchaseRate = Number(po.b_rate || 0);
@@ -1825,7 +1850,8 @@ export async function loadAndProcessSystemReportData(forceRefresh = false): Prom
         abnormalReasons,
         hasAmadArrival: Boolean(isPresentInMillInspection || arrivedWeightMT > 0 || inTransitWeightMT > 0 || amadSet.has(poKeyUpper) || amadSet.has(saudaKeyUpper)),
         hasFinalArrival: Boolean(isPresentInMillInspection || finalArrivalSet.has(poKeyUpper) || finalArrivalSet.has(saudaKeyUpper)),
-        hasInspection: isPresentInMillInspection
+        hasInspection: isPresentInMillInspection,
+        detailAgencies
       });
     });
 
@@ -2155,15 +2181,17 @@ export async function loadAndProcessSystemReportData(forceRefresh = false): Prom
 
     // =========================================================================
     // Build Authoritative Final Arrival MR Reference List (Report 1: Inspection Pending)
+    // Deduplicated by Final Arrival No (matching Main Dashboard Final Arrival count)
     // =========================================================================
     const finalArrivalMrMap = new Map<string, FinalArrivalMrRef>();
     (finals || []).forEach((f: any) => {
+      if (!f || f.archived_at) return;
       const st = String(f?.status || '').trim().toUpperCase();
       if (st === 'CANCELLED' || st === 'VOID' || st === 'DELETED' || st === 'REJECTED') return;
-      const rawMr = String(f.mr_no || f.final_arrival_no || f.arrival_no || '').trim().toUpperCase();
-      if (!rawMr || rawMr === '-' || rawMr === 'N/A') return;
-      const mk = canonicalMrKey(rawMr) || rawMr;
-      if (finalArrivalMrMap.has(mk)) return;
+      const rawFinalNo = String(f.final_arrival_no || f.mr_no || f.arrival_no || '').trim().toUpperCase();
+      if (!rawFinalNo || rawFinalNo === '-' || rawFinalNo === 'N/A' || rawFinalNo === 'NA') return;
+      const dedupeKey = rawFinalNo.replace(/[\s\-_]/g, '');
+      if (finalArrivalMrMap.has(dedupeKey)) return;
 
       const poNo = String(f.po_no || f.contract_no || f.contract_po_no || f.sauda_no || '').trim();
       const poKey = normKey(poNo);
@@ -2174,13 +2202,26 @@ export async function loadAndProcessSystemReportData(forceRefresh = false): Prom
       const supplier = supplyMap.get(rawSup.toUpperCase()) || rawSup || 'Direct Supplier';
       const date = normalizeToISODate(f.date || f.arrival_date || f.final_arrival_date || f.created_at || '');
 
-      const hasMillInspection = Boolean(
-        millInspectedMrSet.has(mk) ||
-        millInspectedMrSet.has(normKey(rawMr))
-      );
+      const candidateKeys = [
+        f.final_arrival_no,
+        f.mr_no,
+        f.arrival_no,
+        f.temporary_arrival_no
+      ]
+        .map(v => normKey(v))
+        .filter(Boolean);
 
-      finalArrivalMrMap.set(mk, {
-        mrNo: rawMr,
+      const hasMillInspection = candidateKeys.some(k => {
+        const ck = canonicalMrKey(k);
+        return (
+          millInspectedMrSet.has(k) ||
+          millInspectedMrSet.has(k.replace(/[\s\-_]/g, '')) ||
+          (ck ? millInspectedMrSet.has(ck) : false)
+        );
+      });
+
+      finalArrivalMrMap.set(dedupeKey, {
+        mrNo: rawFinalNo,
         poNo: poNo || '-',
         date,
         month: getYearMonth(date),
@@ -2314,7 +2355,16 @@ export async function loadAndProcessSystemReportData(forceRefresh = false): Prom
     transactionLines.forEach(t => {
       if (t.broker && t.broker !== 'Direct') brokerSet.add(t.broker);
       if (t.supplier && t.supplier !== 'Unassigned Supplier' && t.supplier !== 'Direct Supplier') supplierSet.add(t.supplier);
-      if (t.agency && !isInvalidAgency(t.agency)) agencySet.add(t.agency);
+      if (Array.isArray(t.detailAgencies) && t.detailAgencies.length > 0) {
+        t.detailAgencies.forEach(ag => {
+          if (ag && !isInvalidAgency(ag)) agencySet.add(ag);
+        });
+      } else if (t.agency && !isInvalidAgency(t.agency)) {
+        t.agency.split(',').forEach(part => {
+          const clean = part.trim();
+          if (clean && !isInvalidAgency(clean)) agencySet.add(clean);
+        });
+      }
       if (t.area && t.area !== '-') areaSet.add(t.area);
       if (t.grade && t.grade !== '-') gradeSet.add(t.grade);
       if (t.month) monthSet.add(t.month);
