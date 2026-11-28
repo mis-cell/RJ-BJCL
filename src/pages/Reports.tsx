@@ -21,8 +21,15 @@ import LegacyLayout from '../components/LegacyLayout';
 import {
   loadAndProcessSystemReportData,
   calculateReportMetrics,
+  calculateExecutiveOverviewMetrics,
+  filterByReportCriteria,
   ReportFilterCriteria,
   ReportTransactionLine,
+  PaymentOperationsVoucher,
+  MillInspectionQualityRecord,
+  FinalArrivalMrRef,
+  ShortExcessSummaryItem,
+  DashboardPipelineSummary,
   SystemReportDataset
 } from '../services/systemReportEngine';
 import { exportToCSV } from '../utils/exportHelpers';
@@ -118,6 +125,11 @@ export default function Reports({ onClose, initialReportType }: ReportsProps) {
     pos: []
   });
   const [brokerSettlementMap, setBrokerSettlementMap] = useState<SystemReportDataset['brokerSettlementMap']>({});
+  const [paymentOperations, setPaymentOperations] = useState<PaymentOperationsVoucher[]>([]);
+  const [millInspections, setMillInspections] = useState<MillInspectionQualityRecord[]>([]);
+  const [finalArrivalMrs, setFinalArrivalMrs] = useState<FinalArrivalMrRef[]>([]);
+  const [shortExcessItems, setShortExcessItems] = useState<ShortExcessSummaryItem[]>([]);
+  const [dashboardPipeline, setDashboardPipeline] = useState<DashboardPipelineSummary | undefined>(undefined);
 
   const [filters, setFilters] = useState<ReportFilterCriteria>(() =>
     screenDraftService.getFilters('system_reports', {})
@@ -149,12 +161,22 @@ export default function Reports({ onClose, initialReportType }: ReportsProps) {
         allTransactions: txns,
         masterLists: lists,
         allPoSummary: poSum,
-        brokerSettlementMap: bMap
+        brokerSettlementMap: bMap,
+        paymentOperations: payOps,
+        millInspections: mInsp,
+        finalArrivalMrs: fMrs,
+        shortExcessItems: seItems,
+        dashboardPipeline: dPipe
       } = await loadAndProcessSystemReportData(forceRefresh);
       setAllTransactions(txns);
       setMasterLists(lists);
       if (poSum) setAllPoSummary(poSum);
       if (bMap) setBrokerSettlementMap(bMap);
+      setPaymentOperations(payOps || []);
+      setMillInspections(mInsp || []);
+      setFinalArrivalMrs(fMrs || []);
+      setShortExcessItems(seItems || []);
+      setDashboardPipeline(dPipe);
     } catch (err) {
       console.error('Error loading system report dataset:', err);
     } finally {
@@ -178,6 +200,9 @@ export default function Reports({ onClose, initialReportType }: ReportsProps) {
       'temporary_material_received',
       'final_arrival',
       'material_inspection',
+      'mill_inspection_master',
+      'mill_inspection_detail',
+      'moisture_logic',
       'payment_master',
       'mr_settlement_master',
       'material_mismatch',
@@ -220,14 +245,62 @@ export default function Reports({ onClose, initialReportType }: ReportsProps) {
     });
   }, [allTransactions, filters]);
 
+  const filteredPaymentOperations = useMemo(
+    () => filterByReportCriteria(paymentOperations, filters),
+    [paymentOperations, filters]
+  );
+
+  const filteredMillInspections = useMemo(
+    () => filterByReportCriteria(millInspections, filters),
+    [millInspections, filters]
+  );
+
+  const filteredFinalArrivalMrs = useMemo(
+    () => filterByReportCriteria(finalArrivalMrs, filters),
+    [finalArrivalMrs, filters]
+  );
+
+  const filteredShortExcessItems = useMemo(
+    () => filterByReportCriteria(shortExcessItems, filters),
+    [shortExcessItems, filters]
+  );
+
   const metrics = useMemo(() => {
     return calculateReportMetrics(filteredTransactions);
   }, [filteredTransactions]);
+
+  const executiveOverview = useMemo(
+    () =>
+      calculateExecutiveOverviewMetrics({
+        transactions: filteredTransactions,
+        paymentOperations: filteredPaymentOperations,
+        millInspections: filteredMillInspections,
+        finalArrivalMrs: filteredFinalArrivalMrs,
+        shortExcessItems: filteredShortExcessItems
+      }),
+    [
+      filteredTransactions,
+      filteredPaymentOperations,
+      filteredMillInspections,
+      filteredFinalArrivalMrs,
+      filteredShortExcessItems
+    ]
+  );
 
   const dataset: SystemReportDataset = {
     transactions: allTransactions,
     filtered: filteredTransactions,
     allPoSummary,
+    paymentOperations,
+    filteredPaymentOperations,
+    millInspections,
+    filteredMillInspections,
+    finalArrivalMrs,
+    filteredFinalArrivalMrs,
+    shortExcessItems,
+    filteredShortExcessItems,
+    dashboardPipeline,
+    executiveOverview,
     brokerSettlementMap,
     masterLists,
     metrics
@@ -310,27 +383,26 @@ export default function Reports({ onClose, initialReportType }: ReportsProps) {
     icon: React.ComponentType<{ className?: string }>;
     badge?: string;
   }> = [
-    { id: 'dashboard', label: '1. Executive Overview', icon: LayoutDashboard, badge: `${allPoSummary.totalCount || filteredTransactions.length}` },
-    { id: 'business_analysis', label: '2. Business & Dimensions', icon: BarChart3 },
-    { id: 'performance_ranking', label: '3. Broker Ranking & Pareto', icon: Award },
-    { id: 'premium_analysis', label: '4. Premium & Cost Waterfall', icon: Percent },
-    { id: 'sauda_checkpoints', label: '5. Checkpoints Pipeline', icon: Truck },
-    { id: 'exception_abnormal', label: '6. Exception / Abnormal', icon: AlertTriangle, badge: `${metrics.abnormalCount}` }
+    { id: 'dashboard', label: 'Executive Overview', icon: LayoutDashboard, badge: `${executiveOverview.scpPoCount}` },
+    { id: 'business_analysis', label: 'Business & Dimensions', icon: BarChart3 },
+    { id: 'performance_ranking', label: 'Broker Ranking & Pareto', icon: Award },
+    { id: 'premium_analysis', label: 'Premium & Cost Waterfall', icon: Percent },
+    { id: 'sauda_checkpoints', label: 'Checkpoints Pipeline', icon: Truck },
+    { id: 'exception_abnormal', label: 'Exception / Abnormal', icon: AlertTriangle, badge: `${metrics.abnormalCount}` }
   ];
 
   const operationalTabs: Array<{
     id: ReportNavSection;
     label: string;
     icon: React.ComponentType<{ className?: string }>;
-    badge: string;
   }> = [
-    { id: 'outstanding_po', label: '7. Outstanding P.O List', icon: Briefcase, badge: 'PO' },
-    { id: 'mr_advance_eligible', label: '8. MR Eligible for Advance', icon: UserCheck, badge: 'Advance' },
-    { id: 'mr_apmc_details', label: '9. MR Wise APMC Details', icon: DollarSign, badge: 'APMC' },
-    { id: 'mr_delivery_claim', label: '10. MR Wise Delivery Claim', icon: Clock, badge: 'Claim' },
-    { id: 'short_excess_deduction', label: '11. Short and Excess Deduction', icon: Scale, badge: 'Deduction' },
-    { id: 'grade_down_wise', label: '12. Grade Down Wise Report', icon: TrendingDown, badge: 'Grade Down' },
-    { id: 'change_log', label: '13. System Change Log', icon: History, badge: 'Audit' }
+    { id: 'outstanding_po', label: 'Outstanding P.O List', icon: Briefcase },
+    { id: 'mr_advance_eligible', label: 'MR Eligible for Advance', icon: UserCheck },
+    { id: 'mr_apmc_details', label: 'MR Wise APMC Details', icon: DollarSign },
+    { id: 'mr_delivery_claim', label: 'MR Wise Delivery Claim', icon: Clock },
+    { id: 'short_excess_deduction', label: 'Short & Excess Deduction', icon: Scale },
+    { id: 'grade_down_wise', label: 'Grade Down Wise Report', icon: TrendingDown },
+    { id: 'change_log', label: 'System Change Log', icon: History }
   ];
 
   const isCustomReportActive = CUSTOM_REPORT_TABS.includes(activeSection as NewReportTab);
@@ -381,10 +453,10 @@ export default function Reports({ onClose, initialReportType }: ReportsProps) {
           </div>
         </div>
 
-        {/* ================= UNIFIED 12-REPORT NAVIGATION ================= */}
-        <div className="bg-white border border-slate-200 rounded-2xl p-3 shadow-xs space-y-2.5">
-          <div className="flex flex-wrap items-center gap-1.5">
-            <span className="text-[10px] font-black uppercase tracking-widest text-slate-400 px-2 mr-1">
+        {/* ================= UNIFIED COMPACT REPORT NAVIGATION ================= */}
+        <div className="bg-white border border-slate-200 rounded-2xl px-2.5 py-2 shadow-xs space-y-1.5">
+          <div className="flex flex-wrap items-center gap-1">
+            <span className="w-[72px] shrink-0 text-[9px] font-black uppercase tracking-widest text-slate-400 px-1.5">
               Analytics
             </span>
             {analyticsTabs.map(tab => {
@@ -395,17 +467,17 @@ export default function Reports({ onClose, initialReportType }: ReportsProps) {
                   key={tab.id}
                   type="button"
                   onClick={() => setActiveSection(tab.id)}
-                  className={`px-3 py-1.5 text-xs font-bold rounded-xl transition-all duration-150 flex items-center gap-1.5 cursor-pointer border ${
+                  className={`px-2.5 py-1 text-[11px] font-bold rounded-lg transition-all duration-150 flex items-center gap-1 cursor-pointer border whitespace-nowrap ${
                     isActive
-                      ? 'bg-[#D94B5A] text-white border-[#D94B5A] shadow-sm'
+                      ? 'bg-[#D94B5A] text-white border-[#D94B5A] shadow-xs'
                       : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-[#FDE7E6] hover:text-[#D94B5A] hover:border-[#FBCFCB]'
                   }`}
                 >
-                  <Icon className={`w-3.5 h-3.5 ${isActive ? 'text-white' : 'text-[#D94B5A]'}`} />
+                  <Icon className={`w-3 h-3 shrink-0 ${isActive ? 'text-white' : 'text-[#D94B5A]'}`} />
                   <span>{tab.label}</span>
                   {tab.badge && (
                     <span
-                      className={`text-[10px] font-black px-1.5 py-0.5 rounded-md tabular-nums ${
+                      className={`text-[9px] font-black px-1.5 py-0.5 rounded tabular-nums leading-none ${
                         isActive ? 'bg-white/20 text-white' : 'bg-white text-slate-600 border border-slate-200'
                       }`}
                     >
@@ -417,8 +489,8 @@ export default function Reports({ onClose, initialReportType }: ReportsProps) {
             })}
           </div>
 
-          <div className="border-t border-slate-100 pt-2.5 flex flex-wrap items-center gap-1.5">
-            <span className="text-[10px] font-black uppercase tracking-widest text-slate-400 px-2 mr-1">
+          <div className="border-t border-slate-100 pt-1.5 flex flex-wrap items-center gap-1">
+            <span className="w-[72px] shrink-0 text-[9px] font-black uppercase tracking-widest text-slate-400 px-1.5">
               Operations
             </span>
             {operationalTabs.map(tab => {
@@ -429,21 +501,14 @@ export default function Reports({ onClose, initialReportType }: ReportsProps) {
                   key={tab.id}
                   type="button"
                   onClick={() => setActiveSection(tab.id)}
-                  className={`px-3 py-1.5 text-xs font-bold rounded-xl transition-all duration-150 flex items-center gap-1.5 cursor-pointer border ${
+                  className={`px-2.5 py-1 text-[11px] font-bold rounded-lg transition-all duration-150 flex items-center gap-1 cursor-pointer border whitespace-nowrap ${
                     isActive
-                      ? 'bg-[#D94B5A] text-white border-[#D94B5A] shadow-sm'
+                      ? 'bg-[#D94B5A] text-white border-[#D94B5A] shadow-xs'
                       : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-[#FDE7E6] hover:text-[#D94B5A] hover:border-[#FBCFCB]'
                   }`}
                 >
-                  <Icon className={`w-3.5 h-3.5 ${isActive ? 'text-white' : 'text-[#D94B5A]'}`} />
+                  <Icon className={`w-3 h-3 shrink-0 ${isActive ? 'text-white' : 'text-[#D94B5A]'}`} />
                   <span>{tab.label}</span>
-                  <span
-                    className={`text-[9px] font-black uppercase px-1.5 py-0.5 rounded-md ${
-                      isActive ? 'bg-white/20 text-white' : 'bg-[#FDE7E6] text-[#D94B5A]'
-                    }`}
-                  >
-                    {tab.badge}
-                  </span>
                 </button>
               );
             })}

@@ -113,10 +113,149 @@ export interface AllPoSummary {
   finalPoMT: number;
 }
 
+export interface PaymentOperationsVoucher {
+  id: string;
+  voucherNo: string;
+  mrNo: string;
+  poNo: string;
+  date: string;
+  month: string;
+  financialYear: string;
+  broker: string;
+  supplier: string;
+  agency: string;
+  area: string;
+  grade: string;
+  payableAmount: number;
+  paidAmount: number;
+  deductionAmount: number;
+  premiumAmount: number;
+  premiumRatePerQtl: number;
+  quantityQtl: number;
+  status: string;
+}
+
+export interface MillInspectionQualityRecord {
+  id: string;
+  mrNo: string;
+  poNo: string;
+  saudaNo: string;
+  date: string;
+  month: string;
+  financialYear: string;
+  broker: string;
+  supplier: string;
+  agency: string;
+  area: string;
+  grade: string;
+  isDaisee: boolean;
+  seasonLabel: string;
+  receivedMt: number;
+  grossMt: number;
+  estimatedValue: number;
+  actualMoisture: number;
+  moistureLimit: number;
+  excessMoisture: number;
+  gradeDownPct: number;
+  dustPct: number;
+  ncvPct: number;
+  habijabiKg: number;
+  chottaKg: number;
+  ropesKg: number;
+  habijabiChattaRopeKg: number;
+  ctPct: number;
+  hasSettlement: boolean;
+  hasMismatch: boolean;
+}
+
+export interface FinalArrivalMrRef {
+  mrNo: string;
+  poNo: string;
+  date: string;
+  month: string;
+  financialYear: string;
+  broker: string;
+  supplier: string;
+  agency: string;
+  area: string;
+  grade: string;
+  hasMillInspection: boolean;
+}
+
+export interface ShortExcessSummaryItem {
+  poNo: string;
+  date: string;
+  month: string;
+  financialYear: string;
+  broker: string;
+  supplier: string;
+  agency: string;
+  area: string;
+  variationType: 'excess' | 'short' | 'within_tolerance';
+  contractMt: number;
+  totalReceivedMt: number;
+  deductionQtyMt: number;
+  deductionAmount: number;
+  policyLabel: string;
+}
+
+export interface DashboardPipelineSummary {
+  saudaCheckPointContracts: number;
+  temporaryArrivalsCount: number;
+  finalArrivalsCount: number;
+  millInspectionCount: number;
+  paymentVouchersCount: number;
+  settlementCount: number;
+  pendingFmrCount: number;
+  pendingInspectionCount: number;
+  pendingPaymentCount: number;
+  pendingSettlementCount: number;
+}
+
+export interface ExecutiveOverviewMetrics {
+  // Card 1: Contracted Volume (Sauda Check Point ONLY)
+  contractedVolumeMT: number;
+  scpPoCount: number;
+  // Card 2: Purchase Value (Payment Operations Payable Amt)
+  paymentPayableAmt: number;
+  paymentVoucherCount: number;
+  // Card 3: Disbursed Payment (Payment Operations Paid Amount)
+  paymentPaidAmt: number;
+  // Card 4: Total Premium (Payment Operations Premium)
+  paymentPremiumAmt: number;
+  paymentPremiumMrCount: number;
+  // Card 5: Total Short & Excess Deductions (Sauda Check Point Extra & Short Weight & Rate Settlement)
+  shortExcessDeductionAmt: number;
+  shortExcessPoCount: number;
+  // Card 6: Flagged Deals (Unique SCP Saudas present in Mill Inspection / Total SCP Saudas)
+  scpInMillInspectionUniqueCount: number;
+  scpTotalSaudaCount: number;
+  // Sourcing Footprint (Sauda Check Point ONLY)
+  scpUniqueSuppliers: number;
+  scpUniqueBrokers: number;
+  scpUniqueAgencies: number;
+  scpUniqueAreas: number;
+  scpUniqueGrades: number;
+  // Backlog cards
+  pendingArrivalCount: number;       // SCP POs NOT present in Mill Inspection
+  inspectionPendingCount: number;    // Final Arrival MRs NOT present in Mill Inspection
+  settlementPendingCount: number;    // Mill Inspection POs NOT present in Settlement
+}
+
 export interface SystemReportDataset {
   transactions: ReportTransactionLine[];
   filtered: ReportTransactionLine[];
   allPoSummary: AllPoSummary;
+  paymentOperations?: PaymentOperationsVoucher[];
+  filteredPaymentOperations?: PaymentOperationsVoucher[];
+  millInspections?: MillInspectionQualityRecord[];
+  filteredMillInspections?: MillInspectionQualityRecord[];
+  finalArrivalMrs?: FinalArrivalMrRef[];
+  filteredFinalArrivalMrs?: FinalArrivalMrRef[];
+  shortExcessItems?: ShortExcessSummaryItem[];
+  filteredShortExcessItems?: ShortExcessSummaryItem[];
+  dashboardPipeline?: DashboardPipelineSummary;
+  executiveOverview?: ExecutiveOverviewMetrics;
   brokerSettlementMap: Record<string, {
     moistureClaim: number;
     moistureSett: number;

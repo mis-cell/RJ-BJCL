@@ -163,7 +163,8 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
         };
 
         // =========================================================================
-        // 1. Process Outstanding P.O List (Open POs with Pending Balance MT)
+        // 1. Process Outstanding P.O List (Report 7)
+        //    Strictly Sauda Check Point (sauda_check_point) POs/Saudas NOT present in Mill Inspection
         // =========================================================================
         const tempArrPoSet = new Set<string>();
         rawTempArrivals.forEach((tmr: any) => {
@@ -175,68 +176,43 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
           });
         });
 
-        // Compute accurate received MT per PO across final_arrival, material_inspection, and unpromoted temporary_material_received (exact PO matching)
-        const toMtNormalized = (raw: any): number => {
-          const n = Number(raw || 0);
-          if (!Number.isFinite(n) || n <= 0) return 0;
-          if (n >= 500) return n / 1000;
-          if (n > 60 && n < 500) return n / 10;
-          return n;
-        };
-
-        const poMrReceivedMap = new Map<string, Map<string, number>>();
-        const recordPoReceipt = (rawPo: any, mrKey: string, wtMt: number) => {
-          const pk = cleanPoKey(rawPo);
-          if (!pk) return;
-          if (!poMrReceivedMap.has(pk)) poMrReceivedMap.set(pk, new Map());
-          const inner = poMrReceivedMap.get(pk)!;
-          inner.set(mrKey, Math.max(inner.get(mrKey) || 0, wtMt));
-        };
-
-        const promotedTempNos = new Set<string>();
-        rawFa.forEach((f: any, idx: number) => {
-          const wt = toMtNormalized(f.electronic_net_weight || f.weight_reduced || f.final_receipt_wt || f.net_weight || 0);
-          const mrK = String(f.mr_no || f.final_arrival_no || f.arrival_no || `FA_${idx}`).trim().toUpperCase();
-          if (f.temporary_arrival_no) promotedTempNos.add(String(f.temporary_arrival_no).trim().toUpperCase());
-          [f.po_no, f.contract_po_no, f.sauda_no].filter(Boolean).forEach(p => recordPoReceipt(p, mrK, wt));
-        });
-
-        rawMatInsp.forEach((insp: any, idx: number) => {
-          const wt = toMtNormalized(insp.final_receipt_wt || insp.total_final_receipt_wt || insp.challan_gross_wt || insp.reduced_weight || 0);
-          const mrK = String(insp.mr_no || insp.arrival_no || `INSP_${idx}`).trim().toUpperCase();
-          [insp.po_no, insp.mill_po_no, insp.contract_po_no, insp.sauda_no].filter(Boolean).forEach(p => recordPoReceipt(p, mrK, wt));
-        });
-
-        rawTempArrivals.forEach((t: any, idx: number) => {
-          const tNo = String(t.temporary_arrival_no || '').trim().toUpperCase();
-          const isPromoted = Boolean(
-            t.final_arrival_no ||
-            String(t.status || '').toUpperCase() === 'FINALIZED' ||
-            String(t.status || '').toUpperCase() === 'PROMOTED' ||
-            (tNo && promotedTempNos.has(tNo))
-          );
-          if (isPromoted) return;
-          const wt = Number(t.weight_qtl) > 0 ? Number(t.weight_qtl) / 10 : toMtNormalized(t.gross_weight || t.net_weight || t.weight_mt || 0);
-          [t.po_no, t.contract_po_no, t.sauda_no].filter(Boolean).forEach(p => recordPoReceipt(p, tNo || `TEMP_${idx}`, wt));
-        });
-
-        const receivedMtByPo = new Map<string, number>();
-        poMrReceivedMap.forEach((mMap, pk) => {
-          let sum = 0;
-          mMap.forEach(w => { sum += w; });
-          receivedMtByPo.set(pk, sum);
+        const millInspPoKeySet = new Set<string>();
+        const millInspRawPos: string[] = [];
+        rawMatInsp.forEach((insp: any) => {
+          const st = String(insp.status || '').toLowerCase().trim();
+          if (st === 'cancelled' || st === 'void' || st === 'rejected') return;
+          [insp.po_no, insp.mill_po_no, insp.contract_po_no, insp.sauda_no]
+            .filter(Boolean)
+            .forEach((rawVal: any) => {
+              const s = String(rawVal).trim();
+              const k = cleanPoKey(s);
+              if (k && k !== 'N/A' && k !== 'NO' && k !== 'NONE') {
+                millInspPoKeySet.add(k);
+                millInspRawPos.push(s);
+              }
+            });
         });
 
         const combinedPoList: any[] = [];
         const seenPoKeys = new Set<string>();
 
-        const registerOpenPo = (rec: any, isCheckpoint = false) => {
+        rawCheckpoints.forEach((rec: any) => {
           const statusLower = String(rec.status || '').toLowerCase().trim();
-          if (statusLower === 'cancelled' || statusLower === 'rejected' || statusLower === 'closed' || statusLower === 'completed') return;
+          if (statusLower === 'cancelled' || statusLower === 'void' || statusLower === 'rejected') return;
 
-          const rawPoNo = String(rec.po_no || rec.po_number || (isCheckpoint ? rec.session : '') || '').trim();
+          const rawPoNo = String(rec.po_no || rec.po_number || rec.sauda_no || rec.session || '').trim();
+          const rawSaudaNo = String(rec.sauda_no || '').trim();
           const poKey = cleanPoKey(rawPoNo);
+          const saudaKey = cleanPoKey(rawSaudaNo);
           if (!poKey || poKey === 'N/A' || seenPoKeys.has(poKey)) return;
+
+          // Exclude if this Sauda / PO is already present in Mill Inspection
+          const isInMillInspection =
+            millInspPoKeySet.has(poKey) ||
+            (Boolean(saudaKey) && millInspPoKeySet.has(saudaKey)) ||
+            millInspRawPos.some(mp => arePoNumbersExactMatch(mp, rawPoNo) || (Boolean(rawSaudaNo) && arePoNumbersExactMatch(mp, rawSaudaNo)));
+
+          if (isInMillInspection) return;
 
           const totalQty =
             Number(rec.total_contract_mt) ||
@@ -250,12 +226,6 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
 
           if (totalQty <= 0) return;
 
-          const rcvdQty = Number((receivedMtByPo.get(poKey) || 0).toFixed(3));
-          const pendingQty = Math.max(0, Number((totalQty - rcvdQty).toFixed(3)));
-
-          // Exclude fully received POs (within 0.05 MT tolerance)
-          if (pendingQty <= 0.05) return;
-
           seenPoKeys.add(poKey);
           const rate =
             Number(rec.rate_qntl) ||
@@ -263,8 +233,9 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
             Number(rec.rate_mt) ||
             Number(rec.rate) ||
             0;
+          const pendingQty = Number(totalQty.toFixed(3));
           const pendingValue = pendingQty * (rate > 2000 ? rate * 10 : rate);
-          const hasAnyReceipt = rcvdQty > 0.01 || tempArrPoSet.has(poKey);
+          const hasTempArrival = tempArrPoSet.has(poKey) || (Boolean(saudaKey) && tempArrPoSet.has(saudaKey));
 
           combinedPoList.push({
             poNo: rawPoNo.toUpperCase(),
@@ -274,17 +245,14 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
             area: String(rec.area || rec.agency || 'MAIN AREA').toUpperCase().trim(),
             agency: String(rec.agency || '-').toUpperCase().trim(),
             totalQty,
-            rcvdQty,
+            rcvdQty: 0,
             pendingQty,
             rate,
             pendingValue,
-            isPartial: hasAnyReceipt,
-            status: hasAnyReceipt ? 'PARTIALLY RECEIVED' : 'NOT RECEIVED YET'
+            isPartial: hasTempArrival,
+            status: hasTempArrival ? 'ARRIVED · PENDING MILL INSP' : 'NOT IN MILL INSPECTION'
           });
-        };
-
-        rawCheckpoints.forEach((cp: any) => registerOpenPo(cp, true));
-        rawPos.forEach((po: any) => registerOpenPo(po, false));
+        });
 
         combinedPoList.sort((a, b) => b.pendingQty - a.pendingQty);
         setPoList(combinedPoList);
@@ -321,12 +289,13 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
           }
         });
 
-        // Deduplicate Mill Inspections strictly by Final M.R. No. (MR...)
+        // Deduplicate completed Mill Inspections strictly by M.R. No. (excluding cancelled/void/pending/draft & AR temporary numbers)
         const uniqueInspMap = new Map<string, any>();
         rawMatInsp.forEach((insp: any) => {
+          const st = String(insp.status || '').toLowerCase().trim();
+          if (st === 'cancelled' || st === 'void' || st === 'rejected' || st === 'draft' || st === 'pending') return;
           const rawMr = String(insp.mr_no || '').trim();
-          // Strictly require Final MR number (never fabricate MR from AR temporary arrival number)
-          if (!rawMr || !rawMr.toUpperCase().startsWith('MR')) return;
+          if (!rawMr || rawMr === '-' || rawMr.toUpperCase() === 'N/A' || rawMr.toUpperCase().startsWith('AR')) return;
           const mrFormatted = rawMr.toUpperCase();
           const core = extractCoreDigits(mrFormatted);
           const mapKey = core ? `CORE_${core}` : mrFormatted;
@@ -405,16 +374,18 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
             (poSuffix.length >= 3 ? allPoLookup.get(`SUFFIX_${poSuffix}`) : undefined);
 
           const resolvedPoNo = String(rawPoNo || poRec?.po_no || poRec?.po_number || '').trim();
+          const resolvedSaudaNo = String(insp.sauda_no || poRec?.sauda_no || matchedFa?.sauda_no || '').trim();
 
           // Rule: If MR has NO PO Number, it is NOT eligible for Advance Payment
           if (isInvalidPoValue(resolvedPoNo) || !poKey) {
             return;
           }
 
-          // 1. Check Mismatch Status against this MR or PO (EXACT PO matching only)
+          // 1. Check Mismatch Status (Material Mismatch & Satta Mismatch) against MR, PO, and Sauda
           const matchedMatMm = rawMatMismatches.filter((m: any) => {
             const mInsp = String(m.inspection_no || m.mr_no || m.arrival_no || '').trim().toUpperCase();
             if (resolvedPoNo && m.po_no && arePoNumbersExactMatch(m.po_no, resolvedPoNo)) return true;
+            if (resolvedSaudaNo && (m.sauda_no || m.po_no) && arePoNumbersExactMatch(m.sauda_no || m.po_no, resolvedSaudaNo)) return true;
             if (mInsp && (mInsp === mrNo.toUpperCase() || (mrDigits && extractCoreDigits(mInsp) === mrDigits))) return true;
             return false;
           });
@@ -422,6 +393,7 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
           const matchedSattaMm = rawSattaMismatches.filter((sm: any) => {
             const smPoRaw = sm.po_no || sm.sauda_no;
             if (resolvedPoNo && smPoRaw && arePoNumbersExactMatch(smPoRaw, resolvedPoNo)) return true;
+            if (resolvedSaudaNo && smPoRaw && arePoNumbersExactMatch(smPoRaw, resolvedSaudaNo)) return true;
             return false;
           });
 
@@ -459,7 +431,7 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
             (String(poRec?.pass_status || poRec?.pass_mismatch || '').toLowerCase() === 'mismatch' ||
               String(poRec?.status || '').toLowerCase() === 'mismatch');
 
-          // If there is an unresolved mismatch, this MR is NOT eligible for advance
+          // If there is ANY unresolved Material Mismatch or Satta Mismatch, this MR is NOT eligible for advance
           if (hasUnresolvedMatMm || hasUnresolvedSattaMm || hasUnresolvedPoFlag) {
             return;
           }
@@ -468,11 +440,10 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
             ? 'Mismatch Cleared (Level 4)'
             : 'No Mismatch';
 
-          // 2. Check Advance Not Paid Condition
-          // Check payment_master
+          // 2. Check Payment NOT Done in Payment Operations (payment_master)
           const matchedPayment = rawPayments.find((p: any) => {
             const pStatus = String(p.status || '').toLowerCase().trim();
-            if (pStatus === 'cancelled' || pStatus === 'rejected') return false;
+            if (pStatus === 'cancelled' || pStatus === 'void' || pStatus === 'rejected') return false;
             const pMr = String(p.mr_no || p.arrival_no || '').trim().toUpperCase();
             if (!pMr) return false;
             if (pMr === mrNo.toUpperCase()) return true;
@@ -481,18 +452,17 @@ export const NewCustomReportsView: React.FC<NewCustomReportsViewProps> = ({ init
             return false;
           });
 
-          const paidFromPayment = matchedPayment
-            ? (Number(matchedPayment.paid_amount) || Number(matchedPayment.total_amount) || Number(matchedPayment.payable_amt) || 1)
-            : 0;
+          // If a Payment Operations voucher already exists for this MR, payment is done -> exclude
+          if (matchedPayment) {
+            return;
+          }
+
           const paidFromSett = matchedSett
             ? (Number(matchedSett.final_on_ac_adv) || Number(matchedSett.less_advance_amount) || 0)
             : 0;
           const paidFromInsp = Number(insp.advance_amount) || Number(insp.on_account_advance_amount) || 0;
 
-          const totalAlreadyPaid = paidFromPayment + paidFromSett + paidFromInsp;
-
-          // Only include MRs where Advance is NOT Paid yet
-          if (totalAlreadyPaid > 0) {
+          if (paidFromSett + paidFromInsp > 0) {
             return;
           }
 

@@ -6,8 +6,16 @@ export type {
   ReportFilterCriteria,
   AllPoRecord,
   AllPoSummary,
+  PaymentOperationsVoucher,
+  MillInspectionQualityRecord,
+  FinalArrivalMrRef,
+  ShortExcessSummaryItem,
+  DashboardPipelineSummary,
+  ExecutiveOverviewMetrics,
   SystemReportDataset
 } from '../types/systemReport.types';
+
+export type { MillInspectionRankingRow } from './system-reports/systemReportMetrics';
 
 export {
   INVALID_AGENCY_SET,
@@ -27,5 +35,8 @@ export {
 
 export {
   calculateReportMetrics,
-  groupTransactionsByDimension
+  groupTransactionsByDimension,
+  filterByReportCriteria,
+  calculateExecutiveOverviewMetrics,
+  calculateMillInspectionRankings
 } from './system-reports/systemReportMetrics';

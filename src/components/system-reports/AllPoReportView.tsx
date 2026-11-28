@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { Download, Search, Layers, Database, ShieldCheck, FileCheck, ArrowUpDown, Filter } from 'lucide-react';
+import { Download, Search, Layers, Database, ShieldCheck, ArrowUpDown, Filter } from 'lucide-react';
 import { SystemReportDataset, AllPoRecord } from '../../services/systemReportEngine';
 
 interface AllPoReportViewProps {
@@ -11,10 +11,13 @@ export const AllPoReportView: React.FC<AllPoReportViewProps> = ({
   dataset
 }) => {
   const { allPoSummary } = dataset;
-  const records = allPoSummary?.records || [];
+  const records = useMemo(
+    () => (allPoSummary?.records || []).filter(r => r.sourceSection !== 'Final PO'),
+    [allPoSummary?.records]
+  );
 
   const [searchQuery, setSearchQuery] = useState<string>('');
-  const [sourceFilter, setSourceFilter] = useState<'ALL' | 'Sauda Desk' | 'Sauda Check Point' | 'Final PO'>('ALL');
+  const [sourceFilter, setSourceFilter] = useState<'ALL' | 'Sauda Desk' | 'Sauda Check Point'>('ALL');
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [pageSize, setPageSize] = useState<number>(50);
   const [sortField, setSortField] = useState<keyof AllPoRecord>('date');
@@ -135,8 +138,8 @@ export const AllPoReportView: React.FC<AllPoReportViewProps> = ({
   return (
     <div className="space-y-4 font-sans">
       
-      {/* SECTION 1: CONSOLIDATED SUMMARY CARDS */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+      {/* SECTION 1: CONSOLIDATED SUMMARY CARDS (SAUDA DESK + SAUDA CHECK POINT ONLY) */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         {/* TOTAL ALL PO CARD */}
         <div 
           onClick={() => { setSourceFilter('ALL'); setCurrentPage(1); }}
@@ -161,7 +164,7 @@ export const AllPoReportView: React.FC<AllPoReportViewProps> = ({
             </span>
           </div>
           <p className={`text-[10px] mt-1 ${sourceFilter === 'ALL' ? 'text-slate-400' : 'text-slate-500'}`}>
-            Combined deduplicated master
+            Sauda Desk + Sauda Check Point combined
           </p>
         </div>
 
@@ -218,34 +221,6 @@ export const AllPoReportView: React.FC<AllPoReportViewProps> = ({
           </div>
           <p className={`text-[10px] mt-1 ${sourceFilter === 'Sauda Check Point' ? 'text-indigo-300' : 'text-slate-500'}`}>
             Pipeline Checkpoint Contracts
-          </p>
-        </div>
-
-        {/* FINAL PO CARD */}
-        <div 
-          onClick={() => { setSourceFilter('Final PO'); setCurrentPage(1); }}
-          className={`p-4 rounded-2xl border transition-all cursor-pointer shadow-sm ${
-            sourceFilter === 'Final PO'
-              ? 'bg-amber-900 border-amber-800 text-white ring-2 ring-amber-400'
-              : 'bg-white border-slate-200 hover:border-slate-300 text-slate-900'
-          }`}
-        >
-          <div className="flex items-center justify-between">
-            <span className={`text-[10px] font-black uppercase tracking-wider ${sourceFilter === 'Final PO' ? 'text-amber-300' : 'text-slate-500'}`}>
-              3. FINAL PO (purchase_master)
-            </span>
-            <FileCheck className={`w-4 h-4 ${sourceFilter === 'Final PO' ? 'text-amber-300' : 'text-slate-400'}`} />
-          </div>
-          <div className="mt-2 flex items-baseline justify-between">
-            <strong className="text-2xl font-black font-mono">
-              {allPoSummary?.finalPoCount || 0}
-            </strong>
-            <span className={`text-xs font-bold font-mono ${sourceFilter === 'Final PO' ? 'text-amber-200' : 'text-amber-700'}`}>
-              {(allPoSummary?.finalPoMT || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })} MT
-            </span>
-          </div>
-          <p className={`text-[10px] mt-1 ${sourceFilter === 'Final PO' ? 'text-amber-300' : 'text-slate-500'}`}>
-            Executed Final Orders
           </p>
         </div>
       </div>

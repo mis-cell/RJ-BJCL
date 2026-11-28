@@ -30,26 +30,47 @@ export const Priority1Dashboard: React.FC<Priority1DashboardProps> = ({
   onDrillDown
 }) => {
   const { metrics, filtered } = dataset;
+  const eo = dataset.executiveOverview || {
+    contractedVolumeMT: metrics.totalQuantityMT,
+    scpPoCount: metrics.totalPOCount,
+    paymentPayableAmt: metrics.totalPurchaseValue,
+    paymentVoucherCount: 0,
+    paymentPaidAmt: metrics.totalPayment,
+    paymentPremiumAmt: metrics.totalPremium,
+    paymentPremiumMrCount: metrics.premiumMRCount,
+    shortExcessDeductionAmt: metrics.totalDeduction,
+    shortExcessPoCount: 0,
+    scpInMillInspectionUniqueCount: filtered.filter(t => t.hasInspection).length,
+    scpTotalSaudaCount: filtered.length,
+    scpUniqueSuppliers: metrics.totalSupplierCount,
+    scpUniqueBrokers: metrics.totalBrokerCount,
+    scpUniqueAgencies: metrics.totalAgencyCount,
+    scpUniqueAreas: metrics.totalAreaCount,
+    scpUniqueGrades: metrics.totalGradeCount,
+    pendingArrivalCount: filtered.filter(t => !t.hasInspection).length,
+    inspectionPendingCount: metrics.millInspectionPendingCount,
+    settlementPendingCount: metrics.settlementPendingCount
+  };
   const [showAllPoRegister, setShowAllPoRegister] = useState(false);
   const [showFormulaGuide, setShowFormulaGuide] = useState(false);
 
-  // 1. Completion % for Half-Doughnut
+  // 1. Completion % for Half-Doughnut (Mill Inspection Received MT vs Sauda Check Point Contracted MT)
   const receivedPct = useMemo(() => {
-    if (metrics.totalQuantityMT <= 0) return 0;
-    return Math.min(100, (metrics.arrivedMT / metrics.totalQuantityMT) * 100);
-  }, [metrics.arrivedMT, metrics.totalQuantityMT]);
+    if (eo.contractedVolumeMT <= 0) return 0;
+    return Math.min(100, (metrics.arrivedMT / eo.contractedVolumeMT) * 100);
+  }, [metrics.arrivedMT, eo.contractedVolumeMT]);
 
   // 2. Parts of 1 Total (Received / In-Transit / Pending MT) for Doughnut
   const fulfillmentParts = useMemo(() => {
     const inTransitMT = filtered.reduce((sum, t) => sum + (t.inTransitWeightMT || 0), 0);
     const receivedMT = Math.max(0, metrics.arrivedMT);
-    const rawPendingMT = Math.max(0, metrics.totalQuantityMT - receivedMT - inTransitMT);
+    const rawPendingMT = Math.max(0, eo.contractedVolumeMT - receivedMT - inTransitMT);
     return [
       { name: 'Received MT', value: Number(receivedMT.toFixed(2)), color: DOUGHNUT_COLORS[0] },
       { name: 'In Transit MT', value: Number(inTransitMT.toFixed(2)), color: DOUGHNUT_COLORS[1] },
       { name: 'Pending MT', value: Number(rawPendingMT.toFixed(2)), color: DOUGHNUT_COLORS[2] }
     ].filter(p => p.value > 0);
-  }, [filtered, metrics.arrivedMT, metrics.totalQuantityMT]);
+  }, [filtered, metrics.arrivedMT, eo.contractedVolumeMT]);
 
   // 3. Monthly Purchased MT Trend for Line Chart
   const monthlyTrendData = useMemo(() => {
@@ -69,7 +90,7 @@ export const Priority1Dashboard: React.FC<Priority1DashboardProps> = ({
       {/* Formula Transparency Toggle */}
       <div className="flex items-center justify-between">
         <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
-          Executive Summary · {filtered.length} Active Contracts (Void/Cancelled &amp; Duplicate Saudas Excluded)
+          Executive Summary · {eo.scpPoCount} Active Sauda Check Point Contracts (Void/Cancelled Excluded)
         </span>
         <button
           type="button"
@@ -84,52 +105,67 @@ export const Priority1Dashboard: React.FC<Priority1DashboardProps> = ({
       {showFormulaGuide && (
         <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-2xs text-xs space-y-2">
           <div className="font-black uppercase tracking-wider text-slate-900 text-[11px]">
-            Executive Overview — Card Formula &amp; Database Source Logic
+            Executive Overview — Authoritative Card Formula &amp; Section Mapping
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse text-[11px]">
               <thead className="bg-slate-50 border-y border-slate-200 text-slate-600 uppercase text-[10px]">
                 <tr>
-                  <th className="p-2">Card / Chart</th>
-                  <th className="p-2">Formula</th>
-                  <th className="p-2">Database Tables Used</th>
+                  <th className="p-2">Card / Metric</th>
+                  <th className="p-2">Exact Logic</th>
+                  <th className="p-2">Authoritative Section / Table</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 text-slate-700">
                 <tr>
                   <td className="p-2 font-bold text-slate-900">Contracted Volume</td>
-                  <td className="p-2 font-mono">SUM(total_contract_mt) across deduplicated active POs &amp; unpromoted Saudas</td>
-                  <td className="p-2">sauda_check_point, purchase_master, sauda_master</td>
+                  <td className="p-2 font-mono">SUM(total_contract_mt) across active Sauda Check Point POs only</td>
+                  <td className="p-2">Sauda Check Point (sauda_check_point)</td>
                 </tr>
                 <tr>
-                  <td className="p-2 font-bold text-slate-900">Purchase Value &amp; Avg Rate</td>
-                  <td className="p-2 font-mono">SUM(Contract MT × Weighted PO Rate/Qtl × 10); Avg Rate = Σ(MT × Rate) / Σ(MT)</td>
-                  <td className="p-2">sauda_check_point_details, purchase_detail_master, sauda_check_point</td>
+                  <td className="p-2 font-bold text-slate-900">Purchase Value</td>
+                  <td className="p-2 font-mono">SUM(Payable Amt) across active Payment Operations vouchers</td>
+                  <td className="p-2">Payment Operations (payment_master)</td>
                 </tr>
                 <tr>
-                  <td className="p-2 font-bold text-slate-900">Disbursed Payment &amp; Settled</td>
-                  <td className="p-2 font-mono">SUM(paid_amount) per PO; Settled = SUM(value_amt) deduplicated per MR</td>
-                  <td className="p-2">payment_master, mr_settlement_master</td>
+                  <td className="p-2 font-bold text-slate-900">Disbursed Payment</td>
+                  <td className="p-2 font-mono">SUM(Paid Amount) across active Payment Operations vouchers</td>
+                  <td className="p-2">Payment Operations (payment_master)</td>
                 </tr>
                 <tr>
                   <td className="p-2 font-bold text-slate-900">Total Premium</td>
-                  <td className="p-2 font-mono">SUM(explicit MR premium amounts) matched by exact PO number</td>
-                  <td className="p-2">payment_master, payment_details</td>
+                  <td className="p-2 font-mono">SUM(Premium) &amp; unique MRs with premium from Payment Operations</td>
+                  <td className="p-2">Payment Operations (payment_master, payment_details)</td>
                 </tr>
                 <tr>
-                  <td className="p-2 font-bold text-slate-900">Total Deductions</td>
-                  <td className="p-2 font-mono">SUM(MAX(inspection deduction, settlement less + short/excess) + PO short/excess)</td>
-                  <td className="p-2">material_inspection, mr_settlement_master, sauda_check_point_deductions</td>
+                  <td className="p-2 font-bold text-slate-900">Total Short &amp; Excess Deductions</td>
+                  <td className="p-2 font-mono">SUM(Extra &amp; Short Weight &amp; Rate Settlement deductions) per PO</td>
+                  <td className="p-2">Sauda Check Point (Extra &amp; Short Weight &amp; Rate Settlement)</td>
                 </tr>
                 <tr>
-                  <td className="p-2 font-bold text-slate-900">Flagged Deals</td>
-                  <td className="p-2 font-mono">Count of POs with active Mismatch, Overdue (&gt;0.5 MT pending past due date), Moisture &gt;18%, Grade Down &gt;0, or High Deduction (&gt;3%)</td>
-                  <td className="p-2">material_mismatch, satta_mismatch, material_inspection, sauda_check_point</td>
+                  <td className="p-2 font-bold text-slate-900">Flagged Deals (SCP vs Mill Insp.)</td>
+                  <td className="p-2 font-mono">Unique Sauda Check Point Saudas present in Mill Inspection / Total SCP Saudas</td>
+                  <td className="p-2">Sauda Check Point ∩ Mill Inspection</td>
                 </tr>
                 <tr>
-                  <td className="p-2 font-bold text-slate-900">Contracted MT Received %</td>
-                  <td className="p-2 font-mono">(Deduplicated Received MT ÷ Contracted MT) × 100 across Final Arrival, Mill Inspection &amp; Settlement</td>
-                  <td className="p-2">final_arrival, material_inspection, material_inspection_details, mr_settlement_master</td>
+                  <td className="p-2 font-bold text-slate-900">Suppliers / Brokers / Agencies / Areas / Grades</td>
+                  <td className="p-2 font-mono">COUNT(DISTINCT entity) strictly from Sauda Check Point</td>
+                  <td className="p-2">Sauda Check Point (sauda_check_point)</td>
+                </tr>
+                <tr>
+                  <td className="p-2 font-bold text-slate-900">Pending Arrival</td>
+                  <td className="p-2 font-mono">COUNT(DISTINCT P.O. No.) in Sauda Check Point NOT present in Mill Inspection</td>
+                  <td className="p-2">Sauda Check Point − Mill Inspection</td>
+                </tr>
+                <tr>
+                  <td className="p-2 font-bold text-slate-900">Inspection Pending</td>
+                  <td className="p-2 font-mono">COUNT(DISTINCT M.R. No.) in Final Arrival NOT present in Mill Inspection</td>
+                  <td className="p-2">Final Arrival (final_arrival) − Mill Inspection</td>
+                </tr>
+                <tr>
+                  <td className="p-2 font-bold text-slate-900">Settlement Pending</td>
+                  <td className="p-2 font-mono">COUNT(DISTINCT P.O. No.) in Mill Inspection NOT present in Settlement</td>
+                  <td className="p-2">Mill Inspection − Settlement (mr_settlement_master)</td>
                 </tr>
               </tbody>
             </table>
@@ -141,30 +177,30 @@ export const Priority1Dashboard: React.FC<Priority1DashboardProps> = ({
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
         <button
           type="button"
-          onClick={() => onDrillDown('All Contracted Sauda / P.O. Quantity', filtered, 'sauda_quantity')}
+          onClick={() => onDrillDown('Sauda Check Point Contracted Volume', filtered, 'sauda_quantity')}
           className="text-left bg-white border border-slate-200 hover:border-slate-400 rounded-xl p-3.5 shadow-2xs transition cursor-pointer group"
         >
           <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 block">Contracted Volume</span>
           <div className="text-lg font-black font-mono tabular-nums text-slate-900 mt-1">
-            {metrics.totalQuantityMT.toLocaleString('en-IN', { maximumFractionDigits: 2 })} MT
+            {eo.contractedVolumeMT.toLocaleString('en-IN', { maximumFractionDigits: 2 })} MT
           </div>
           <span className="text-[11px] text-slate-500 mt-1 flex items-center justify-between">
-            <span>{metrics.totalPOCount} POs · {metrics.totalBrokerCount} Brokers</span>
+            <span>{eo.scpPoCount} POs · {eo.scpUniqueBrokers} Brokers</span>
             <ChevronRight className="w-3.5 h-3.5 text-slate-400 group-hover:translate-x-0.5 transition-transform" />
           </span>
         </button>
 
         <button
           type="button"
-          onClick={() => onDrillDown('Gross Purchase Value Ledger', filtered)}
+          onClick={() => onDrillDown('Payment Operations — Payable Contracts', filtered)}
           className="text-left bg-slate-900 text-white border border-slate-800 hover:bg-slate-800 rounded-xl p-3.5 shadow-2xs transition cursor-pointer group"
         >
           <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">Purchase Value</span>
           <div className="text-lg font-black font-mono tabular-nums text-white mt-1">
-            ₹{(metrics.totalPurchaseValue / 10000000).toFixed(2)} Cr
+            ₹{(eo.paymentPayableAmt / 10000000).toFixed(2)} Cr
           </div>
           <span className="text-[11px] text-emerald-300 font-mono mt-1 block">
-            Avg ₹{Math.round(metrics.weightedPurchaseRate).toLocaleString('en-IN')}/Qtl
+            {eo.paymentVoucherCount} Payment Vouchers · Payable
           </span>
         </button>
 
@@ -175,10 +211,10 @@ export const Priority1Dashboard: React.FC<Priority1DashboardProps> = ({
         >
           <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 block">Disbursed Payment</span>
           <div className="text-lg font-black font-mono tabular-nums text-teal-800 mt-1">
-            ₹{(metrics.totalPayment / 10000000).toFixed(2)} Cr
+            ₹{(eo.paymentPaidAmt / 10000000).toFixed(2)} Cr
           </div>
           <span className="text-[11px] text-slate-500 mt-1 block">
-            Settled: ₹{(metrics.totalSettlement / 10000000).toFixed(2)} Cr
+            Paid Amount · Payment Ops
           </span>
         </button>
 
@@ -189,38 +225,38 @@ export const Priority1Dashboard: React.FC<Priority1DashboardProps> = ({
         >
           <span className="text-[10px] font-bold uppercase tracking-wider text-amber-700 block">Total Premium</span>
           <div className="text-lg font-black font-mono tabular-nums text-amber-900 mt-1">
-            ₹{Math.round(metrics.totalPremium).toLocaleString('en-IN')}
+            ₹{Math.round(eo.paymentPremiumAmt).toLocaleString('en-IN')}
           </div>
           <span className="text-[11px] text-slate-500 mt-1 block">
-            {metrics.premiumMRCount} MRs with premium
+            {eo.paymentPremiumMrCount} MRs with premium
           </span>
         </button>
 
         <button
           type="button"
-          onClick={() => onDrillDown('Contracts With Deductions', filtered.filter(t => t.deductionAmount > 0))}
+          onClick={() => onDrillDown('Short & Excess Weight/Rate Deduction POs', filtered.filter(t => t.deductionAmount > 0))}
           className="text-left bg-white border border-slate-200 hover:border-rose-400 rounded-xl p-3.5 shadow-2xs transition cursor-pointer group"
         >
-          <span className="text-[10px] font-bold uppercase tracking-wider text-rose-700 block">Total Deductions</span>
+          <span className="text-[10px] font-bold uppercase tracking-wider text-rose-700 block">Short &amp; Excess Deductions</span>
           <div className="text-lg font-black font-mono tabular-nums text-rose-800 mt-1">
-            ₹{Math.round(metrics.totalDeduction).toLocaleString('en-IN')}
+            ₹{Math.round(eo.shortExcessDeductionAmt).toLocaleString('en-IN')}
           </div>
           <span className="text-[11px] text-slate-500 mt-1 block">
-            Quality, weight &amp; claims
+            {eo.shortExcessPoCount} POs · Extra &amp; Short Wt/Rate
           </span>
         </button>
 
         <button
           type="button"
-          onClick={() => onDrillDown('Flagged / Exception Contracts', filtered.filter(t => t.isAbnormal || t.hasMismatch))}
+          onClick={() => onDrillDown('Sauda Check Point Contracts Present in Mill Inspection', filtered.filter(t => t.hasInspection))}
           className="text-left bg-white border border-rose-200 hover:border-rose-400 rounded-xl p-3.5 shadow-2xs transition cursor-pointer group"
         >
           <span className="text-[10px] font-bold uppercase tracking-wider text-rose-700 block">Flagged Deals</span>
           <div className="text-lg font-black font-mono tabular-nums text-rose-900 mt-1">
-            {metrics.abnormalCount} <span className="text-xs font-semibold text-slate-400">/ {filtered.length}</span>
+            {eo.scpInMillInspectionUniqueCount} <span className="text-xs font-semibold text-slate-400">/ {eo.scpTotalSaudaCount}</span>
           </div>
           <span className="text-[11px] text-rose-600 mt-1 block">
-            {metrics.delayedCount} overdue · {metrics.highMoistureCount} high moist
+            Unique SCP in Mill Insp · {eo.pendingArrivalCount} open
           </span>
         </button>
       </div>
@@ -231,12 +267,12 @@ export const Priority1Dashboard: React.FC<Priority1DashboardProps> = ({
         <div className="lg:col-span-3">
           <HalfDoughnutChart
             title="Contracted MT Received"
-            subtitle="Overall physical receipt completion"
+            subtitle="Sauda Check Point vs Mill Inspection"
             percentage={receivedPct}
             primaryLabel="Received MT"
             primaryValue={`${metrics.arrivedMT.toLocaleString('en-IN', { maximumFractionDigits: 2 })} MT`}
             secondaryLabel="Contracted MT"
-            secondaryValue={`${metrics.totalQuantityMT.toLocaleString('en-IN', { maximumFractionDigits: 2 })} MT`}
+            secondaryValue={`${eo.contractedVolumeMT.toLocaleString('en-IN', { maximumFractionDigits: 2 })} MT`}
             accentColor="#0f766e"
           />
         </div>
@@ -248,7 +284,7 @@ export const Priority1Dashboard: React.FC<Priority1DashboardProps> = ({
               Volume Fulfillment Mix
             </h4>
             <p className="text-[11px] text-slate-500 mt-0.5">
-              Share of total contracted MT across Received, In Transit &amp; Pending
+              Share of Sauda Check Point MT across Received, In Transit &amp; Pending
             </p>
           </div>
 
@@ -288,7 +324,7 @@ export const Priority1Dashboard: React.FC<Priority1DashboardProps> = ({
             </div>
             <div className="sm:col-span-5 space-y-2.5 text-xs">
               {fulfillmentParts.map((part) => {
-                const share = metrics.totalQuantityMT > 0 ? (part.value / metrics.totalQuantityMT) * 100 : 0;
+                const share = eo.contractedVolumeMT > 0 ? (part.value / eo.contractedVolumeMT) * 100 : 0;
                 return (
                   <div key={part.name} className="space-y-0.5">
                     <div className="flex items-center gap-1.5 text-[11px] font-bold text-slate-700">
@@ -314,7 +350,7 @@ export const Priority1Dashboard: React.FC<Priority1DashboardProps> = ({
                 Monthly Purchased vs Received MT Trend
               </h4>
               <p className="text-[11px] text-slate-500 mt-0.5">
-                Chronological procurement volume and physical receipt pace
+                Sauda Check Point contracted MT vs Mill Inspection received MT
               </p>
             </div>
             <span className="text-[10px] font-mono text-slate-500">{monthlyTrendData.length} months</span>
@@ -375,7 +411,7 @@ export const Priority1Dashboard: React.FC<Priority1DashboardProps> = ({
             <h4 className="text-xs font-black uppercase tracking-wider text-slate-800">
               Sourcing Footprint &amp; Stage Backlog
             </h4>
-            <p className="text-[11px] text-slate-500">Click any metric to inspect underlying contracts</p>
+            <p className="text-[11px] text-slate-500">Unique entities from Sauda Check Point &amp; live stage backlog counts</p>
           </div>
           <button
             type="button"
@@ -389,14 +425,14 @@ export const Priority1Dashboard: React.FC<Priority1DashboardProps> = ({
 
         <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2.5 text-xs">
           {[
-            { label: 'Suppliers', value: String(metrics.totalSupplierCount), sub: 'Unique parties', onClick: () => onDrillDown('Unique Sourcing Suppliers', filtered, 'suppliers') },
-            { label: 'Brokers', value: String(metrics.totalBrokerCount), sub: 'Active brokers', onClick: () => onDrillDown('Unique Sourcing Brokers', filtered, 'brokers') },
-            { label: 'Agencies', value: String(metrics.totalAgencyCount), sub: 'Purchasing desks', onClick: () => onDrillDown('Unique Purchasing Agencies', filtered, 'agencies') },
-            { label: 'Areas', value: String(metrics.totalAreaCount), sub: 'Jute belts', onClick: () => onDrillDown('Unique Sourcing Areas', filtered, 'areas') },
-            { label: 'Grades', value: String(metrics.totalGradeCount), sub: 'Quality grades', onClick: () => onDrillDown('Unique Quality Grades', filtered, 'grades') },
-            { label: 'Pending Arrival', value: `${metrics.temporaryArrivalPendingCount}`, sub: `${metrics.pendingDeliveryMT.toFixed(1)} MT bal`, onClick: () => onDrillDown('Pending Delivery Contracts', filtered.filter(t => t.pendingWeightMT > 0.01)) },
-            { label: 'Inspection Pending', value: `${metrics.millInspectionPendingCount}`, sub: 'Lab queue', onClick: () => onDrillDown('Mill Inspection Pending', filtered.filter(t => t.inspectionStatus === 'PENDING')) },
-            { label: 'Settlement Pending', value: `${metrics.settlementPendingCount}`, sub: 'Open clearance', onClick: () => onDrillDown('Settlement Pending Contracts', filtered.filter(t => t.settlementStatus !== 'SETTLED')) }
+            { label: 'Suppliers', value: String(eo.scpUniqueSuppliers), sub: 'Unique in SCP', onClick: () => onDrillDown('Unique Sourcing Suppliers (Sauda Check Point)', filtered, 'suppliers') },
+            { label: 'Brokers', value: String(eo.scpUniqueBrokers), sub: 'Unique in SCP', onClick: () => onDrillDown('Unique Sourcing Brokers (Sauda Check Point)', filtered, 'brokers') },
+            { label: 'Agencies', value: String(eo.scpUniqueAgencies), sub: 'Unique in SCP', onClick: () => onDrillDown('Unique Purchasing Agencies (Sauda Check Point)', filtered, 'agencies') },
+            { label: 'Areas', value: String(eo.scpUniqueAreas), sub: 'Unique in SCP', onClick: () => onDrillDown('Unique Sourcing Areas (Sauda Check Point)', filtered, 'areas') },
+            { label: 'Grades', value: String(eo.scpUniqueGrades), sub: 'Unique in SCP', onClick: () => onDrillDown('Unique Quality Grades (Sauda Check Point)', filtered, 'grades') },
+            { label: 'Pending Arrival', value: `${eo.pendingArrivalCount}`, sub: 'SCP PO not in Mill Insp', onClick: () => onDrillDown('Pending Arrival (SCP P.O. Not Present in Mill Inspection)', filtered.filter(t => !t.hasInspection)) },
+            { label: 'Inspection Pending', value: `${eo.inspectionPendingCount}`, sub: 'Final Arr MR not in Insp', onClick: () => onDrillDown('Inspection Pending (Final Arrival Not in Mill Inspection)', filtered.filter(t => t.hasFinalArrival && !t.hasInspection)) },
+            { label: 'Settlement Pending', value: `${eo.settlementPendingCount}`, sub: 'Mill Insp PO not Settled', onClick: () => onDrillDown('Settlement Pending (Mill Inspection P.O. Not in Settlement)', filtered.filter(t => t.hasInspection && t.settlementStatus !== 'SETTLED')) }
           ].map(item => (
             <button
               type="button"

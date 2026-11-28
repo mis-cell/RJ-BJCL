@@ -1,5 +1,404 @@
-import { ReportTransactionLine, SystemReportDataset } from '../../types/systemReport.types';
+import {
+  ExecutiveOverviewMetrics,
+  FinalArrivalMrRef,
+  MillInspectionQualityRecord,
+  PaymentOperationsVoucher,
+  ReportFilterCriteria,
+  ReportTransactionLine,
+  ShortExcessSummaryItem,
+  SystemReportDataset
+} from '../../types/systemReport.types';
 import { isInvalidAgency } from './systemReportSanitizers';
+
+export interface MillInspectionRankingRow {
+  key: string;
+  mrCount: number;
+  poCount: number;
+  totalMt: number;
+  estimatedValue: number;
+  avgGradeDown: number;
+  avgMoisture: number;
+  avgMoistureLimit: number;
+  avgExcessMoisture: number;
+  avgDust: number;
+  avgNcv: number;
+  totalHabijabiChattaRopeKg: number;
+  avgCtPct: number;
+  excessMoistureLots: number;
+  gradeDownLots: number;
+  dustLots: number;
+  ncvLots: number;
+  ctLots: number;
+  cleanLots: number;
+  cleanRatePct: number;
+  performanceScore: number;
+  defectScore: number;
+  tier: 'Excellent' | 'Good' | 'Watch' | 'Poor';
+  valueSharePct: number;
+  mtSharePct: number;
+  records: MillInspectionQualityRecord[];
+}
+
+export function filterByReportCriteria<
+  T extends {
+    date?: string;
+    month?: string;
+    financialYear?: string;
+    broker?: string;
+    supplier?: string;
+    agency?: string;
+    area?: string;
+    grade?: string;
+    poNo?: string;
+    saudaNo?: string;
+    mrNo?: string;
+    voucherNo?: string;
+  }
+>(items: T[], filters: ReportFilterCriteria): T[] {
+  if (!items || items.length === 0) return [];
+  return items.filter(item => {
+    if (filters.searchQuery) {
+      const q = filters.searchQuery.toLowerCase();
+      const match =
+        (item.saudaNo || '').toLowerCase().includes(q) ||
+        (item.poNo || '').toLowerCase().includes(q) ||
+        (item.mrNo || '').toLowerCase().includes(q) ||
+        (item.voucherNo || '').toLowerCase().includes(q) ||
+        (item.supplier || '').toLowerCase().includes(q) ||
+        (item.broker || '').toLowerCase().includes(q) ||
+        (item.area || '').toLowerCase().includes(q) ||
+        (item.grade || '').toLowerCase().includes(q);
+      if (!match) return false;
+    }
+
+    if (filters.financialYear && item.financialYear && item.financialYear !== filters.financialYear) return false;
+    if (filters.month && item.month && item.month !== filters.month) return false;
+    if (filters.broker && (item.broker || '') !== filters.broker) return false;
+    if (filters.supplier && (item.supplier || '') !== filters.supplier) return false;
+    if (filters.agency && (item.agency || '') !== filters.agency) return false;
+    if (filters.area && (item.area || '') !== filters.area) return false;
+    if (filters.grade) {
+      const gStr = item.grade || '';
+      const parts = gStr.split(',').map(p => p.trim());
+      if (gStr !== filters.grade && !parts.includes(filters.grade)) return false;
+    }
+
+    if (filters.dateFrom && item.date) {
+      if (new Date(item.date) < new Date(filters.dateFrom)) return false;
+    }
+    if (filters.dateTo && item.date) {
+      if (new Date(item.date) > new Date(filters.dateTo + 'T23:59:59')) return false;
+    }
+
+    return true;
+  });
+}
+
+const isPlaceholderText = (val?: string, extraBad: string[] = []): boolean => {
+  const s = (val || '').trim();
+  if (!s || s === '-' || s === '—' || s === 'N/A' || s === 'NA') return true;
+  const u = s.toUpperCase();
+  if (u === 'UNASSIGNED' || u === 'UNKNOWN' || u === 'NULL' || u === 'NONE') return true;
+  return extraBad.some(b => u === b.toUpperCase());
+};
+
+export function calculateExecutiveOverviewMetrics(params: {
+  transactions: ReportTransactionLine[];
+  paymentOperations: PaymentOperationsVoucher[];
+  millInspections: MillInspectionQualityRecord[];
+  finalArrivalMrs: FinalArrivalMrRef[];
+  shortExcessItems: ShortExcessSummaryItem[];
+}): ExecutiveOverviewMetrics {
+  const {
+    transactions,
+    paymentOperations,
+    millInspections,
+    finalArrivalMrs,
+    shortExcessItems
+  } = params;
+
+  // 1. Contracted Volume (ONLY Sauda Check Point -> Total Contract M.Ton)
+  let contractedVolumeMT = 0;
+  const scpPoSet = new Set<string>();
+  const scpSaudaAllSet = new Set<string>();
+  const scpSaudaInMillInspSet = new Set<string>();
+  const pendingArrivalPoSet = new Set<string>();
+
+  const supplierSet = new Set<string>();
+  const brokerSet = new Set<string>();
+  const agencySet = new Set<string>();
+  const areaSet = new Set<string>();
+  const gradeSet = new Set<string>();
+
+  transactions.forEach((t, idx) => {
+    contractedVolumeMT += Number(t.quantityMT || 0);
+
+    const poKey = !isPlaceholderText(t.poNo, ['Pending P.O.'])
+      ? t.poNo.trim().toUpperCase()
+      : '';
+    if (poKey) scpPoSet.add(poKey);
+
+    const saudaKey = !isPlaceholderText(t.saudaNo)
+      ? t.saudaNo.trim().toUpperCase()
+      : poKey || t.txnId || `SCP-${idx}`;
+    scpSaudaAllSet.add(saudaKey);
+
+    if (t.hasInspection) {
+      scpSaudaInMillInspSet.add(saudaKey);
+    } else if (poKey) {
+      pendingArrivalPoSet.add(poKey);
+    }
+
+    if (!isPlaceholderText(t.supplier, ['Unassigned Supplier'])) {
+      supplierSet.add(t.supplier.trim().toUpperCase());
+    }
+    if (!isPlaceholderText(t.broker, ['Direct', 'Direct Purchase'])) {
+      brokerSet.add(t.broker.trim().toUpperCase());
+    }
+    if (!isPlaceholderText(t.agency) && !isInvalidAgency(t.agency)) {
+      agencySet.add(t.agency.trim().toUpperCase());
+    }
+    if (!isPlaceholderText(t.area, ['Unassigned Area'])) {
+      areaSet.add(t.area.trim().toUpperCase());
+    }
+    if (!isPlaceholderText(t.grade, ['NORMAL', 'STANDARD GRADE', 'NORMAL GRADE'])) {
+      t.grade.split(',').forEach(part => {
+        const g = part.trim();
+        if (!isPlaceholderText(g, ['NORMAL', 'STANDARD GRADE', 'NORMAL GRADE'])) {
+          gradeSet.add(g.toUpperCase());
+        }
+      });
+    }
+  });
+
+  // 2, 3, 4. Payment Operations -> Payable Amt, Paid Amount, Premium
+  let paymentPayableAmt = 0;
+  let paymentPaidAmt = 0;
+  let paymentPremiumAmt = 0;
+  const premiumMrSet = new Set<string>();
+
+  paymentOperations.forEach((p, idx) => {
+    paymentPayableAmt += Number(p.payableAmount || 0);
+    paymentPaidAmt += Number(p.paidAmount || 0);
+    paymentPremiumAmt += Number(p.premiumAmount || 0);
+    if (Number(p.premiumAmount || 0) > 0) {
+      const mrKey = !isPlaceholderText(p.mrNo)
+        ? p.mrNo.trim().toUpperCase()
+        : p.voucherNo || p.id || `PAY-${idx}`;
+      premiumMrSet.add(mrKey);
+    }
+  });
+
+  // 5. Total Short & Excess Deductions (Sauda Check Point -> Extra & Short Weight & Rate Settlement)
+  let shortExcessDeductionAmt = 0;
+  const shortExcessPoSet = new Set<string>();
+  shortExcessItems.forEach((s, idx) => {
+    const amt = Number(s.deductionAmount || 0);
+    shortExcessDeductionAmt += amt;
+    if (amt > 0) {
+      shortExcessPoSet.add((s.poNo || `SE-${idx}`).trim().toUpperCase());
+    }
+  });
+
+  // 13. Inspection Pending: Unique M.R No. in Final Arrival NOT present in Mill Inspection
+  const inspectionPendingMrSet = new Set<string>();
+  finalArrivalMrs.forEach(m => {
+    if (!m.hasMillInspection && !isPlaceholderText(m.mrNo)) {
+      inspectionPendingMrSet.add(m.mrNo.trim().toUpperCase());
+    }
+  });
+
+  // 14. Settlement Pending: Unique P.O No. in Mill Inspection NOT present in Settlement
+  const settlementPendingPoSet = new Set<string>();
+  millInspections.forEach(m => {
+    if (!m.hasSettlement && !isPlaceholderText(m.poNo, ['Pending P.O.'])) {
+      settlementPendingPoSet.add(m.poNo.trim().toUpperCase());
+    }
+  });
+
+  return {
+    contractedVolumeMT,
+    scpPoCount: scpPoSet.size || transactions.length,
+    paymentPayableAmt,
+    paymentVoucherCount: paymentOperations.length,
+    paymentPaidAmt,
+    paymentPremiumAmt,
+    paymentPremiumMrCount: premiumMrSet.size,
+    shortExcessDeductionAmt,
+    shortExcessPoCount: shortExcessPoSet.size,
+    scpInMillInspectionUniqueCount: scpSaudaInMillInspSet.size,
+    scpTotalSaudaCount: scpSaudaAllSet.size,
+    scpUniqueSuppliers: supplierSet.size,
+    scpUniqueBrokers: brokerSet.size,
+    scpUniqueAgencies: agencySet.size,
+    scpUniqueAreas: areaSet.size,
+    scpUniqueGrades: gradeSet.size,
+    pendingArrivalCount: pendingArrivalPoSet.size,
+    inspectionPendingCount: inspectionPendingMrSet.size,
+    settlementPendingCount: settlementPendingPoSet.size
+  };
+}
+
+export function calculateMillInspectionRankings(
+  millInspections: MillInspectionQualityRecord[],
+  entity: 'broker' | 'supplier'
+): MillInspectionRankingRow[] {
+  const map = new Map<string, {
+    key: string;
+    mrSet: Set<string>;
+    poSet: Set<string>;
+    lotCount: number;
+    totalMt: number;
+    estimatedValue: number;
+    weightSum: number;
+    wGradeDown: number;
+    wMoisture: number;
+    wMoistureLimit: number;
+    wExcessMoisture: number;
+    wDust: number;
+    wNcv: number;
+    wCtPct: number;
+    totalHabijabiChattaRopeKg: number;
+    excessMoistureLots: number;
+    gradeDownLots: number;
+    dustLots: number;
+    ncvLots: number;
+    ctLots: number;
+    cleanLots: number;
+    records: MillInspectionQualityRecord[];
+  }>();
+
+  millInspections.forEach((rec, idx) => {
+    const rawName = entity === 'broker' ? rec.broker : rec.supplier;
+    const key = rawName && rawName.trim() && rawName.trim() !== '-'
+      ? rawName.trim()
+      : (entity === 'broker' ? 'Direct / Unassigned' : 'Unassigned Supplier');
+
+    if (!map.has(key)) {
+      map.set(key, {
+        key,
+        mrSet: new Set<string>(),
+        poSet: new Set<string>(),
+        lotCount: 0,
+        totalMt: 0,
+        estimatedValue: 0,
+        weightSum: 0,
+        wGradeDown: 0,
+        wMoisture: 0,
+        wMoistureLimit: 0,
+        wExcessMoisture: 0,
+        wDust: 0,
+        wNcv: 0,
+        wCtPct: 0,
+        totalHabijabiChattaRopeKg: 0,
+        excessMoistureLots: 0,
+        gradeDownLots: 0,
+        dustLots: 0,
+        ncvLots: 0,
+        ctLots: 0,
+        cleanLots: 0,
+        records: []
+      });
+    }
+
+    const g = map.get(key)!;
+    g.lotCount += 1;
+    g.mrSet.add(rec.mrNo || `MR-${idx}`);
+    if (rec.poNo && rec.poNo !== '-') g.poSet.add(rec.poNo);
+
+    const wt = rec.receivedMt > 0 ? rec.receivedMt : 1;
+    g.totalMt += rec.receivedMt;
+    g.estimatedValue += rec.estimatedValue;
+    g.weightSum += wt;
+    g.wGradeDown += rec.gradeDownPct * wt;
+    g.wMoisture += rec.actualMoisture * wt;
+    g.wMoistureLimit += rec.moistureLimit * wt;
+    g.wExcessMoisture += rec.excessMoisture * wt;
+    g.wDust += rec.dustPct * wt;
+    g.wNcv += rec.ncvPct * wt;
+    g.wCtPct += rec.ctPct * wt;
+    g.totalHabijabiChattaRopeKg += rec.habijabiChattaRopeKg;
+
+    const hasMoist = rec.excessMoisture > 0.01;
+    const hasGd = rec.gradeDownPct > 0.01;
+    const hasDust = rec.dustPct > 0.01;
+    const hasNcv = rec.ncvPct > 0.01;
+    const hasCt = rec.habijabiChattaRopeKg > 0.01 || rec.ctPct > 0.01;
+
+    if (hasMoist) g.excessMoistureLots += 1;
+    if (hasGd) g.gradeDownLots += 1;
+    if (hasDust) g.dustLots += 1;
+    if (hasNcv) g.ncvLots += 1;
+    if (hasCt) g.ctLots += 1;
+    if (!hasMoist && !hasGd && !hasDust && !hasNcv && !hasCt) g.cleanLots += 1;
+
+    g.records.push(rec);
+  });
+
+  const totalAllValue = millInspections.reduce((s, r) => s + r.estimatedValue, 0);
+  const totalAllMt = millInspections.reduce((s, r) => s + r.receivedMt, 0);
+
+  return Array.from(map.values())
+    .map(g => {
+      const denom = g.weightSum > 0 ? g.weightSum : 1;
+      const avgGradeDown = g.wGradeDown / denom;
+      const avgMoisture = g.wMoisture / denom;
+      const avgMoistureLimit = g.wMoistureLimit / denom;
+      const avgExcessMoisture = g.wExcessMoisture / denom;
+      const avgDust = g.wDust / denom;
+      const avgNcv = g.wNcv / denom;
+      const avgCtPct = g.wCtPct / denom;
+
+      // Higher Grade Down, Excess Moisture (above active seasonal limit), Dust, NCV, or CT/Habijabi/Chatta/Rope reduces performance score
+      const penaltyGradeDown = Math.min(35, avgGradeDown * 2.5);
+      const penaltyMoisture = Math.min(30, avgExcessMoisture * 4.0);
+      const penaltyDust = Math.min(15, avgDust * 3.0);
+      const penaltyNcv = Math.min(10, avgNcv * 3.0);
+      const penaltyCt = Math.min(10, avgCtPct * 2.5);
+
+      const performanceScore = Math.max(
+        0,
+        Math.min(100, Number((100 - penaltyGradeDown - penaltyMoisture - penaltyDust - penaltyNcv - penaltyCt).toFixed(1)))
+      );
+      const defectScore = Number((100 - performanceScore).toFixed(1));
+      const cleanRatePct = g.lotCount > 0 ? (g.cleanLots / g.lotCount) * 100 : 100;
+
+      let tier: MillInspectionRankingRow['tier'] = 'Excellent';
+      if (performanceScore < 50) tier = 'Poor';
+      else if (performanceScore < 70) tier = 'Watch';
+      else if (performanceScore < 85) tier = 'Good';
+
+      return {
+        key: g.key,
+        mrCount: g.mrSet.size || g.lotCount,
+        poCount: g.poSet.size,
+        totalMt: g.totalMt,
+        estimatedValue: g.estimatedValue,
+        avgGradeDown,
+        avgMoisture,
+        avgMoistureLimit,
+        avgExcessMoisture,
+        avgDust,
+        avgNcv,
+        totalHabijabiChattaRopeKg: g.totalHabijabiChattaRopeKg,
+        avgCtPct,
+        excessMoistureLots: g.excessMoistureLots,
+        gradeDownLots: g.gradeDownLots,
+        dustLots: g.dustLots,
+        ncvLots: g.ncvLots,
+        ctLots: g.ctLots,
+        cleanLots: g.cleanLots,
+        cleanRatePct,
+        performanceScore,
+        defectScore,
+        tier,
+        valueSharePct: totalAllValue > 0 ? (g.estimatedValue / totalAllValue) * 100 : 0,
+        mtSharePct: totalAllMt > 0 ? (g.totalMt / totalAllMt) * 100 : 0,
+        records: g.records
+      };
+    })
+    .sort((a, b) => b.performanceScore - a.performanceScore || b.totalMt - a.totalMt);
+}
 
 // Compute all aggregated metrics from filtered transaction records
 export function calculateReportMetrics(txns: ReportTransactionLine[]): SystemReportDataset['metrics'] {
