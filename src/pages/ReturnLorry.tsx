@@ -37,6 +37,29 @@ import {
   resolveSattaRate,
 } from '../services/sattaRateService';
 import { useLiveAutoRefresh } from '../hooks/useLiveAutoRefresh';
+import {
+  getCurrentUserContext,
+  isUserAdmin,
+  subscribeToPermissions,
+} from '../lib/permissions';
+
+function isStrictAdminOrL5(): boolean {
+  if (isUserAdmin()) return true;
+  const ctx = getCurrentUserContext();
+  const level = String(ctx?.userLevel || (ctx as any)?.level || '').trim().toUpperCase();
+  if (level === 'L5') return true;
+  try {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      const rawSess = window.localStorage.getItem('bally_auth_session');
+      if (rawSess) {
+        const parsed = JSON.parse(rawSess);
+        const sLevel = String(parsed?.level || parsed?.userLevel || '').trim().toUpperCase();
+        if (sLevel === 'L5') return true;
+      }
+    }
+  } catch {}
+  return false;
+}
 
 interface ReturnLorryProps {
   onClose?: () => void;
@@ -59,7 +82,22 @@ export default function ReturnLorry({ onClose }: ReturnLorryProps) {
   const [sattaDifferentials, setSattaDifferentials] = useState<SattaDifferential[]>(() => getCachedSattaDifferentials());
   const [sattaCalculatedRates, setSattaCalculatedRates] = useState<SattaCalculatedRate[]>([]);
   const userEditedRatesRef = useRef<boolean>(false);
+  const [canSeeMovedRecords, setCanSeeMovedRecords] = useState<boolean>(() => isStrictAdminOrL5());
   const [toast, setToast] = useState<{ type: 'success' | 'info' | 'error'; message: string } | null>(null);
+
+  useEffect(() => {
+    const syncRoleAccess = () => setCanSeeMovedRecords(isStrictAdminOrL5());
+    const unsubscribe = subscribeToPermissions(syncRoleAccess);
+    if (typeof window !== 'undefined') {
+      window.addEventListener('bally-permissions-updated', syncRoleAccess);
+    }
+    return () => {
+      unsubscribe();
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('bally-permissions-updated', syncRoleAccess);
+      }
+    };
+  }, []);
 
   const showToast = (type: 'success' | 'info' | 'error', message: string) => {
     setToast({ type, message });
@@ -419,7 +457,7 @@ export default function ReturnLorry({ onClose }: ReturnLorryProps) {
 
       showToast(
         'success',
-        `Saved 4000-Series P.O. ${saved.new_po_no} (M.R. ${saved.mr_no}) with Rate ₹${finalBRate.toLocaleString('en-IN')} and moved to Sauda Check Point!`
+        `Saved P.O. ${saved.new_po_no} (M.R. ${saved.mr_no}) with Rate ₹${finalBRate.toLocaleString('en-IN')}, moved to Sauda Check Point & updated Mill Inspection, Final Arrival & Temporary Arrival!`
       );
       setViewMode('register');
     } catch (err: any) {
@@ -429,10 +467,22 @@ export default function ReturnLorry({ onClose }: ReturnLorryProps) {
     }
   };
 
+  // Hide rows already marked "Moved to Sauda (View/Edit Rate)" for all users except Admin or L5
+  const visibleRecords = useMemo(() => {
+    if (canSeeMovedRecords) return records;
+    return records.filter((r) => !(r.saved_to_sauda_checkpoint && Number(r.b_rate) > 0));
+  }, [records, canSeeMovedRecords]);
+
+  const formSelectableRecords = useMemo(() => {
+    if (!activeRecord) return visibleRecords;
+    if (visibleRecords.some((r) => r.mr_no === activeRecord.mr_no)) return visibleRecords;
+    return [activeRecord, ...visibleRecords];
+  }, [visibleRecords, activeRecord]);
+
   const filteredRecords = useMemo(() => {
     const q = searchTerm.trim().toLowerCase();
-    if (!q) return records;
-    return records.filter(
+    if (!q) return visibleRecords;
+    return visibleRecords.filter(
       (r) =>
         (r.new_po_no || '').toLowerCase().includes(q) ||
         (r.reference_po_no || '').toLowerCase().includes(q) ||
@@ -445,7 +495,7 @@ export default function ReturnLorry({ onClose }: ReturnLorryProps) {
         (r.lorry_number || '').toLowerCase().includes(q) ||
         (r.area || '').toLowerCase().includes(q)
     );
-  }, [records, searchTerm]);
+  }, [visibleRecords, searchTerm]);
 
   const totalWeightMt = useMemo(
     () => filteredRecords.reduce((acc, r) => acc + (Number(r.received_weight_mt) || 0), 0),
@@ -557,12 +607,12 @@ export default function ReturnLorry({ onClose }: ReturnLorryProps) {
                   aria-label="Select Mill Inspection Return Lorry MR"
                   value={activeRecord.mr_no}
                   onChange={(e) => {
-                    const found = records.find((r) => r.mr_no === e.target.value);
+                    const found = formSelectableRecords.find((r) => r.mr_no === e.target.value);
                     if (found) handleOpenRecordInForm(found);
                   }}
                   className="bg-white text-slate-900 text-xs font-bold px-2 py-0.5 rounded border border-slate-300 outline-none cursor-pointer"
                 >
-                  {records.map((r) => (
+                  {formSelectableRecords.map((r) => (
                     <option key={r.mr_no} value={r.mr_no}>
                       {r.mr_no} — {r.lorry_number || 'Lorry'} ({Number(r.received_weight_mt || 0).toFixed(3)} MT)
                     </option>

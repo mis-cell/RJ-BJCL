@@ -1006,6 +1006,14 @@ export async function saveReturnLorryToSaudaCheckPoint(
         await supabase.from('purchase_detail_master').delete().eq('po_no', finalPoNo).then(() => {}, () => {});
         await supabase.from('purchase_detail_master').insert(detailRowsForPo).then(() => {}, () => {});
       }
+
+      // Automatically propagate saved P.O Contract to Mill Inspection, Final Arrival (by M.R. No.),
+      // and Temporary Arrival (by Final Arrival's linked Arrival / Temp Arrival No.)
+      await propagatePoContractAcrossArrivalAndInspection({
+        finalPoNo,
+        mrNo: savedRecord.mr_no,
+        fallbackTempArrivalNo: savedRecord.temporary_arrival_no || savedRecord.arrival_no,
+      });
     } catch (err) {
       console.warn('[returnLorryService] Error saving Return Lorry to Sauda Check Point:', err);
     }
@@ -1014,8 +1022,227 @@ export async function saveReturnLorryToSaudaCheckPoint(
   notifyDataChanged('return_lorry');
   notifyDataChanged('sauda_check_point');
   notifyDataChanged('purchase_master');
+  notifyDataChanged('material_inspection');
+  notifyDataChanged('mill_inspection_master');
+  notifyDataChanged('final_arrival');
+  notifyDataChanged('temporary_material_received');
 
   return savedRecord;
+}
+
+/**
+ * Automatically propagates the edited/saved Return Lorry "P.O Contract" (`finalPoNo`) to:
+ * 1. Mill Inspection (`material_inspection`, `mill_inspection_master`, `material_inspection_details`, `mill_inspection_detail`) based on `M.R. NO.`
+ * 2. Final Arrival (`final_arrival`) based on `M.R. NO.`
+ * 3. Temporary Arrival (`temporary_material_received`) based on the "Arrival" (`temporary_arrival_no`) linked against that `M.R. NO.` in Final Arrival
+ */
+async function propagatePoContractAcrossArrivalAndInspection(params: {
+  finalPoNo: string;
+  mrNo: string;
+  fallbackTempArrivalNo?: string;
+}): Promise<void> {
+  if (!supabase) return;
+  const cleanPo = String(params.finalPoNo || '').trim();
+  const cleanMr = String(params.mrNo || '').trim();
+  const canonMr = canonicalMrKey(cleanMr);
+  if (!cleanPo || !cleanMr) return;
+
+  const stripHashUpper = (v: any): string =>
+    String(v || '').replace(/^#+/, '').trim().toUpperCase();
+
+  const buildLikePattern = (val: string): string => {
+    const clean = stripHashUpper(val);
+    const m = clean.match(/^([A-Z]+)[-_/\s]*0*([0-9]+)$/);
+    if (m) return `%${m[1]}%${m[2]}`;
+    return `%${clean}%`;
+  };
+
+  const isMrMatch = (candidate: any): boolean => {
+    const raw = stripHashUpper(candidate);
+    if (!raw || /^AR/i.test(raw)) return false;
+    if (raw === stripHashUpper(cleanMr)) return true;
+    if (canonMr && canonicalMrKey(raw) === canonMr) return true;
+    return false;
+  };
+
+  const mrNoCleanUpper = stripHashUpper(cleanMr);
+  const mrLikePattern = buildLikePattern(cleanMr);
+
+  // -------------------------------------------------------------------------
+  // 1. MILL INSPECTION — Update `po_no` & `mill_po_no` based on `M.R. NO.`
+  // -------------------------------------------------------------------------
+  try {
+    const matchedMiMrs = new Set<string>([cleanMr]);
+
+    const { data: miRows } = await supabase
+      .from('material_inspection')
+      .select('mr_no')
+      .or(`mr_no.eq.${cleanMr},mr_no.ilike.${mrLikePattern}`)
+      .then((r) => r, () => ({ data: [] as any[] }));
+
+    ((miRows as any[]) || []).forEach((r: any) => {
+      const m = String(r?.mr_no || '').trim();
+      if (m && isMrMatch(m)) matchedMiMrs.add(m);
+    });
+
+    const { data: mimRows } = await supabase
+      .from('mill_inspection_master')
+      .select('mr_no')
+      .or(`mr_no.eq.${cleanMr},mr_no.ilike.${mrLikePattern}`)
+      .then((r) => r, () => ({ data: [] as any[] }));
+
+    ((mimRows as any[]) || []).forEach((r: any) => {
+      const m = String(r?.mr_no || '').trim();
+      if (m && isMrMatch(m)) matchedMiMrs.add(m);
+    });
+
+    for (const targetMr of matchedMiMrs) {
+      const miUpdateRes = await supabase
+        .from('material_inspection')
+        .update({ po_no: cleanPo, mill_po_no: cleanPo })
+        .eq('mr_no', targetMr);
+      if (miUpdateRes?.error) {
+        await supabase
+          .from('material_inspection')
+          .update({ po_no: cleanPo })
+          .eq('mr_no', targetMr)
+          .then(() => {}, () => {});
+      }
+
+      const mimUpdateRes = await supabase
+        .from('mill_inspection_master')
+        .update({ po_no: cleanPo, mill_po_no: cleanPo })
+        .eq('mr_no', targetMr);
+      if (mimUpdateRes?.error) {
+        await supabase
+          .from('mill_inspection_master')
+          .update({ po_no: cleanPo })
+          .eq('mr_no', targetMr)
+          .then(() => {}, () => {});
+      }
+
+      await supabase
+        .from('material_inspection_details')
+        .update({ po_no: cleanPo })
+        .eq('mr_no', targetMr)
+        .then(() => {}, () => {});
+
+      await supabase
+        .from('mill_inspection_detail')
+        .update({ po_no: cleanPo })
+        .eq('mr_no', targetMr)
+        .then(() => {}, () => {});
+    }
+  } catch (err) {
+    console.warn('[returnLorryService] Mill Inspection P.O. sync warning:', err);
+  }
+
+  // -------------------------------------------------------------------------
+  // 2. FINAL ARRIVAL — Update `po_no` based on `M.R. NO.` & read linked "Arrival" (`temporary_arrival_no`)
+  // -------------------------------------------------------------------------
+  const linkedTempArrivalKeys = new Set<string>();
+  const linkedTempArrivalCanonKeys = new Set<string>();
+
+  const registerTempArrivalKey = (val: any) => {
+    const raw = String(val || '').replace(/^#+/, '').trim();
+    if (!raw) return;
+    if (isMrMatch(raw) || stripHashUpper(raw) === mrNoCleanUpper) return;
+    linkedTempArrivalKeys.add(raw);
+    const canon = canonicalMrKey(raw);
+    if (canon) linkedTempArrivalCanonKeys.add(canon);
+  };
+
+  try {
+    const { data: faCandidates } = await supabase
+      .from('final_arrival')
+      .select('final_arrival_id, final_arrival_no, mr_no, arrival_no, temporary_arrival_no')
+      .or(
+        `final_arrival_no.eq.${cleanMr},mr_no.eq.${cleanMr},final_arrival_no.ilike.${mrLikePattern},mr_no.ilike.${mrLikePattern}`
+      )
+      .then((r) => r, () => ({ data: [] as any[] }));
+
+    const matchedFaRows = ((faCandidates as any[]) || []).filter(
+      (r: any) => isMrMatch(r?.final_arrival_no) || isMrMatch(r?.mr_no) || isMrMatch(r?.arrival_no)
+    );
+
+    for (const fa of matchedFaRows) {
+      if (fa?.final_arrival_id) {
+        await supabase
+          .from('final_arrival')
+          .update({ po_no: cleanPo })
+          .eq('final_arrival_id', fa.final_arrival_id)
+          .then(() => {}, () => {});
+      } else if (fa?.final_arrival_no) {
+        await supabase
+          .from('final_arrival')
+          .update({ po_no: cleanPo })
+          .eq('final_arrival_no', fa.final_arrival_no)
+          .then(() => {}, () => {});
+      }
+
+      // Capture the "Arrival" number stored against this M.R. NO. on the Final Arrival form
+      registerTempArrivalKey(fa?.temporary_arrival_no);
+      registerTempArrivalKey(fa?.arrival_no);
+    }
+  } catch (err) {
+    console.warn('[returnLorryService] Final Arrival P.O. sync warning:', err);
+  }
+
+  // Fallback to Return Lorry's stored temporary arrival no only if Final Arrival did not yield one
+  if (linkedTempArrivalKeys.size === 0 && params.fallbackTempArrivalNo) {
+    registerTempArrivalKey(params.fallbackTempArrivalNo);
+  }
+
+  // -------------------------------------------------------------------------
+  // 3. TEMPORARY ARRIVAL — Update `po_no` where "Temp Arrival" (`temporary_arrival_no`) matches Final Arrival's "Arrival" number
+  // -------------------------------------------------------------------------
+  if (linkedTempArrivalKeys.size > 0) {
+    try {
+      const tempKeysArray = Array.from(linkedTempArrivalKeys);
+      const upperKeySet = new Set(tempKeysArray.map((k) => k.toUpperCase()));
+      const orClauses = tempKeysArray.flatMap((k) => {
+        const pat = buildLikePattern(k);
+        return [`temporary_arrival_no.eq.${k}`, `temporary_arrival_no.ilike.${pat}`];
+      });
+
+      const { data: tmrCandidates } = await supabase
+        .from('temporary_material_received')
+        .select('amad_id, temporary_arrival_no')
+        .or(orClauses.join(','))
+        .then((r) => r, () => ({ data: [] as any[] }));
+
+      const matchedTmrRows = ((tmrCandidates as any[]) || []).filter((t: any) => {
+        const raw = stripHashUpper(t?.temporary_arrival_no);
+        if (!raw) return false;
+        if (upperKeySet.has(raw)) return true;
+        const c = canonicalMrKey(raw);
+        if (c && linkedTempArrivalCanonKeys.has(c)) return true;
+        return false;
+      });
+
+      const updatedAmadIds = new Set<string>();
+      for (const tmr of matchedTmrRows) {
+        if (tmr?.amad_id) {
+          const idStr = String(tmr.amad_id);
+          if (updatedAmadIds.has(idStr)) continue;
+          updatedAmadIds.add(idStr);
+          await supabase
+            .from('temporary_material_received')
+            .update({ po_no: cleanPo })
+            .eq('amad_id', tmr.amad_id)
+            .then(() => {}, () => {});
+        } else if (tmr?.temporary_arrival_no) {
+          await supabase
+            .from('temporary_material_received')
+            .update({ po_no: cleanPo })
+            .eq('temporary_arrival_no', tmr.temporary_arrival_no)
+            .then(() => {}, () => {});
+        }
+      }
+    } catch (err) {
+      console.warn('[returnLorryService] Temporary Arrival P.O. sync warning:', err);
+    }
+  }
 }
 
 /**
@@ -1282,7 +1509,12 @@ export async function syncAllReturnLorriesFromInspections(): Promise<ReturnLorry
         return !s || s === 'NO' || s === 'N/A' || s === 'NONE' || s === '-';
       };
 
+      const isAlreadySavedToScp = Boolean(
+        existingRl?.saved_to_sauda_checkpoint === true && Number(existingRl?.b_rate || 0) > 0
+      );
+
       const referencePoNo =
+        (isAlreadySavedToScp && !isBlankPo(existingRl?.reference_po_no) ? String(existingRl.reference_po_no).trim() : '') ||
         (!isBlankPo(insp.po_no) ? String(insp.po_no).trim() : '') ||
         (!isBlankPo(insp.mill_po_no) ? String(insp.mill_po_no).trim() : '') ||
         (!isBlankPo(existingRl?.reference_po_no) ? String(existingRl.reference_po_no).trim() : '') ||
@@ -1291,6 +1523,7 @@ export async function syncAllReturnLorriesFromInspections(): Promise<ReturnLorry
       const fy = String(insp.financial_year || existingRl?.financial_year || '2026-2027').trim();
 
       const resolvedNewPoNo =
+        (isAlreadySavedToScp && existingRl?.new_po_no && !isBlankPo(existingRl.new_po_no) ? String(existingRl.new_po_no).trim() : '') ||
         (existingRl?.new_po_no && is4000SeriesPo(existingRl.new_po_no) ? String(existingRl.new_po_no).trim() : '') ||
         (existingRl?.po_no && is4000SeriesPo(existingRl.po_no) ? String(existingRl.po_no).trim() : '') ||
         generate4000SeriesPoNoFromSet(referencePoNo, fy, used4000Numbers);
@@ -1300,10 +1533,6 @@ export async function syncAllReturnLorriesFromInspections(): Promise<ReturnLorry
         : existingDbRlDetails.filter(
             (d) => normalizeStr(d.return_po_no) === normalizeStr(resolvedNewPoNo)
           );
-
-      const isAlreadySavedToScp = Boolean(
-        existingRl?.saved_to_sauda_checkpoint === true && Number(existingRl?.b_rate || 0) > 0
-      );
 
       const recordFromInspection = buildCombinedReturnLorryRecord({
         newPoNo: resolvedNewPoNo,
